@@ -114,7 +114,7 @@ export default function Imports() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <motion.div {...fadeInUp} className="flex items-center justify-between">
+      <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Import Data</h1>
           <p className="text-gray-500">Upload and manage inventory data imports</p>
@@ -122,7 +122,7 @@ export default function Imports() {
       </motion.div>
 
       {/* Import New Data Section */}
-      <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm p-6">
+      <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="bg-white rounded-xl shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Import New Data</h2>
 
         {/* Client Selector */}
@@ -215,7 +215,7 @@ export default function Imports() {
 
       {/* Quick Access - Client Cards */}
       {clients.length > 0 && (
-        <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm p-6">
+        <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Import by Client</h2>
           <p className="text-sm text-gray-500 mb-4">Or select a client to go to their detail page for import</p>
 
@@ -241,7 +241,7 @@ export default function Imports() {
       )}
 
       {/* Import History */}
-      <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <h2 className="text-lg font-semibold text-gray-900">Import History</h2>
