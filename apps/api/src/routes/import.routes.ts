@@ -63,7 +63,7 @@ router.use(authenticate);
 
 /**
  * POST /api/imports/upload
- * Upload a file for import
+ * Upload a single file for import
  */
 router.post('/upload', upload.single('file'), async (req, res, next) => {
   try {
@@ -116,6 +116,75 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
     };
 
     res.json(preview);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/upload-multiple
+ * Upload multiple files for import (processes sequentially)
+ */
+router.post('/upload-multiple', upload.array('files', 10), async (req, res, next) => {
+  try {
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      throw new ValidationError('No files uploaded');
+    }
+
+    const { clientId } = req.body;
+    if (!clientId) {
+      throw new ValidationError('Client ID is required');
+    }
+
+    // Verify client exists
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundError('Client');
+    }
+
+    const previews = [];
+
+    for (const file of files) {
+      // Parse file and detect type
+      const { headers, rows } = await parseFile(file.path);
+      const detectedType = detectFileType(headers);
+      const columnMapping = generateColumnMapping(headers, detectedType);
+
+      // Create import batch
+      const importBatch = await prisma.importBatch.create({
+        data: {
+          clientId,
+          importType: detectedType,
+          filename: file.originalname,
+          filePath: file.path,
+          status: 'pending',
+          rowCount: rows.length,
+          importedBy: req.user!.userId,
+        },
+      });
+
+      // Generate warnings
+      const warnings = generateWarnings(headers, rows);
+
+      previews.push({
+        importId: importBatch.id,
+        filename: file.originalname,
+        detectedType,
+        rowCount: rows.length,
+        columns: columnMapping,
+        sampleRows: rows.slice(0, 3),
+        warnings,
+      });
+    }
+
+    res.json({
+      count: previews.length,
+      previews,
+    });
   } catch (error) {
     next(error);
   }

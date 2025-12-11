@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Upload, FileSpreadsheet, AlertTriangle, Check, Loader2 } from 'lucide-react';
+import { X, Upload, FileSpreadsheet, AlertTriangle, Check, Loader2, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '@/api/client';
 import toast from 'react-hot-toast';
@@ -12,11 +12,17 @@ import toast from 'react-hot-toast';
 
 interface ImportPreview {
   importId: string;
+  filename?: string;
   detectedType: string;
   rowCount: number;
   columns: { source: string; target: string; confidence: number }[];
   sampleRows: Record<string, unknown>[];
   warnings: { type: string; message: string; affectedRows: number }[];
+}
+
+interface MultiImportResponse {
+  count: number;
+  previews: ImportPreview[];
 }
 
 interface ImportResult {
@@ -48,19 +54,21 @@ type ImportStep = 'upload' | 'preview' | 'processing' | 'complete';
 
 export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }: ImportModalProps) {
   const [importStep, setImportStep] = useState<ImportStep>('upload');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([]);
+  const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
+  const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Upload mutation
+  // Upload mutation (single file)
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       return api.upload<ImportPreview>('/imports/upload', file, { clientId });
     },
     onSuccess: (data) => {
-      setImportPreview(data);
+      setImportPreviews([data]);
+      setCurrentPreviewIndex(0);
       setImportStep('preview');
     },
     onError: (error: Error) => {
@@ -68,41 +76,76 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
     },
   });
 
+  // Upload mutation (multiple files)
+  const uploadMultipleMutation = useMutation({
+    mutationFn: async (files: File[]) => {
+      return api.uploadMultiple<MultiImportResponse>('/imports/upload-multiple', files, { clientId });
+    },
+    onSuccess: (data) => {
+      setImportPreviews(data.previews);
+      setCurrentPreviewIndex(0);
+      setImportStep('preview');
+      toast.success(`${data.count} file(s) uploaded successfully`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to upload files');
+    },
+  });
+
   // Confirm import mutation
   const confirmMutation = useMutation({
     mutationFn: async (importId: string) => {
+      const preview = importPreviews.find(p => p.importId === importId);
       return api.post<ImportResult>(`/imports/${importId}/confirm`, {
-        columnMapping: importPreview?.columns,
+        columnMapping: preview?.columns,
       });
     },
     onSuccess: (data) => {
-      setImportResult(data);
-      setImportStep('complete');
-      onSuccess?.();
-      toast.success('Import completed successfully');
+      setImportResults(prev => [...prev, data]);
+
+      // Check if there are more previews to process
+      if (currentPreviewIndex < importPreviews.length - 1) {
+        setCurrentPreviewIndex(prev => prev + 1);
+      } else {
+        setImportStep('complete');
+        onSuccess?.();
+        toast.success('All imports completed successfully');
+      }
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to process import');
-      setImportStep('preview');
     },
   });
 
   // File handling
-  const handleFileSelect = useCallback((file: File) => {
+  const handleFileSelect = useCallback((files: FileList | File[]) => {
+    const fileArray = Array.from(files);
     const allowedTypes = ['.csv', '.xlsx', '.xls', '.tsv'];
-    const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
-    if (!allowedTypes.includes(ext)) {
-      toast.error('Invalid file type. Only CSV, XLSX, XLS, and TSV files are allowed.');
-      return;
+
+    const validFiles = fileArray.filter(file => {
+      const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+      if (!allowedTypes.includes(ext)) {
+        toast.error(`Invalid file type: ${file.name}. Only CSV, XLSX, XLS, and TSV files are allowed.`);
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length > 0) {
+      setSelectedFiles(prev => [...prev, ...validFiles]);
     }
-    setSelectedFile(file);
   }, []);
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFileSelect(file);
+    if (e.dataTransfer.files.length > 0) {
+      handleFileSelect(e.dataTransfer.files);
+    }
   }, [handleFileSelect]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -116,25 +159,47 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
   }, []);
 
   const handleUpload = () => {
-    if (selectedFile) {
-      uploadMutation.mutate(selectedFile);
+    if (selectedFiles.length === 1) {
+      uploadMutation.mutate(selectedFiles[0]);
+    } else if (selectedFiles.length > 1) {
+      uploadMultipleMutation.mutate(selectedFiles);
     }
   };
 
   const handleConfirmImport = () => {
-    if (importPreview) {
+    const currentPreview = importPreviews[currentPreviewIndex];
+    if (currentPreview) {
       setImportStep('processing');
-      confirmMutation.mutate(importPreview.importId);
+      confirmMutation.mutate(currentPreview.importId);
+    }
+  };
+
+  const handleConfirmAll = async () => {
+    setImportStep('processing');
+    for (const preview of importPreviews) {
+      await confirmMutation.mutateAsync(preview.importId);
     }
   };
 
   const resetAndClose = () => {
     setImportStep('upload');
-    setSelectedFile(null);
-    setImportPreview(null);
-    setImportResult(null);
+    setSelectedFiles([]);
+    setImportPreviews([]);
+    setCurrentPreviewIndex(0);
+    setImportResults([]);
     onClose();
   };
+
+  const isUploading = uploadMutation.isPending || uploadMultipleMutation.isPending;
+  const currentPreview = importPreviews[currentPreviewIndex];
+
+  // Calculate totals for complete step
+  const totals = importResults.reduce((acc, result) => ({
+    created: acc.created + (result.result?.created || 0),
+    updated: acc.updated + (result.result?.updated || 0),
+    skipped: acc.skipped + (result.result?.skipped || 0),
+    errors: [...acc.errors, ...(result.result?.errors || [])],
+  }), { created: 0, updated: 0, skipped: 0, errors: [] as string[] });
 
   return (
     <AnimatePresence>
@@ -158,7 +223,7 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">
                   {importStep === 'upload' && 'Import Data'}
-                  {importStep === 'preview' && 'Review Import'}
+                  {importStep === 'preview' && `Review Import${importPreviews.length > 1 ? ` (${currentPreviewIndex + 1}/${importPreviews.length})` : ''}`}
                   {importStep === 'processing' && 'Processing Import'}
                   {importStep === 'complete' && 'Import Complete'}
                 </h2>
@@ -183,53 +248,81 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                     className={clsx(
                       'border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer',
                       isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-gray-400',
-                      selectedFile && 'border-green-500 bg-green-50'
+                      selectedFiles.length > 0 && 'border-green-500 bg-green-50'
                     )}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    onClick={() => !selectedFile && fileInputRef.current?.click()}
+                    onClick={() => fileInputRef.current?.click()}
                   >
                     <input
                       ref={fileInputRef}
                       type="file"
                       accept=".csv,.xlsx,.xls,.tsv"
+                      multiple
                       className="hidden"
-                      onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+                      onChange={(e) => e.target.files && handleFileSelect(e.target.files)}
                     />
 
-                    {selectedFile ? (
+                    {selectedFiles.length > 0 ? (
                       <div className="space-y-2">
                         <FileSpreadsheet className="w-12 h-12 mx-auto text-green-600" />
-                        <p className="text-lg font-medium text-gray-900">{selectedFile.name}</p>
-                        <p className="text-sm text-gray-500">
-                          {(selectedFile.size / 1024).toFixed(1)} KB
+                        <p className="text-lg font-medium text-gray-900">
+                          {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected
                         </p>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedFile(null);
-                          }}
-                          className="text-sm text-red-600 hover:text-red-700"
-                        >
-                          Remove file
-                        </button>
+                        <p className="text-sm text-gray-500">
+                          Click to add more files
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2">
                         <Upload className="w-12 h-12 mx-auto text-gray-400" />
                         <p className="text-lg font-medium text-gray-900">
-                          Drop your file here, or{' '}
+                          Drop your files here, or{' '}
                           <span className="text-primary-600 hover:text-primary-700">
                             browse
                           </span>
                         </p>
                         <p className="text-sm text-gray-500">
-                          Supports CSV, XLSX, XLS, and TSV files up to 10MB
+                          Supports CSV, XLSX, XLS, and TSV files up to 10MB each
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          You can select multiple files
                         </p>
                       </div>
                     )}
                   </div>
+
+                  {/* Selected Files List */}
+                  {selectedFiles.length > 0 && (
+                    <div className="space-y-2">
+                      <h3 className="font-medium text-gray-900">Selected Files</h3>
+                      <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 max-h-40 overflow-y-auto">
+                        {selectedFiles.map((file, index) => (
+                          <div key={index} className="flex items-center justify-between p-3">
+                            <div className="flex items-center gap-3">
+                              <FileSpreadsheet className="w-5 h-5 text-gray-400" />
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                                <p className="text-xs text-gray-500">
+                                  {(file.size / 1024).toFixed(1)} KB
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFile(index);
+                              }}
+                              className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-600"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex justify-end gap-3">
                     <button onClick={resetAndClose} className="btn-secondary">
@@ -237,16 +330,16 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                     </button>
                     <button
                       onClick={handleUpload}
-                      disabled={!selectedFile || uploadMutation.isPending}
+                      disabled={selectedFiles.length === 0 || isUploading}
                       className="btn-primary"
                     >
-                      {uploadMutation.isPending ? (
+                      {isUploading ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin mr-2" />
                           Uploading...
                         </>
                       ) : (
-                        'Upload & Preview'
+                        `Upload${selectedFiles.length > 1 ? ` ${selectedFiles.length} Files` : ''} & Preview`
                       )}
                     </button>
                   </div>
@@ -254,28 +347,38 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
               )}
 
               {/* Preview Step */}
-              {importStep === 'preview' && importPreview && (
+              {importStep === 'preview' && currentPreview && (
                 <div className="space-y-4">
+                  {/* File indicator for multiple files */}
+                  {importPreviews.length > 1 && (
+                    <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg">
+                      <FileSpreadsheet className="w-5 h-5 text-blue-600" />
+                      <span className="font-medium text-blue-900">
+                        {currentPreview.filename || `File ${currentPreviewIndex + 1}`}
+                      </span>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-4 text-center">
                     <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-2xl font-bold text-gray-900">{importPreview.rowCount}</p>
+                      <p className="text-2xl font-bold text-gray-900">{currentPreview.rowCount}</p>
                       <p className="text-sm text-gray-500">Rows detected</p>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-2xl font-bold text-gray-900">{importPreview.columns.length}</p>
+                      <p className="text-2xl font-bold text-gray-900">{currentPreview.columns.length}</p>
                       <p className="text-sm text-gray-500">Columns mapped</p>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-2xl font-bold text-gray-900 capitalize">{importPreview.detectedType}</p>
+                      <p className="text-2xl font-bold text-gray-900 capitalize">{currentPreview.detectedType}</p>
                       <p className="text-sm text-gray-500">Data type</p>
                     </div>
                   </div>
 
                   {/* Warnings */}
-                  {importPreview.warnings.length > 0 && (
+                  {currentPreview.warnings.length > 0 && (
                     <div className="space-y-2">
                       <h3 className="font-medium text-gray-900">Warnings</h3>
-                      {importPreview.warnings.map((warning, i) => (
+                      {currentPreview.warnings.map((warning, i) => (
                         <div key={i} className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                           <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
                           <div>
@@ -300,7 +403,7 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {importPreview.columns.slice(0, 10).map((col, i) => (
+                          {currentPreview.columns.slice(0, 10).map((col, i) => (
                             <tr key={i}>
                               <td className="px-4 py-2 text-gray-900">{col.source}</td>
                               <td className="px-4 py-2 text-gray-600">{col.target || '—'}</td>
@@ -318,21 +421,28 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                           ))}
                         </tbody>
                       </table>
-                      {importPreview.columns.length > 10 && (
+                      {currentPreview.columns.length > 10 && (
                         <div className="px-4 py-2 bg-gray-50 text-sm text-gray-500">
-                          +{importPreview.columns.length - 10} more columns
+                          +{currentPreview.columns.length - 10} more columns
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-3">
+                  <div className="flex justify-between gap-3">
                     <button onClick={resetAndClose} className="btn-secondary">
                       Cancel
                     </button>
-                    <button onClick={handleConfirmImport} className="btn-primary">
-                      Confirm Import
-                    </button>
+                    <div className="flex gap-2">
+                      {importPreviews.length > 1 && (
+                        <button onClick={handleConfirmAll} className="btn-secondary">
+                          Import All ({importPreviews.length})
+                        </button>
+                      )}
+                      <button onClick={handleConfirmImport} className="btn-primary">
+                        {importPreviews.length > 1 ? 'Import This File' : 'Confirm Import'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -342,46 +452,50 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                 <div className="text-center py-12">
                   <Loader2 className="w-12 h-12 animate-spin text-primary-600 mx-auto" />
                   <p className="mt-4 text-lg font-medium text-gray-900">Processing import...</p>
-                  <p className="text-sm text-gray-500">This may take a few moments</p>
+                  <p className="text-sm text-gray-500">
+                    {importPreviews.length > 1
+                      ? `Processing file ${importResults.length + 1} of ${importPreviews.length}`
+                      : 'This may take a few moments'}
+                  </p>
                 </div>
               )}
 
               {/* Complete Step */}
-              {importStep === 'complete' && importResult && (
+              {importStep === 'complete' && (
                 <div className="space-y-4">
                   <div className="text-center py-6">
                     <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
                       <Check className="w-8 h-8 text-green-600" />
                     </div>
-                    <h3 className="mt-4 text-xl font-semibold text-gray-900">Import Successful</h3>
+                    <h3 className="mt-4 text-xl font-semibold text-gray-900">
+                      {importResults.length > 1 ? `${importResults.length} Imports Successful` : 'Import Successful'}
+                    </h3>
                   </div>
 
-                  {importResult.result && (
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                      <div className="p-4 bg-green-50 rounded-lg">
-                        <p className="text-2xl font-bold text-green-600">{importResult.result.created}</p>
-                        <p className="text-sm text-gray-500">Created</p>
-                      </div>
-                      <div className="p-4 bg-blue-50 rounded-lg">
-                        <p className="text-2xl font-bold text-blue-600">{importResult.result.updated}</p>
-                        <p className="text-sm text-gray-500">Updated</p>
-                      </div>
-                      <div className="p-4 bg-gray-50 rounded-lg">
-                        <p className="text-2xl font-bold text-gray-600">{importResult.result.skipped}</p>
-                        <p className="text-sm text-gray-500">Skipped</p>
-                      </div>
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div className="p-4 bg-green-50 rounded-lg">
+                      <p className="text-2xl font-bold text-green-600">{totals.created}</p>
+                      <p className="text-sm text-gray-500">Created</p>
                     </div>
-                  )}
+                    <div className="p-4 bg-blue-50 rounded-lg">
+                      <p className="text-2xl font-bold text-blue-600">{totals.updated}</p>
+                      <p className="text-sm text-gray-500">Updated</p>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-2xl font-bold text-gray-600">{totals.skipped}</p>
+                      <p className="text-sm text-gray-500">Skipped</p>
+                    </div>
+                  </div>
 
-                  {importResult.result?.errors && importResult.result.errors.length > 0 && (
+                  {totals.errors.length > 0 && (
                     <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                      <h4 className="font-medium text-red-800 mb-2">Errors ({importResult.result.errors.length})</h4>
+                      <h4 className="font-medium text-red-800 mb-2">Errors ({totals.errors.length})</h4>
                       <ul className="text-sm text-red-600 space-y-1 max-h-32 overflow-y-auto">
-                        {importResult.result.errors.slice(0, 10).map((err, i) => (
+                        {totals.errors.slice(0, 10).map((err, i) => (
                           <li key={i}>{err}</li>
                         ))}
-                        {importResult.result.errors.length > 10 && (
-                          <li className="text-red-500">+{importResult.result.errors.length - 10} more errors</li>
+                        {totals.errors.length > 10 && (
+                          <li className="text-red-500">+{totals.errors.length - 10} more errors</li>
                         )}
                       </ul>
                     </div>

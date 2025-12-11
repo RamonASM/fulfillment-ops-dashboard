@@ -48,6 +48,23 @@ class ApiClient {
       throw new Error('Unauthorized');
     }
 
+    // Check content type to avoid JSON parse errors
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      // Server returned non-JSON (likely HTML error page)
+      const text = await response.text();
+      console.error('Non-JSON response:', text.substring(0, 500));
+
+      if (response.status === 413) {
+        throw new Error('File too large. Maximum size is 10MB.');
+      } else if (response.status === 404) {
+        throw new Error('API endpoint not found. Please contact support.');
+      } else if (response.status >= 500) {
+        throw new Error('Server error. Please try again later.');
+      }
+      throw new Error(`Server error (${response.status}). Please try again.`);
+    }
+
     const data = await response.json();
 
     if (!response.ok) {
@@ -123,6 +140,35 @@ class ApiClient {
   async upload<T>(endpoint: string, file: File, additionalData?: Record<string, string>): Promise<T> {
     const formData = new FormData();
     formData.append('file', file);
+
+    if (additionalData) {
+      Object.entries(additionalData).forEach(([key, value]) => {
+        formData.append(key, value);
+      });
+    }
+
+    const token = useAuthStore.getState().accessToken;
+    const headers: HeadersInit = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: formData,
+    });
+
+    return this.handleResponse<T>(response);
+  }
+
+  async uploadMultiple<T>(endpoint: string, files: File[], additionalData?: Record<string, string>): Promise<T> {
+    const formData = new FormData();
+
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
 
     if (additionalData) {
       Object.entries(additionalData).forEach(([key, value]) => {
