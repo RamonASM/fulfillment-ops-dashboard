@@ -107,7 +107,7 @@ router.get('/:clientId', requireClientAccess, async (req, res, next) => {
  * POST /api/clients
  * Create a new client
  */
-router.post('/', requireRole('admin', 'operations_manager'), async (req, res, next) => {
+router.post('/', requireRole('admin', 'operations_manager', 'account_manager'), async (req, res, next) => {
   try {
     const data = createClientSchema.parse(req.body);
 

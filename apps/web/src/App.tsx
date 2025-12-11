@@ -16,6 +16,7 @@ import Reports from '@/pages/Reports';
 import Settings from '@/pages/Settings';
 import FeedbackAnalytics from '@/pages/FeedbackAnalytics';
 import ClientLocations from '@/pages/ClientLocations';
+import Imports from '@/pages/Imports';
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="orders" element={<Orders />} />
         <Route path="reports" element={<Reports />} />
         <Route path="feedback" element={<FeedbackAnalytics />} />
+        <Route path="imports" element={<Imports />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

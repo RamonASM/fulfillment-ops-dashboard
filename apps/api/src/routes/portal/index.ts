@@ -8,6 +8,7 @@ import settingsRoutes from './settings.routes.js';
 import analyticsRoutes from './analytics.routes.js';
 import exportsRoutes from './exports.routes.js';
 import locationsRoutes from './locations.routes.js';
+import artworksRoutes from './artworks.routes.js';
 
 const router = Router();
 
@@ -21,5 +22,6 @@ router.use('/settings', settingsRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/exports', exportsRoutes);
 router.use('/locations', locationsRoutes);
+router.use('/artworks', artworksRoutes);
 
 export default router;
