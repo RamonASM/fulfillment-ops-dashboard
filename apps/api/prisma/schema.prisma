@@ -39,6 +39,20 @@ model User {
   @@map("users")
 }
 
+model PasswordResetToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique @db.VarChar(255)
+  email     String   @db.VarChar(255)
+  userType  String   @map("user_type") @db.VarChar(20) // 'admin' or 'portal'
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([token])
+  @@index([email])
+  @@map("password_reset_tokens")
+}
+
 // -----------------------------------------------------------------------------
 // CLIENT MODELS
 // -----------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/api/client';
@@ -127,12 +127,12 @@ export default function Login() {
             />
             <span className="text-sm text-gray-600">Remember me</span>
           </label>
-          <button
-            type="button"
+          <Link
+            to="/forgot-password"
             className="text-sm text-primary-600 hover:text-primary-700"
           >
             Forgot password?
-          </button>
+          </Link>
         </div>
 
         <button

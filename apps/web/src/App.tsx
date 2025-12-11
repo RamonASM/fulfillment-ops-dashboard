@@ -8,6 +8,8 @@ import AuthLayout from '@/components/layouts/AuthLayout';
 // Pages
 import Dashboard from '@/pages/Dashboard';
 import Login from '@/pages/auth/Login';
+import ForgotPassword from '@/pages/auth/ForgotPassword';
+import ResetPassword from '@/pages/auth/ResetPassword';
 import Clients from '@/pages/Clients';
 import ClientDetail from '@/pages/ClientDetail';
 import Alerts from '@/pages/Alerts';
@@ -49,6 +51,26 @@ export default function App() {
           <PublicRoute>
             <AuthLayout>
               <Login />
+            </AuthLayout>
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicRoute>
+            <AuthLayout>
+              <ForgotPassword />
+            </AuthLayout>
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/reset-password"
+        element={
+          <PublicRoute>
+            <AuthLayout>
+              <ResetPassword />
             </AuthLayout>
           </PublicRoute>
         }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Package, Loader2 } from 'lucide-react';
 import { usePortalAuthStore } from '@/stores/auth.store';
 import toast from 'react-hot-toast';
@@ -108,6 +108,15 @@ export default function Login() {
               )}
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <Link
+              to="/forgot-password"
+              className="text-sm text-emerald-600 hover:text-emerald-700"
+            >
+              Forgot your password?
+            </Link>
+          </div>
 
           <div className="mt-6 text-center text-sm text-gray-500">
             <p>Need help? Contact your account manager.</p>

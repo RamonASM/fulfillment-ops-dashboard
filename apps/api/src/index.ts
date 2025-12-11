@@ -32,6 +32,7 @@ import collaborationRoutes from './routes/collaboration.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
 import userRoutes from './routes/user.routes.js';
 import artworkRoutes from './routes/artwork.routes.js';
+import passwordResetRoutes from './routes/password-reset.routes.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -133,6 +134,7 @@ app.get('/api/csrf-token', getCsrfToken);
 
 // API routes with specific rate limiters
 app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authLimiter, passwordResetRoutes); // Password reset routes
 app.use('/api/clients', clientRoutes);
 app.use('/api/clients/:clientId/products', productRoutes);
 app.use('/api/clients/:clientId/locations', locationRoutes);
