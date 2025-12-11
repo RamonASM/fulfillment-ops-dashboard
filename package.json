@@ -1,0 +1,58 @@
+{
+  "name": "inventory-intelligence-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered inventory management dashboard for account managers",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:portal": "npm run dev -w apps/portal",
+    "build": "npm run build --workspaces --if-present",
+    "build:api": "npm run build -w apps/api",
+    "build:web": "npm run build -w apps/web",
+    "build:portal": "npm run build -w apps/portal",
+    "start:api": "npm run start -w apps/api",
+    "preview:web": "npm run preview -w apps/web",
+    "preview:portal": "npm run preview -w apps/portal",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "prepare": "husky",
+    "db:generate": "npm run db:generate -w apps/api",
+    "db:push": "npm run db:push -w apps/api",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:studio": "npm run db:studio -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "clean": "rm -rf apps/*/dist apps/*/node_modules/.cache"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "inventory",
+    "dashboard",
+    "ai",
+    "react",
+    "typescript"
+  ],
+  "author": "Aerial Shots Media",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "husky": "^9.1.7",
+    "jsdom": "^27.3.0",
+    "lint-staged": "^16.2.7",
+    "vitest": "^4.0.15"
+  }
+}

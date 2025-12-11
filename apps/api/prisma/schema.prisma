@@ -1,0 +1,932 @@
+// =============================================================================
+// INVENTORY INTELLIGENCE PLATFORM - DATABASE SCHEMA
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// USER & AUTH MODELS
+// -----------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique @db.VarChar(255)
+  passwordHash  String    @map("password_hash") @db.VarChar(255)
+  name          String    @db.VarChar(255)
+  role          String    @default("account_manager") @db.VarChar(50)
+  settings      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz
+  isActive      Boolean   @default(true) @map("is_active")
+
+  // Relations
+  clients             UserClient[]
+  importBatches       ImportBatch[]
+  dismissedAlerts     Alert[]   @relation("DismissedBy")
+  auditLogs           AuditLog[]
+  dashboardPreference UserDashboardPreference?
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// -----------------------------------------------------------------------------
+// CLIENT MODELS
+// -----------------------------------------------------------------------------
+
+model Client {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  code      String   @unique @db.VarChar(50)
+  settings  Json     @default("{\"reorderLeadDays\": 14, \"safetyStockWeeks\": 2, \"serviceLevelTarget\": 0.95, \"showOrphanProducts\": false}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  isActive  Boolean  @default(true) @map("is_active")
+
+  // Relations
+  users             UserClient[]
+  products          Product[]
+  alerts            Alert[]
+  importBatches     ImportBatch[]
+  portalUsers       PortalUser[]
+  orderRequests     OrderRequest[]
+  auditLogs         AuditLog[]
+  dailyAlertMetrics DailyAlertMetrics[]
+  // Phase 13 relations
+  locations         Location[]
+  activityFeed      ActivityFeed[]
+  todos             Todo[]
+  configuration     ClientConfiguration?
+  reports           Report[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("clients")
+}
+
+model UserClient {
+  userId    String   @map("user_id") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  role      String   @default("manager") @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@id([userId, clientId])
+  @@map("user_clients")
+}
+
+// -----------------------------------------------------------------------------
+// PRODUCT MODELS
+// -----------------------------------------------------------------------------
+
+model Product {
+  id                String   @id @default(uuid()) @db.Uuid
+  clientId          String   @map("client_id") @db.Uuid
+  productId         String   @map("product_id") @db.VarChar(100)
+  name              String   @db.VarChar(500)
+  itemType          String   @default("evergreen") @map("item_type") @db.VarChar(50)
+  packSize          Int      @default(1) @map("pack_size")
+  notificationPoint Int?     @map("notification_point")
+  currentStockPacks Int      @default(0) @map("current_stock_packs")
+  currentStockUnits Int      @default(0) @map("current_stock_units")
+  reorderPointPacks Int?     @map("reorder_point_packs")
+  calculationBasis  String?  @map("calculation_basis") @db.VarChar(20)
+  stockStatus       String?  @map("stock_status") @db.VarChar(20)
+  weeksRemaining    Int?     @map("weeks_remaining")
+  avgDailyUsage     Float?   @map("avg_daily_usage")
+  isActive          Boolean  @default(true) @map("is_active")
+  isOrphan          Boolean  @default(false) @map("is_orphan")
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Phase 13: Monthly Usage Intelligence fields
+  monthlyUsageUnits     Float?    @map("monthly_usage_units")
+  monthlyUsagePacks     Float?    @map("monthly_usage_packs")
+  usageDataMonths       Int?      @map("usage_data_months")
+  usageCalculationTier  String?   @map("usage_calculation_tier") @db.VarChar(20) // '12_month' | '6_month' | '3_month' | 'weekly'
+  usageConfidence       String?   @map("usage_confidence") @db.VarChar(20) // 'high' | 'medium' | 'low'
+  usageLastCalculated   DateTime? @map("usage_last_calculated") @db.Timestamptz
+
+  // Phase 13: Feedback aggregation fields
+  avgQualityRating      Float?    @map("avg_quality_rating")
+  avgDeliveryRating     Float?    @map("avg_delivery_rating")
+  feedbackCount         Int       @default(0) @map("feedback_count")
+  popularityScore       Float?    @map("popularity_score")
+
+  // Relations
+  client          Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  usageMetrics    UsageMetric[]
+  stockHistory    StockHistory[]
+  alerts          Alert[]
+  dailySnapshots  DailySnapshot[]
+  riskScoreCache  RiskScoreCache?
+  // Phase 13 relations
+  monthlyUsageSnapshots MonthlyUsageSnapshot[]
+  orderRequestItems     OrderRequestItem[]
+  productFeedback       ProductFeedback[]
+
+  @@unique([clientId, productId])
+  @@index([clientId])
+  @@index([productId])
+  @@index([itemType])
+  @@index([isActive])
+  @@index([isOrphan])
+  @@index([stockStatus])
+  // Composite indexes for common query patterns
+  @@index([clientId, isActive, itemType])
+  @@index([clientId, isActive, stockStatus])
+  @@index([clientId, stockStatus, updatedAt])
+  @@map("products")
+}
+
+// -----------------------------------------------------------------------------
+// TRANSACTION MODELS
+// -----------------------------------------------------------------------------
+
+model Transaction {
+  id             String   @id @default(uuid()) @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  orderId        String   @map("order_id") @db.VarChar(100)
+  quantityPacks  Int      @map("quantity_packs")
+  quantityUnits  Int      @map("quantity_units")
+  dateSubmitted  DateTime @map("date_submitted") @db.Date
+  orderStatus    String   @default("completed") @map("order_status") @db.VarChar(50)
+  shipToLocation String?  @map("ship_to_location") @db.VarChar(255)
+  shipToCompany  String?  @map("ship_to_company") @db.VarChar(255)
+  importBatchId  String?  @map("import_batch_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  @@unique([productId, orderId, shipToLocation, dateSubmitted])
+  @@index([productId])
+  @@index([dateSubmitted])
+  @@index([orderId])
+  // Composite indexes for date-range queries
+  @@index([productId, dateSubmitted])
+  @@index([productId, dateSubmitted, orderStatus])
+  @@map("transactions")
+}
+
+// -----------------------------------------------------------------------------
+// USAGE & METRICS MODELS
+// -----------------------------------------------------------------------------
+
+model UsageMetric {
+  id                  String   @id @default(uuid()) @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  periodType          String   @map("period_type") @db.VarChar(20)
+  periodStart         DateTime @map("period_start") @db.Date
+  periodEnd           DateTime @map("period_end") @db.Date
+  totalConsumedUnits  Int      @default(0) @map("total_consumed_units")
+  totalConsumedPacks  Int      @default(0) @map("total_consumed_packs")
+  avgDailyUnits       Decimal? @map("avg_daily_units") @db.Decimal(10, 2)
+  avgDailyPacks       Decimal? @map("avg_daily_packs") @db.Decimal(10, 4)
+  transactionCount    Int      @default(0) @map("transaction_count")
+  calculatedAt        DateTime @default(now()) @map("calculated_at") @db.Timestamptz
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, periodType, periodStart])
+  @@index([productId])
+  @@index([periodType, periodStart])
+  // Composite index for latest metrics lookup
+  @@index([productId, calculatedAt])
+  @@map("usage_metrics")
+}
+
+model StockHistory {
+  id             String   @id @default(uuid()) @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  recordedAt     DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  packsAvailable Int      @map("packs_available")
+  totalUnits     Int      @map("total_units")
+  source         String   @default("import") @db.VarChar(50)
+  notes          String?  @db.Text
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([recordedAt])
+  @@map("stock_history")
+}
+
+// -----------------------------------------------------------------------------
+// ALERT MODELS
+// -----------------------------------------------------------------------------
+
+model Alert {
+  id              String    @id @default(uuid()) @db.Uuid
+  clientId        String    @map("client_id") @db.Uuid
+  productId       String?   @map("product_id") @db.Uuid
+  alertType       String    @map("alert_type") @db.VarChar(50)
+  severity        String    @default("warning") @db.VarChar(20)
+  status          String    @default("active") @db.VarChar(20)
+  title           String    @db.VarChar(255)
+  message         String?   @db.Text
+  thresholdValue  Decimal?  @map("threshold_value") @db.Decimal(10, 2)
+  currentValue    Decimal?  @map("current_value") @db.Decimal(10, 2)
+  isRead          Boolean   @default(false) @map("is_read")
+  isDismissed     Boolean   @default(false) @map("is_dismissed")
+  dismissedBy     String?   @map("dismissed_by") @db.Uuid
+  dismissedAt     DateTime? @map("dismissed_at") @db.Timestamptz
+  // Phase 12: Snooze and assign functionality
+  snoozedUntil    DateTime? @map("snoozed_until") @db.Timestamptz
+  snoozedBy       String?   @map("snoozed_by") @db.Uuid
+  assignedTo      String?   @map("assigned_to") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  dismissedByUser User?   @relation("DismissedBy", fields: [dismissedBy], references: [id])
+
+  @@index([clientId])
+  @@index([productId])
+  @@index([alertType])
+  @@index([status])
+  @@index([clientId, isRead, isDismissed])
+  // Composite indexes for alert filtering
+  @@index([clientId, severity, isDismissed])
+  @@index([clientId, alertType, createdAt])
+  @@map("alerts")
+}
+
+// -----------------------------------------------------------------------------
+// IMPORT MODELS
+// -----------------------------------------------------------------------------
+
+model ImportBatch {
+  id             String    @id @default(uuid()) @db.Uuid
+  clientId       String    @map("client_id") @db.Uuid
+  importType     String    @map("import_type") @db.VarChar(50)
+  filename       String?   @db.VarChar(255)
+  filePath       String?   @map("file_path") @db.VarChar(500)
+  fileChecksum   String?   @map("file_checksum") @db.VarChar(64) // SHA-256 checksum
+  status         String    @default("pending") @db.VarChar(50)
+  rowCount       Int?      @map("row_count")
+  processedCount Int       @default(0) @map("processed_count")
+  errorCount     Int       @default(0) @map("error_count")
+  errors         Json      @default("[]")
+  importedBy     String?   @map("imported_by") @db.Uuid
+  startedAt      DateTime? @map("started_at") @db.Timestamptz
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [importedBy], references: [id])
+  transactions Transaction[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("import_batches")
+}
+
+// -----------------------------------------------------------------------------
+// CLIENT PORTAL MODELS (Phase 4)
+// -----------------------------------------------------------------------------
+
+model PortalUser {
+  id                      String   @id @default(uuid()) @db.Uuid
+  clientId                String   @map("client_id") @db.Uuid
+  email                   String   @unique @db.VarChar(255)
+  passwordHash            String   @map("password_hash") @db.VarChar(255)
+  name                    String   @db.VarChar(255)
+  role                    String   @default("viewer") @db.VarChar(50)
+  isActive                Boolean  @default(true) @map("is_active")
+  notificationPreferences Json     @default("{\"emailAlerts\": true, \"lowStockAlerts\": true, \"orderUpdates\": true, \"weeklyDigest\": false}") @map("notification_preferences")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Phase 13: Location assignment (for multi-location clients)
+  locationId              String?  @map("location_id") @db.Uuid
+
+  // Relations
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  orderRequests  OrderRequest[] @relation("RequestedBy")
+  reviewedOrders OrderRequest[] @relation("ReviewedBy")
+  // Phase 13 relations
+  location       Location?      @relation("LocationPortalUsers", fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([email])
+  @@index([locationId])
+  @@map("portal_users")
+}
+
+model OrderRequest {
+  id            String    @id @default(uuid()) @db.Uuid
+  clientId      String    @map("client_id") @db.Uuid
+  requestedById String    @map("requested_by") @db.Uuid
+  reviewedById  String?   @map("reviewed_by") @db.Uuid
+  locationId    String?   @map("location_id") @db.Uuid
+
+  // Request status (DRAFT→SUBMITTED→ACKNOWLEDGED→CHANGES_REQUESTED→ON_HOLD→FULFILLED)
+  status        String    @default("draft") @db.VarChar(50)
+  items         Json      @default("[]") // Legacy field, use orderRequestItems relation
+
+  // Order details
+  notes         String?   @db.Text
+  reviewNotes   String?   @map("review_notes") @db.Text
+  reviewedAt    DateTime? @map("reviewed_at") @db.Timestamptz
+
+  // Phase 13: Order totals
+  totalPacks    Int?      @map("total_packs")
+  totalUnits    Int?      @map("total_units")
+  estimatedValue Decimal? @map("estimated_value") @db.Decimal(10, 2)
+
+  // Phase 13: External order reference (filled when order placed in external system)
+  externalOrderRef   String?   @map("external_order_ref") @db.VarChar(100)
+  externalOrderDate  DateTime? @map("external_order_date") @db.Timestamptz
+  externalOrderNotes String?   @map("external_order_notes") @db.Text
+
+  // Phase 13: SLA tracking
+  submittedAt    DateTime? @map("submitted_at") @db.Timestamptz
+  acknowledgedAt DateTime? @map("acknowledged_at") @db.Timestamptz
+  slaDeadline    DateTime? @map("sla_deadline") @db.Timestamptz
+  slaBreached    Boolean   @default(false) @map("sla_breached")
+
+  // Phase 13: Fulfillment tracking
+  fulfilledBy    String?   @map("fulfilled_by") @db.Uuid
+  fulfilledAt    DateTime? @map("fulfilled_at") @db.Timestamptz
+
+  // Shipping address (override or from location)
+  shippingAddress String?  @map("shipping_address") @db.Text
+
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client         Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  requestedBy    PortalUser  @relation("RequestedBy", fields: [requestedById], references: [id])
+  reviewedBy     PortalUser? @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  location       Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  // Phase 13 relations
+  orderRequestItems  OrderRequestItem[]
+  statusHistory      RequestStatusHistory[]
+  productFeedback    ProductFeedback[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([locationId])
+  @@index([submittedAt])
+  @@index([slaDeadline, slaBreached])
+  @@map("order_requests")
+}
+
+// -----------------------------------------------------------------------------
+// AUDIT LOG MODEL (Phase 10)
+// -----------------------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  action       String   @db.VarChar(50)
+  category     String   @db.VarChar(50)
+  userId       String?  @map("user_id") @db.Uuid
+  clientId     String?  @map("client_id") @db.Uuid
+  resourceType String?  @map("resource_type") @db.VarChar(50)
+  resourceId   String?  @map("resource_id") @db.VarChar(100)
+  details      Json     @default("{}")
+  ipAddress    String?  @map("ip_address") @db.VarChar(50)
+  userAgent    String?  @map("user_agent") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([category])
+  @@index([userId])
+  @@index([clientId])
+  @@index([createdAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+// -----------------------------------------------------------------------------
+// ANALYTICS & DASHBOARD MODELS (Phase 11)
+// -----------------------------------------------------------------------------
+
+model DailySnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  snapshotDate   DateTime @map("snapshot_date") @db.Date
+  packsAvailable Int      @map("packs_available")
+  unitsAvailable Int      @map("units_available")
+  stockStatus    String   @map("stock_status") @db.VarChar(20)
+  alertsCreated  Int      @default(0) @map("alerts_created")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, snapshotDate])
+  @@index([productId])
+  @@index([snapshotDate])
+  @@map("daily_snapshots")
+}
+
+model DailyAlertMetrics {
+  id            String   @id @default(uuid()) @db.Uuid
+  clientId      String   @map("client_id") @db.Uuid
+  metricDate    DateTime @map("metric_date") @db.Date
+  createdCount  Int      @default(0) @map("created_count")
+  resolvedCount Int      @default(0) @map("resolved_count")
+  byType        Json     @default("{}") @map("by_type")
+  bySeverity    Json     @default("{}") @map("by_severity")
+  avgResolutionHours Float? @map("avg_resolution_hours")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, metricDate])
+  @@index([clientId])
+  @@index([metricDate])
+  @@map("daily_alert_metrics")
+}
+
+model RiskScoreCache {
+  id           String   @id @default(uuid()) @db.Uuid
+  productId    String   @unique @map("product_id") @db.Uuid
+  score        Int
+  riskLevel    String   @map("risk_level") @db.VarChar(20)
+  factors      Json     @default("[]")
+  calculatedAt DateTime @map("calculated_at") @db.Timestamptz
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("risk_score_cache")
+}
+
+model UserDashboardPreference {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @map("user_id") @db.Uuid
+  layout      Json     @default("{}")
+  widgets     Json     @default("{}")
+  refreshRate Int      @default(300000) @map("refresh_rate")
+  theme       String   @default("light") @db.VarChar(20)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_dashboard_preferences")
+}
+
+// -----------------------------------------------------------------------------
+// SAVED FILTERS MODEL (Phase 12)
+// -----------------------------------------------------------------------------
+
+model SavedFilter {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String   @db.VarChar(100)
+  filterType  String   @map("filter_type") @db.VarChar(50) // 'products', 'alerts', 'transactions'
+  filters     Json     @default("{}")
+  isDefault   Boolean  @default(false) @map("is_default")
+  isShared    Boolean  @default(false) @map("is_shared")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([userId])
+  @@index([filterType])
+  @@index([userId, filterType])
+  @@map("saved_filters")
+}
+
+// =============================================================================
+// PHASE 13: ENTERPRISE FEATURES & PREMIUM UX
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// LOCATION MODEL (Multi-Location Tracking)
+// -----------------------------------------------------------------------------
+
+model Location {
+  id            String    @id @default(uuid()) @db.Uuid
+  clientId      String    @map("client_id") @db.Uuid
+  name          String    @db.VarChar(255)
+  code          String    @db.VarChar(50)
+  address       String?   @db.VarChar(500)
+  city          String?   @db.VarChar(100)
+  state         String?   @db.VarChar(100)
+  zipCode       String?   @map("zip_code") @db.VarChar(20)
+  country       String?   @default("US") @db.VarChar(50)
+  contactName   String?   @map("contact_name") @db.VarChar(255)
+  contactEmail  String?   @map("contact_email") @db.VarChar(255)
+  contactPhone  String?   @map("contact_phone") @db.VarChar(50)
+  locationType  String    @default("branch") @map("location_type") @db.VarChar(50) // headquarters | branch | warehouse | store
+  isActive      Boolean   @default(true) @map("is_active")
+  metadata      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  orderRequests   OrderRequest[]
+  portalUsers     PortalUser[]     @relation("LocationPortalUsers")
+  productFeedback ProductFeedback[]
+  reports         Report[]
+
+  @@unique([clientId, code])
+  @@index([clientId, isActive])
+  @@index([locationType])
+  @@map("locations")
+}
+
+// -----------------------------------------------------------------------------
+// MONTHLY USAGE SNAPSHOT (Usage Intelligence)
+// -----------------------------------------------------------------------------
+
+model MonthlyUsageSnapshot {
+  id               String   @id @default(uuid()) @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  yearMonth        String   @map("year_month") @db.VarChar(7) // "2024-12"
+  consumedUnits    Int      @default(0) @map("consumed_units")
+  consumedPacks    Float    @default(0) @map("consumed_packs")
+  transactionCount Int      @default(0) @map("transaction_count")
+  orderCount       Int      @default(0) @map("order_count")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, yearMonth])
+  @@index([productId, yearMonth])
+  @@map("monthly_usage_snapshots")
+}
+
+// -----------------------------------------------------------------------------
+// ORDER REQUEST ITEM (Enhanced Reorder Flow)
+// -----------------------------------------------------------------------------
+
+model OrderRequestItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderRequestId   String   @map("order_request_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+
+  // Order details
+  quantityPacks    Int      @map("quantity_packs")
+  quantityUnits    Int      @map("quantity_units")
+
+  // Snapshot at time of order (historical reference)
+  snapshotMonthlyUsage    Float?   @map("snapshot_monthly_usage")
+  snapshotCalculationTier String?  @map("snapshot_calculation_tier") @db.VarChar(20)
+  snapshotStockLevel      Int?     @map("snapshot_stock_level")
+  snapshotWeeksRemaining  Float?   @map("snapshot_weeks_remaining")
+  snapshotReorderPoint    Int?     @map("snapshot_reorder_point")
+  snapshotSuggestedQty    Int?     @map("snapshot_suggested_qty")
+  pricePerPack            Decimal? @map("price_per_pack") @db.Decimal(10, 2)
+
+  notes            String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  orderRequest OrderRequest @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@index([orderRequestId])
+  @@index([productId])
+  @@map("order_request_items")
+}
+
+// -----------------------------------------------------------------------------
+// REQUEST STATUS HISTORY (Workflow Tracking)
+// -----------------------------------------------------------------------------
+
+model RequestStatusHistory {
+  id             String   @id @default(uuid()) @db.Uuid
+  orderRequestId String   @map("order_request_id") @db.Uuid
+  fromStatus     String   @map("from_status") @db.VarChar(50)
+  toStatus       String   @map("to_status") @db.VarChar(50)
+  changedBy      String   @map("changed_by") @db.Uuid
+  changedByType  String   @map("changed_by_type") @db.VarChar(20) // 'user' | 'portal_user' | 'system'
+  reason         String?  @db.Text
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  orderRequest OrderRequest @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
+
+  @@index([orderRequestId, createdAt])
+  @@map("request_status_history")
+}
+
+// -----------------------------------------------------------------------------
+// COMMENT MODEL (Collaboration)
+// -----------------------------------------------------------------------------
+
+model Comment {
+  id          String    @id @default(uuid()) @db.Uuid
+
+  // Polymorphic entity reference
+  entityType  String    @map("entity_type") @db.VarChar(50) // 'product' | 'order' | 'client' | 'alert'
+  entityId    String    @map("entity_id") @db.Uuid
+
+  // Author
+  authorType  String    @map("author_type") @db.VarChar(20) // 'user' | 'portal_user'
+  authorId    String    @map("author_id") @db.Uuid
+  authorRole  String?   @map("author_role") @db.VarChar(50)
+
+  content     String    @db.Text
+
+  // Visibility control
+  visibility  String    @default("all") @db.VarChar(20) // 'internal' | 'client' | 'all'
+
+  // Thread support
+  parentId    String?   @map("parent_id") @db.Uuid
+
+  // Mentions & attachments
+  mentions    Json?     // [{userId, userType, notified}]
+  attachments Json?     // [{url, filename, type, size}]
+
+  // Edit tracking
+  isEdited    Boolean   @default(false) @map("is_edited")
+  editedAt    DateTime? @map("edited_at") @db.Timestamptz
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Self-relation for threads
+  parent      Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies     Comment[] @relation("CommentReplies")
+
+  @@index([entityType, entityId, visibility])
+  @@index([parentId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+// -----------------------------------------------------------------------------
+// ACTIVITY FEED MODEL (Audit Trail)
+// -----------------------------------------------------------------------------
+
+model ActivityFeed {
+  id          String   @id @default(uuid()) @db.Uuid
+  clientId    String?  @map("client_id") @db.Uuid
+
+  // Actor information
+  actorType   String   @map("actor_type") @db.VarChar(20) // 'user' | 'portal_user' | 'system' | 'automation'
+  actorId     String?  @map("actor_id") @db.Uuid
+  actorName   String?  @map("actor_name") @db.VarChar(255)
+  actorRole   String?  @map("actor_role") @db.VarChar(50)
+
+  // Action details
+  action      String   @db.VarChar(100)
+  category    String   @db.VarChar(50) // 'order' | 'inventory' | 'alert' | 'user' | 'system'
+
+  // Entity reference
+  entityType  String?  @map("entity_type") @db.VarChar(50)
+  entityId    String?  @map("entity_id") @db.Uuid
+  entityName  String?  @map("entity_name") @db.VarChar(255)
+
+  // Rich metadata
+  metadata    Json?
+  changes     Json?    // Before/after for updates
+
+  // Compliance
+  ipAddress   String?  @map("ip_address") @db.VarChar(50)
+  userAgent   String?  @map("user_agent") @db.VarChar(500)
+
+  // Importance
+  severity    String   @default("info") @db.VarChar(20) // 'info' | 'warning' | 'critical'
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([category, createdAt])
+  @@map("activity_feed")
+}
+
+// -----------------------------------------------------------------------------
+// TODO MODEL (Task Management)
+// -----------------------------------------------------------------------------
+
+model Todo {
+  id             String    @id @default(uuid()) @db.Uuid
+  clientId       String?   @map("client_id") @db.Uuid
+
+  // Task details
+  title          String    @db.VarChar(255)
+  description    String?   @db.Text
+
+  // Assignment
+  assignedToType String?   @map("assigned_to_type") @db.VarChar(20) // 'user' | 'portal_user'
+  assignedToId   String?   @map("assigned_to_id") @db.Uuid
+  assignedBy     String    @map("assigned_by") @db.Uuid
+  assignedAt     DateTime  @default(now()) @map("assigned_at") @db.Timestamptz
+
+  // Escalation
+  escalateToId    String?   @map("escalate_to_id") @db.Uuid
+  escalatedAt     DateTime? @map("escalated_at") @db.Timestamptz
+  escalationLevel Int       @default(0) @map("escalation_level")
+
+  // Status
+  status         String    @default("pending") @db.VarChar(20) // 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled'
+  priority       String    @default("medium") @db.VarChar(20) // 'low' | 'medium' | 'high' | 'urgent'
+
+  // Entity link
+  entityType     String?   @map("entity_type") @db.VarChar(50)
+  entityId       String?   @map("entity_id") @db.Uuid
+
+  // Deadlines
+  dueDate        DateTime? @map("due_date") @db.Timestamptz
+  reminderDate   DateTime? @map("reminder_date") @db.Timestamptz
+  slaHours       Int?      @map("sla_hours")
+
+  // Resolution
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+  completedBy    String?   @map("completed_by") @db.Uuid
+  resolution     String?   @db.Text
+
+  // Recurrence
+  isRecurring    Boolean   @default(false) @map("is_recurring")
+  recurrenceRule String?   @map("recurrence_rule") @db.VarChar(50)
+
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, status])
+  @@index([assignedToId, status, dueDate])
+  @@index([dueDate, status])
+  @@map("todos")
+}
+
+// -----------------------------------------------------------------------------
+// NOTIFICATION PREFERENCE MODEL (Enterprise)
+// -----------------------------------------------------------------------------
+
+model NotificationPreference {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  userType       String   @map("user_type") @db.VarChar(20) // 'user' | 'portal_user'
+
+  // Channel preferences
+  emailEnabled   Boolean  @default(true) @map("email_enabled")
+  pushEnabled    Boolean  @default(true) @map("push_enabled")
+  inAppEnabled   Boolean  @default(true) @map("in_app_enabled")
+
+  // Event preferences
+  orderEvents    Json     @default("{\"submitted\": true, \"acknowledged\": true, \"fulfilled\": true}") @map("order_events")
+  alertEvents    Json     @default("{\"critical\": true, \"warning\": true, \"info\": false}") @map("alert_events")
+  commentEvents  Json     @default("{\"mention\": true, \"reply\": true, \"thread\": false}") @map("comment_events")
+  todoEvents     Json     @default("{\"assigned\": true, \"due_soon\": true, \"overdue\": true}") @map("todo_events")
+
+  // Digest preferences
+  dailyDigest    Boolean  @default(false) @map("daily_digest")
+  weeklyDigest   Boolean  @default(true) @map("weekly_digest")
+  digestTime     String?  @map("digest_time") @db.VarChar(5) // "09:00"
+
+  // Quiet hours
+  quietHoursEnabled Boolean @default(false) @map("quiet_hours_enabled")
+  quietHoursStart   String? @map("quiet_hours_start") @db.VarChar(5)
+  quietHoursEnd     String? @map("quiet_hours_end") @db.VarChar(5)
+
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([userId, userType])
+  @@map("notification_preferences")
+}
+
+// -----------------------------------------------------------------------------
+// CLIENT CONFIGURATION MODEL (Enterprise Settings)
+// -----------------------------------------------------------------------------
+
+model ClientConfiguration {
+  id                     String   @id @default(uuid()) @db.Uuid
+  clientId               String   @unique @map("client_id") @db.Uuid
+
+  // Location settings
+  locationMode           String   @default("single") @map("location_mode") @db.VarChar(20) // 'single' | 'multi_tag' | 'multi_account' | 'hybrid'
+  requireLocationOnOrder Boolean  @default(false) @map("require_location_on_order")
+
+  // SLA settings
+  orderResponseSlaHours  Int      @default(24) @map("order_response_sla_hours")
+  alertResponseSlaHours  Int      @default(4) @map("alert_response_sla_hours")
+
+  // Communication preferences
+  primaryContactId       String?  @map("primary_contact_id") @db.Uuid
+  escalationContactId    String?  @map("escalation_contact_id") @db.Uuid
+
+  // Feature flags
+  feedbackEnabled        Boolean  @default(true) @map("feedback_enabled")
+  commentsEnabled        Boolean  @default(true) @map("comments_enabled")
+  reportsEnabled         Boolean  @default(true) @map("reports_enabled")
+
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("client_configurations")
+}
+
+// -----------------------------------------------------------------------------
+// PRODUCT FEEDBACK MODEL (Client Feedback)
+// -----------------------------------------------------------------------------
+
+model ProductFeedback {
+  id                      String    @id @default(uuid()) @db.Uuid
+  productId               String    @map("product_id") @db.Uuid
+  orderRequestId          String?   @map("order_request_id") @db.Uuid
+  locationId              String?   @map("location_id") @db.Uuid
+
+  // Submitter
+  submittedById           String    @map("submitted_by_id") @db.Uuid
+  submittedByType         String    @map("submitted_by_type") @db.VarChar(20) // 'portal_user'
+
+  // Ratings (1-5 scale)
+  qualityRating           Int       @map("quality_rating")
+  deliveryRating          Int?      @map("delivery_rating")
+  valueRating             Int?      @map("value_rating")
+
+  // Preferences
+  wouldReorder            Boolean?  @map("would_reorder")
+  usageNotes              String?   @map("usage_notes") @db.Text
+  quantitySatisfaction    String?   @map("quantity_satisfaction") @db.VarChar(20) // 'too_little' | 'just_right' | 'too_much'
+
+  // Free-form
+  positiveComments        String?   @map("positive_comments") @db.Text
+  improvementSuggestions  String?   @map("improvement_suggestions") @db.Text
+
+  // Photos
+  photos                  Json?     // Array of photo URLs
+
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderRequest OrderRequest? @relation(fields: [orderRequestId], references: [id], onDelete: SetNull)
+  location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([orderRequestId])
+  @@index([createdAt])
+  @@map("product_feedback")
+}
+
+// -----------------------------------------------------------------------------
+// REPORT MODEL (Reports System)
+// -----------------------------------------------------------------------------
+
+model Report {
+  id           String    @id @default(uuid()) @db.Uuid
+  type         String    @db.VarChar(50) // 'client_review' | 'sales_proposal' | 'location_performance' | 'executive_summary'
+  clientId     String?   @map("client_id") @db.Uuid
+  locationId   String?   @map("location_id") @db.Uuid
+
+  title        String    @db.VarChar(255)
+  periodStart  DateTime? @map("period_start") @db.Date
+  periodEnd    DateTime? @map("period_end") @db.Date
+  generatedBy  String    @map("generated_by") @db.Uuid
+  generatedAt  DateTime  @default(now()) @map("generated_at") @db.Timestamptz
+
+  // Storage
+  fileUrl      String?   @map("file_url") @db.VarChar(500)
+  dataSnapshot Json?     @map("data_snapshot")
+
+  status       String    @default("generating") @db.VarChar(20) // 'generating' | 'ready' | 'failed'
+
+  // Relations
+  client   Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, type])
+  @@index([generatedAt])
+  @@map("reports")
+}
