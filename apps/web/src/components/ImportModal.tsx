@@ -10,15 +10,44 @@ import toast from 'react-hot-toast';
 // TYPES
 // =============================================================================
 
+interface ColumnMapping {
+  source: string;
+  target: string;
+  confidence: number;
+}
+
 interface ImportPreview {
   importId: string;
   filename?: string;
   detectedType: string;
   rowCount: number;
-  columns: { source: string; target: string; confidence: number }[];
+  columns: ColumnMapping[];
   sampleRows: Record<string, unknown>[];
   warnings: { type: string; message: string; affectedRows: number }[];
 }
+
+// Available target fields for mapping
+const INVENTORY_TARGET_FIELDS = [
+  { value: '', label: 'Skip this column' },
+  { value: 'productId', label: 'Product ID / SKU' },
+  { value: 'name', label: 'Product Name' },
+  { value: 'currentStockPacks', label: 'Current Stock (Packs)' },
+  { value: 'packSize', label: 'Pack Size / Units per Pack' },
+  { value: 'notificationPoint', label: 'Reorder Point' },
+  { value: 'itemType', label: 'Item Type (evergreen/event)' },
+];
+
+const ORDER_TARGET_FIELDS = [
+  { value: '', label: 'Skip this column' },
+  { value: 'productId', label: 'Product ID / SKU' },
+  { value: 'productName', label: 'Product Name' },
+  { value: 'orderId', label: 'Order ID / PO Number' },
+  { value: 'dateSubmitted', label: 'Order Date' },
+  { value: 'quantityUnits', label: 'Quantity (Units)' },
+  { value: 'shipToCompany', label: 'Ship To Company' },
+  { value: 'shipToLocation', label: 'Ship To Location' },
+  { value: 'orderStatus', label: 'Order Status' },
+];
 
 interface MultiImportResponse {
   count: number;
@@ -59,6 +88,7 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [editedMappings, setEditedMappings] = useState<Record<string, ColumnMapping[]>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Upload mutation (single file)
@@ -92,12 +122,37 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
     },
   });
 
+  // Get the current mappings for a preview (edited or original)
+  const getMappingsForPreview = (preview: ImportPreview): ColumnMapping[] => {
+    return editedMappings[preview.importId] || preview.columns;
+  };
+
+  // Update a single column mapping
+  const updateColumnMapping = (importId: string, sourceColumn: string, newTarget: string) => {
+    setEditedMappings(prev => {
+      const preview = importPreviews.find(p => p.importId === importId);
+      if (!preview) return prev;
+
+      const currentMappings = prev[importId] || preview.columns;
+      const updatedMappings = currentMappings.map(col =>
+        col.source === sourceColumn
+          ? { ...col, target: newTarget, confidence: newTarget ? 1 : 0 }
+          : col
+      );
+
+      return { ...prev, [importId]: updatedMappings };
+    });
+  };
+
   // Confirm import mutation
   const confirmMutation = useMutation({
     mutationFn: async (importId: string) => {
       const preview = importPreviews.find(p => p.importId === importId);
+      if (!preview) throw new Error('Preview not found');
+
+      const mappings = getMappingsForPreview(preview);
       return api.post<ImportResult>(`/imports/${importId}/confirm`, {
-        columnMapping: preview?.columns,
+        columnMapping: mappings,
       });
     },
     onSuccess: (data) => {
@@ -187,6 +242,7 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
     setImportPreviews([]);
     setCurrentPreviewIndex(0);
     setImportResults([]);
+    setEditedMappings({});
     onClose();
   };
 
@@ -392,41 +448,74 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
 
                   {/* Column Mapping */}
                   <div className="space-y-2">
-                    <h3 className="font-medium text-gray-900">Column Mapping</h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium text-gray-900">Column Mapping</h3>
+                      <p className="text-xs text-gray-500">Click on a mapping to change it</p>
+                    </div>
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="px-4 py-2 text-left font-medium text-gray-600">Source Column</th>
                             <th className="px-4 py-2 text-left font-medium text-gray-600">Maps To</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-600">Confidence</th>
+                            <th className="px-4 py-2 text-left font-medium text-gray-600 w-24">Confidence</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {currentPreview.columns.slice(0, 10).map((col, i) => (
-                            <tr key={i}>
-                              <td className="px-4 py-2 text-gray-900">{col.source}</td>
-                              <td className="px-4 py-2 text-gray-600">{col.target || '—'}</td>
-                              <td className="px-4 py-2">
-                                <span className={clsx(
-                                  'px-2 py-0.5 rounded text-xs font-medium',
-                                  col.confidence > 0.8 ? 'bg-green-100 text-green-700' :
-                                  col.confidence > 0.5 ? 'bg-amber-100 text-amber-700' :
-                                  'bg-gray-100 text-gray-600'
-                                )}>
-                                  {Math.round(col.confidence * 100)}%
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {getMappingsForPreview(currentPreview).map((col, i) => {
+                            const targetFields = currentPreview.detectedType === 'order'
+                              ? ORDER_TARGET_FIELDS
+                              : INVENTORY_TARGET_FIELDS;
+
+                            return (
+                              <tr key={i} className={clsx(col.confidence < 0.5 && 'bg-amber-50')}>
+                                <td className="px-4 py-2 text-gray-900">
+                                  <span className="font-medium">{col.source}</span>
+                                </td>
+                                <td className="px-4 py-2">
+                                  <select
+                                    value={col.target || ''}
+                                    onChange={(e) => updateColumnMapping(
+                                      currentPreview.importId,
+                                      col.source,
+                                      e.target.value
+                                    )}
+                                    className={clsx(
+                                      'w-full px-2 py-1 text-sm border rounded-md',
+                                      col.confidence < 0.5
+                                        ? 'border-amber-300 bg-amber-50 focus:border-amber-500 focus:ring-amber-500'
+                                        : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
+                                    )}
+                                  >
+                                    {targetFields.map((field) => (
+                                      <option key={field.value} value={field.value}>
+                                        {field.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td className="px-4 py-2">
+                                  <span className={clsx(
+                                    'px-2 py-0.5 rounded text-xs font-medium',
+                                    col.confidence > 0.8 ? 'bg-green-100 text-green-700' :
+                                    col.confidence > 0.5 ? 'bg-amber-100 text-amber-700' :
+                                    'bg-red-100 text-red-700'
+                                  )}>
+                                    {Math.round(col.confidence * 100)}%
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
-                      {currentPreview.columns.length > 10 && (
-                        <div className="px-4 py-2 bg-gray-50 text-sm text-gray-500">
-                          +{currentPreview.columns.length - 10} more columns
-                        </div>
-                      )}
                     </div>
+                    {getMappingsForPreview(currentPreview).some(col => col.confidence < 0.5) && (
+                      <p className="text-xs text-amber-600 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        Low confidence mappings are highlighted. Please review and adjust as needed.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex justify-between gap-3">
