@@ -126,8 +126,10 @@ router.get('/', async (req, res, next) => {
     // Get total count
     const total = await prisma.product.count({ where });
 
-    // Parse sort
-    const sortField = query.sort.startsWith('-') ? query.sort.slice(1) : query.sort;
+    // Parse sort with whitelist validation
+    const ALLOWED_SORT_FIELDS = ['name', 'productId', 'createdAt', 'updatedAt', 'currentStockPacks', 'currentStockUnits', 'reorderPointPacks'];
+    const rawSortField = query.sort.startsWith('-') ? query.sort.slice(1) : query.sort;
+    const sortField = ALLOWED_SORT_FIELDS.includes(rawSortField) ? rawSortField : 'name';
     const sortOrder = query.sort.startsWith('-') ? 'desc' : 'asc';
 
     // Get products

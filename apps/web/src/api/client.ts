@@ -95,6 +95,19 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
+  async put<T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    const url = this.buildUrl(endpoint, options?.params);
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined,
+      ...options,
+    });
+
+    return this.handleResponse<T>(response);
+  }
+
   async delete<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
     const response = await fetch(url, {

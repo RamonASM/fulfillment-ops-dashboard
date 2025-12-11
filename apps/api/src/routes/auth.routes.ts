@@ -7,6 +7,7 @@ import {
   generateRefreshToken,
   verifyToken,
   authenticate,
+  requireRole,
 } from '../middleware/auth.js';
 import { UnauthorizedError, ValidationError } from '../middleware/error-handler.js';
 
@@ -102,9 +103,10 @@ router.post('/login', async (req, res, next) => {
 
 /**
  * POST /api/auth/register
- * Register a new user (admin only in production)
+ * Register a new user (admin only)
+ * SECURED: Requires authentication and admin role
  */
-router.post('/register', async (req, res, next) => {
+router.post('/register', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { email, password, name, role } = registerSchema.parse(req.body);
 
