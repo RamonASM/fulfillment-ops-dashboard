@@ -56,7 +56,7 @@ class ApiClient {
       console.error('Non-JSON response:', text.substring(0, 500));
 
       if (response.status === 413) {
-        throw new Error('File too large. Maximum size is 10MB.');
+        throw new Error('File too large. Maximum size is 50MB.');
       } else if (response.status === 404) {
         throw new Error('API endpoint not found. Please contact support.');
       } else if (response.status >= 500) {

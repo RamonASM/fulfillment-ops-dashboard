@@ -284,7 +284,7 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                           </span>
                         </p>
                         <p className="text-sm text-gray-500">
-                          Supports CSV, XLSX, XLS, and TSV files up to 10MB each
+                          Supports CSV, XLSX, XLS, and TSV files up to 50MB each
                         </p>
                         <p className="text-xs text-gray-400">
                           You can select multiple files
