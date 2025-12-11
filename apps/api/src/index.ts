@@ -30,6 +30,7 @@ import searchRoutes from './routes/search.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import collaborationRoutes from './routes/collaboration.routes.js';
 import feedbackRoutes from './routes/feedback.routes.js';
+import userRoutes from './routes/user.routes.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -148,6 +149,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/collaboration', collaborationRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use((_req, res) => {
