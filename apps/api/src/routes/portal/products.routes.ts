@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { portalAuth } from '../../middleware/portal-auth.js';
+import { getBatchOnOrderQuantities, getDefaultOnOrderInfo } from '../../lib/batch-loader.js';
 
 const router = Router();
 
@@ -57,13 +58,25 @@ router.get('/', portalAuth, async (req: Request, res: Response) => {
       return acc;
     }, {} as Record<string, number>);
 
-    // Map products with suggested order quantities
-    const productsWithSuggestions = products.map(p => ({
-      ...p,
-      currentStockUnits: p.currentStockUnits || p.currentStockPacks * (p.packSize || 1),
-      status: p.stockStatus || 'unknown',
-      suggestedOrderQty: calculateSuggestedOrder(p),
-    }));
+    // Get on-order quantities for all products
+    const productIds = products.map(p => p.id);
+    const onOrderMap = await getBatchOnOrderQuantities(productIds, clientId);
+
+    // Map products with suggested order quantities and on-order info
+    const productsWithSuggestions = products.map(p => {
+      const onOrderInfo = onOrderMap.get(p.id) || getDefaultOnOrderInfo();
+      return {
+        ...p,
+        currentStockUnits: p.currentStockUnits || p.currentStockPacks * (p.packSize || 1),
+        status: p.stockStatus || 'unknown',
+        suggestedOrderQty: calculateSuggestedOrder(p),
+        // On-order tracking
+        onOrderPacks: onOrderInfo.totalOnOrderPacks,
+        onOrderUnits: onOrderInfo.totalOnOrderUnits,
+        pendingOrders: onOrderInfo.orders,
+        hasOnOrder: onOrderInfo.totalOnOrderPacks > 0,
+      };
+    });
 
     res.json({
       data: productsWithSuggestions,

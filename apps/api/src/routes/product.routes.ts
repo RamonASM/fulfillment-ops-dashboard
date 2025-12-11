@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { authenticate, requireClientAccess } from '../middleware/auth.js';
 import { NotFoundError } from '../middleware/error-handler.js';
-import { getBatchUsageMetrics, getDefaultUsageMetrics } from '../lib/batch-loader.js';
+import { getBatchUsageMetrics, getDefaultUsageMetrics, getBatchOnOrderQuantities, getDefaultOnOrderInfo } from '../lib/batch-loader.js';
 import { searchClientProducts } from '../services/search.service.js';
 import {
   calculateMonthlyUsage,
@@ -138,13 +138,17 @@ router.get('/', async (req, res, next) => {
       take: query.limit,
     });
 
-    // Batch load usage metrics for all products (1 query instead of N)
+    // Batch load usage metrics and on-order data for all products (2 queries instead of N*2)
     const productIds = products.map(p => p.id);
-    const usageMap = await getBatchUsageMetrics(productIds);
+    const [usageMap, onOrderMap] = await Promise.all([
+      getBatchUsageMetrics(productIds),
+      getBatchOnOrderQuantities(productIds, clientId),
+    ]);
 
-    // Enrich products with metrics and status (no additional queries)
+    // Enrich products with metrics, status, and on-order data (no additional queries)
     const enrichedProducts: ProductWithMetrics[] = products.map((product) => {
       const usage = usageMap.get(product.id) || getDefaultUsageMetrics();
+      const onOrderInfo = onOrderMap.get(product.id) || getDefaultOnOrderInfo();
       const status = getStockStatusInfo(
         product.currentStockPacks,
         product.reorderPointPacks || 0,
@@ -158,6 +162,11 @@ router.get('/', async (req, res, next) => {
         reorderPointUnits: (product.reorderPointPacks || 0) * product.packSize,
         usage,
         status,
+        // On-order tracking
+        onOrderPacks: onOrderInfo.totalOnOrderPacks,
+        onOrderUnits: onOrderInfo.totalOnOrderUnits,
+        pendingOrders: onOrderInfo.orders,
+        hasOnOrder: onOrderInfo.totalOnOrderPacks > 0,
       } as ProductWithMetrics;
     });
 
@@ -215,8 +224,12 @@ router.get('/:productId', async (req, res, next) => {
     }
 
     // Batch load with single ID (still uses cache)
-    const usageMap = await getBatchUsageMetrics([product.id]);
+    const [usageMap, onOrderMap] = await Promise.all([
+      getBatchUsageMetrics([product.id]),
+      getBatchOnOrderQuantities([product.id], clientId),
+    ]);
     const usage = usageMap.get(product.id) || getDefaultUsageMetrics();
+    const onOrderInfo = onOrderMap.get(product.id) || getDefaultOnOrderInfo();
     const status = getStockStatusInfo(
       product.currentStockPacks,
       product.reorderPointPacks || 0,
@@ -230,6 +243,11 @@ router.get('/:productId', async (req, res, next) => {
       reorderPointUnits: (product.reorderPointPacks || 0) * product.packSize,
       usage,
       status,
+      // On-order tracking
+      onOrderPacks: onOrderInfo.totalOnOrderPacks,
+      onOrderUnits: onOrderInfo.totalOnOrderUnits,
+      pendingOrders: onOrderInfo.orders,
+      hasOnOrder: onOrderInfo.totalOnOrderPacks > 0,
     });
   } catch (error) {
     next(error);

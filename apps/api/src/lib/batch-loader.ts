@@ -268,3 +268,114 @@ export function getDefaultUsageMetrics(): UsageMetrics {
     calculatedAt: null,
   };
 }
+
+// =============================================================================
+// ON-ORDER QUANTITY LOADER
+// =============================================================================
+
+export interface OnOrderInfo {
+  totalOnOrderPacks: number;
+  totalOnOrderUnits: number;
+  orders: Array<{
+    orderId: string;
+    orderRequestId: string;
+    status: string;
+    quantityPacks: number;
+    quantityUnits: number;
+    createdAt: Date;
+    requestedBy?: string;
+  }>;
+}
+
+/**
+ * Batch load on-order quantities for products based on pending OrderRequestItems
+ * Considers orders in these statuses as "on order": pending, approved, submitted, acknowledged, on_hold
+ * (excludes completed, rejected, cancelled, fulfilled, draft)
+ */
+export async function getBatchOnOrderQuantities(
+  productIds: string[],
+  clientId?: string
+): Promise<Map<string, OnOrderInfo>> {
+  const onOrderMap = new Map<string, OnOrderInfo>();
+
+  if (productIds.length === 0) {
+    return onOrderMap;
+  }
+
+  // Initialize all products with zero on-order
+  for (const productId of productIds) {
+    onOrderMap.set(productId, {
+      totalOnOrderPacks: 0,
+      totalOnOrderUnits: 0,
+      orders: [],
+    });
+  }
+
+  // Statuses that count as "on order" (not fulfilled, not rejected, not draft)
+  const pendingStatuses = ['pending', 'approved', 'submitted', 'acknowledged', 'on_hold'];
+
+  // Query OrderRequestItems for products that are in pending orders
+  const orderItems = await prisma.orderRequestItem.findMany({
+    where: {
+      productId: { in: productIds },
+      orderRequest: {
+        status: { in: pendingStatuses },
+        ...(clientId ? { clientId } : {}),
+      },
+    },
+    include: {
+      orderRequest: {
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          requestedBy: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+      product: {
+        select: {
+          packSize: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  // Aggregate on-order quantities per product
+  for (const item of orderItems) {
+    const info = onOrderMap.get(item.productId);
+    if (info) {
+      const packSize = item.product?.packSize || 1;
+      info.totalOnOrderPacks += item.quantityPacks;
+      info.totalOnOrderUnits += item.quantityUnits || (item.quantityPacks * packSize);
+      info.orders.push({
+        orderId: item.id,
+        orderRequestId: item.orderRequest.id,
+        status: item.orderRequest.status,
+        quantityPacks: item.quantityPacks,
+        quantityUnits: item.quantityUnits || (item.quantityPacks * packSize),
+        createdAt: item.createdAt,
+        requestedBy: item.orderRequest.requestedBy?.name,
+      });
+    }
+  }
+
+  return onOrderMap;
+}
+
+/**
+ * Get default on-order info for products without pending orders
+ */
+export function getDefaultOnOrderInfo(): OnOrderInfo {
+  return {
+    totalOnOrderPacks: 0,
+    totalOnOrderUnits: 0,
+    orders: [],
+  };
+}

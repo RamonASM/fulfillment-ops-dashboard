@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, Upload, Download, Settings, Package, MapPin, MessageSquare, Activity, CheckSquare } from 'lucide-react';
+import { ChevronLeft, Upload, Download, Settings, Package, MapPin, MessageSquare, Activity, CheckSquare, ShoppingCart } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { api } from '@/api/client';
 import type { ClientWithStats, ProductWithMetrics } from '@inventory/shared';
@@ -248,6 +248,7 @@ export default function ClientDetail() {
                       <th>Name</th>
                       <th>Stock</th>
                       <th>Usage</th>
+                      <th>On Order</th>
                       <th>Weeks Left</th>
                     </tr>
                   </thead>
@@ -364,6 +365,36 @@ function ProductRow({ product }: { product: ProductWithMetrics }) {
           showValue={true}
           compact={false}
         />
+      </td>
+      <td>
+        {(product as any).hasOnOrder ? (
+          <div className="group relative">
+            <div className="flex items-center gap-1.5 text-blue-600">
+              <ShoppingCart className="w-4 h-4" />
+              <span className="font-medium text-sm">{(product as any).onOrderPacks} pks</span>
+            </div>
+            {/* Tooltip on hover showing order details */}
+            {(product as any).pendingOrders && (product as any).pendingOrders.length > 0 && (
+              <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg py-2 px-3 -top-2 left-1/2 -translate-x-1/2 -translate-y-full w-48 shadow-lg">
+                <p className="font-semibold mb-1">
+                  {(product as any).pendingOrders.length} pending order{(product as any).pendingOrders.length > 1 ? 's' : ''}
+                </p>
+                {(product as any).pendingOrders.slice(0, 3).map((order: any) => (
+                  <div key={order.orderId} className="flex justify-between text-gray-300">
+                    <span className="capitalize">{order.status}</span>
+                    <span>{order.quantityPacks} pks</span>
+                  </div>
+                ))}
+                {(product as any).pendingOrders.length > 3 && (
+                  <p className="text-gray-400 mt-1">+{(product as any).pendingOrders.length - 3} more...</p>
+                )}
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full border-4 border-transparent border-t-gray-900" />
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-gray-400">—</span>
+        )}
       </td>
       <td>
         <span

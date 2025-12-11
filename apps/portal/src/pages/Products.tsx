@@ -1,11 +1,21 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Package, Filter, Plus } from 'lucide-react';
+import { Search, Package, Filter, Plus, ShoppingCart } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { portalApi } from '@/api/client';
 import { useNavigate } from 'react-router-dom';
 import { UsageTierBadge } from '@/components/ui';
 import { fadeInUp } from '@/lib/animations';
+
+interface PendingOrder {
+  orderId: string;
+  orderRequestId: string;
+  status: string;
+  quantityPacks: number;
+  quantityUnits: number;
+  createdAt: string;
+  requestedBy?: string;
+}
 
 interface Product {
   id: string;
@@ -22,6 +32,11 @@ interface Product {
   usageCalculationTier?: '12_month' | '6_month' | '3_month' | 'weekly' | null;
   usageConfidence?: 'high' | 'medium' | 'low' | null;
   monthlyUsagePacks?: number | null;
+  // On-order tracking
+  onOrderPacks?: number;
+  onOrderUnits?: number;
+  hasOnOrder?: boolean;
+  pendingOrders?: PendingOrder[];
 }
 
 interface ProductsResponse {
@@ -180,6 +195,9 @@ export default function Products() {
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                   Status
                 </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                  On Order
+                </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                   Runway
                 </th>
@@ -191,13 +209,13 @@ export default function Products() {
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
                     Loading products...
                   </td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
                     <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                     <p>No products found</p>
                   </td>
@@ -246,6 +264,36 @@ export default function Products() {
                       <span className={`badge ${statusColors[product.status] || 'badge-watch'}`}>
                         {product.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {product.hasOnOrder ? (
+                        <div className="group relative">
+                          <div className="flex items-center justify-center gap-1.5 text-blue-600">
+                            <ShoppingCart className="w-4 h-4" />
+                            <span className="font-medium">{product.onOrderPacks} pks</span>
+                          </div>
+                          {/* Tooltip on hover showing order details */}
+                          {product.pendingOrders && product.pendingOrders.length > 0 && (
+                            <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg py-2 px-3 -top-2 left-1/2 -translate-x-1/2 -translate-y-full w-48 shadow-lg">
+                              <p className="font-semibold mb-1">
+                                {product.pendingOrders.length} pending order{product.pendingOrders.length > 1 ? 's' : ''}
+                              </p>
+                              {product.pendingOrders.slice(0, 3).map((order) => (
+                                <div key={order.orderId} className="flex justify-between text-gray-300">
+                                  <span className="capitalize">{order.status}</span>
+                                  <span>{order.quantityPacks} pks</span>
+                                </div>
+                              ))}
+                              {product.pendingOrders.length > 3 && (
+                                <p className="text-gray-400 mt-1">+{product.pendingOrders.length - 3} more...</p>
+                              )}
+                              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full border-4 border-transparent border-t-gray-900" />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`font-medium ${
