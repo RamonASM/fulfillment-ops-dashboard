@@ -582,7 +582,7 @@ router.post('/:productId/regenerate-usage', async (req, res, next) => {
     const usageWeekly = weeklyTxs.reduce((sum, t) => sum + (t.quantityUnits || 0), 0);
 
     const packSize = product.packSize || 1;
-    const createdMetrics = [];
+    const createdMetrics: any[] = [];
 
     // 3-month metric
     if (usage3mo > 0) {
