@@ -13,7 +13,8 @@
     "dev:web": "npm run dev -w apps/web",
     "dev:portal": "npm run dev -w apps/portal",
     "build": "npm run build --workspaces --if-present",
-    "build:api": "npm run build -w apps/api",
+    "build:shared": "npm run build -w packages/shared",
+    "build:api": "npm run build:shared && npm run build -w apps/api",
     "build:web": "npm run build -w apps/web",
     "build:portal": "npm run build -w apps/portal",
     "start:api": "npm run start -w apps/api",
@@ -53,6 +54,7 @@
     "husky": "^9.1.7",
     "jsdom": "^27.3.0",
     "lint-staged": "^16.2.7",
+    "prettier": "^3.7.4",
     "vitest": "^4.0.15"
   }
 }
