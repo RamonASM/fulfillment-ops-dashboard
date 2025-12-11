@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { FileSpreadsheet, Upload, Clock, CheckCircle, XCircle, AlertTriangle, ChevronRight, Search } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import { clsx } from 'clsx';
 import { api } from '@/api/client';
 import { fadeInUp } from '@/lib/animations';
+import { ImportModal } from '@/components/ImportModal';
 
 interface ImportHistory {
   id: string;
@@ -34,9 +35,13 @@ const statusConfig = {
 };
 
 export default function Imports() {
-  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<string>('all');
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importClientId, setImportClientId] = useState<string>('');
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch clients for dropdown
   const { data: clientsData } = useQuery({
@@ -71,6 +76,41 @@ export default function Imports() {
     });
   };
 
+  // Handle import success - refresh import history
+  const handleImportSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['imports', 'history'] });
+  };
+
+  // Handle drag events
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (importClientId) {
+      setIsDragging(true);
+    }
+  }, [importClientId]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (importClientId && e.dataTransfer.files[0]) {
+      setShowImportModal(true);
+    }
+  }, [importClientId]);
+
+  // Open modal for selected client
+  const openImportModal = (clientId: string) => {
+    setImportClientId(clientId);
+    setShowImportModal(true);
+  };
+
+  // Get selected client name for display
+  const selectedClientForImport = clients.find(c => c.id === importClientId);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -81,37 +121,124 @@ export default function Imports() {
         </div>
       </motion.div>
 
-      {/* Client Cards for Quick Import */}
+      {/* Import New Data Section */}
       <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Import to Client</h2>
-        <p className="text-sm text-gray-500 mb-4">Select a client to upload inventory data</p>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Import New Data</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {clients.map((client) => (
-            <button
-              key={client.id}
-              onClick={() => navigate(`/clients/${client.id}?import=true`)}
-              className="flex items-center gap-3 p-4 rounded-lg border border-gray-200 hover:border-primary-500 hover:bg-primary-50 transition-all text-left group"
-            >
-              <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center">
-                <Upload className="w-5 h-5 text-primary-600" />
+        {/* Client Selector */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Select Client
+          </label>
+          <select
+            value={importClientId}
+            onChange={(e) => setImportClientId(e.target.value)}
+            className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+          >
+            <option value="">Choose a client...</option>
+            {clients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name} ({client.code})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Drag & Drop Zone */}
+        <div
+          className={clsx(
+            'border-2 border-dashed rounded-xl p-8 text-center transition-all',
+            !importClientId && 'opacity-50 cursor-not-allowed',
+            isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-300',
+            importClientId && !isDragging && 'hover:border-gray-400 cursor-pointer'
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => importClientId && setShowImportModal(true)}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls,.tsv"
+            className="hidden"
+          />
+
+          <Upload className={clsx(
+            'w-12 h-12 mx-auto mb-3',
+            isDragging ? 'text-primary-500' : 'text-gray-400'
+          )} />
+
+          {!importClientId ? (
+            <div>
+              <p className="text-lg font-medium text-gray-500">
+                Select a client above to start importing
+              </p>
+              <p className="text-sm text-gray-400 mt-1">
+                You must choose a client before uploading data
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-lg font-medium text-gray-900">
+                {isDragging ? (
+                  'Drop your file here'
+                ) : (
+                  <>
+                    Drop your file here, or{' '}
+                    <span className="text-primary-600 hover:text-primary-700">
+                      click to browse
+                    </span>
+                  </>
+                )}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                Supports CSV, XLSX, XLS, and TSV files up to 10MB
+              </p>
+              <div className="flex items-center justify-center gap-2 mt-3">
+                <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-600">CSV</span>
+                <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-600">XLSX</span>
+                <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-600">XLS</span>
+                <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-600">TSV</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-900 truncate">{client.name}</div>
-                <div className="text-xs text-gray-500">{client.code}</div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-primary-500" />
-            </button>
-          ))}
+            </div>
+          )}
         </div>
 
         {clients.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-gray-500 border-t border-gray-100 mt-6">
             <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-gray-300" />
             <p>No clients available. Create a client first to import data.</p>
           </div>
         )}
       </motion.div>
+
+      {/* Quick Access - Client Cards */}
+      {clients.length > 0 && (
+        <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Import by Client</h2>
+          <p className="text-sm text-gray-500 mb-4">Or select a client to go to their detail page for import</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {clients.map((client) => (
+              <button
+                key={client.id}
+                onClick={() => openImportModal(client.id)}
+                className="flex items-center gap-3 p-4 rounded-lg border border-gray-200 hover:border-primary-500 hover:bg-primary-50 transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center">
+                  <Upload className="w-5 h-5 text-primary-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900 truncate">{client.name}</div>
+                  <div className="text-xs text-gray-500">{client.code}</div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-primary-500" />
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* Import History */}
       <motion.div {...fadeInUp} className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -219,6 +346,18 @@ export default function Imports() {
           </div>
         )}
       </motion.div>
+
+      {/* Import Modal */}
+      <ImportModal
+        clientId={importClientId}
+        clientName={selectedClientForImport?.name}
+        isOpen={showImportModal}
+        onClose={() => {
+          setShowImportModal(false);
+          setImportClientId('');
+        }}
+        onSuccess={handleImportSuccess}
+      />
     </div>
   );
 }
