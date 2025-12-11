@@ -33,6 +33,7 @@
     "db:migrate": "npm run db:migrate -w apps/api",
     "db:studio": "npm run db:studio -w apps/api",
     "db:seed": "npm run db:seed -w apps/api",
+    "db:seed:thumbprint": "npx tsx apps/api/prisma/seed-thumbprint.ts",
     "clean": "rm -rf apps/*/dist apps/*/node_modules/.cache"
   },
   "engines": {
