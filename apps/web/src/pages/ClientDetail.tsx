@@ -1,6 +1,6 @@
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { ChevronLeft, Upload, Download, Settings, Package, MapPin, MessageSquare, Activity, CheckSquare, ShoppingCart, X, Loader2, Trash2, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, Upload, Download, Settings, Package, MapPin, MessageSquare, Activity, CheckSquare, ShoppingCart, X, Loader2, Trash2, AlertTriangle, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/api/client';
 import type { ClientWithStats, ProductWithMetrics } from '@inventory/shared';
@@ -212,6 +212,13 @@ export default function ClientDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to={`/clients/${clientId}/analytics`}
+            className="btn-primary btn-sm"
+          >
+            <TrendingUp className="w-4 h-4 mr-2" />
+            Analytics
+          </Link>
           <Link
             to={`/clients/${clientId}/locations`}
             className="btn-secondary btn-sm"

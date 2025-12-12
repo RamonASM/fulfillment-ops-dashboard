@@ -1,19 +1,21 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { FileSpreadsheet, Upload, Clock, CheckCircle, XCircle, AlertTriangle, ChevronRight, Search } from 'lucide-react';
+import { FileSpreadsheet, Upload, Clock, CheckCircle, XCircle, AlertTriangle, ChevronRight, Search, Trash2, RotateCcw } from 'lucide-react';
 import { useState, useCallback, useRef } from 'react';
 import { clsx } from 'clsx';
 import { api } from '@/api/client';
 import { fadeInUp } from '@/lib/animations';
 import { ImportModal } from '@/components/ImportModal';
+import toast from 'react-hot-toast';
 
 interface ImportHistory {
   id: string;
   clientId: string;
-  clientName: string;
+  client: { name: string; code: string };
   filename: string;
   fileType: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  importType: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'rolled_back';
   rowCount: number;
   processedCount?: number;
   errorCount?: number;
@@ -32,6 +34,7 @@ const statusConfig = {
   processing: { icon: Clock, color: 'text-blue-500 bg-blue-50', label: 'Processing' },
   completed: { icon: CheckCircle, color: 'text-green-500 bg-green-50', label: 'Completed' },
   failed: { icon: XCircle, color: 'text-red-500 bg-red-50', label: 'Failed' },
+  rolled_back: { icon: RotateCcw, color: 'text-gray-500 bg-gray-50', label: 'Deleted' },
 };
 
 export default function Imports() {
@@ -41,7 +44,25 @@ export default function Imports() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importClientId, setImportClientId] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; importId: string; filename: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Delete import data mutation
+  const deleteImportMutation = useMutation({
+    mutationFn: async (importId: string) => {
+      return api.delete(`/imports/${importId}/data`);
+    },
+    onSuccess: () => {
+      toast.success('Import data deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['imports', 'history'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setDeleteConfirm(null);
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete import: ${error.message}`);
+    },
+  });
 
   // Fetch clients for dropdown
   const { data: clientsData } = useQuery({
@@ -63,7 +84,7 @@ export default function Imports() {
   // Filter by search
   const filteredImports = imports.filter(imp =>
     imp.filename.toLowerCase().includes(search.toLowerCase()) ||
-    imp.clientName.toLowerCase().includes(search.toLowerCase())
+    imp.client?.name?.toLowerCase().includes(search.toLowerCase())
   );
 
   const formatDate = (dateStr: string) => {
@@ -286,9 +307,11 @@ export default function Imports() {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rows</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -309,7 +332,17 @@ export default function Imports() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-700">{imp.clientName}</span>
+                        <span className="text-sm text-gray-700">{imp.client?.name}</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={clsx(
+                          'px-2 py-1 rounded text-xs font-medium capitalize',
+                          imp.importType === 'orders' ? 'bg-blue-50 text-blue-700' :
+                          imp.importType === 'inventory' ? 'bg-green-50 text-green-700' :
+                          'bg-purple-50 text-purple-700'
+                        )}>
+                          {imp.importType || 'unknown'}
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${statusColor}`}>
@@ -331,6 +364,17 @@ export default function Imports() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {formatDate(imp.createdAt)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {imp.status === 'completed' && (
+                          <button
+                            onClick={() => setDeleteConfirm({ show: true, importId: imp.id, filename: imp.filename })}
+                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete import data"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -358,6 +402,54 @@ export default function Imports() {
         }}
         onSuccess={handleImportSuccess}
       />
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm?.show && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Delete Import Data</h3>
+            </div>
+
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to delete all data from this import?
+            </p>
+            <p className="text-sm text-gray-500 mb-4">
+              <strong>File:</strong> {deleteConfirm.filename}
+            </p>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
+              <p className="text-sm text-amber-800">
+                <strong>Warning:</strong> This will delete all products and transactions created by this import. This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                disabled={deleteImportMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteImportMutation.mutate(deleteConfirm.importId)}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+                disabled={deleteImportMutation.isPending}
+              >
+                {deleteImportMutation.isPending ? 'Deleting...' : 'Delete Import Data'}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

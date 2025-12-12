@@ -18,6 +18,7 @@ import Reports from '@/pages/Reports';
 import Settings from '@/pages/Settings';
 import FeedbackAnalytics from '@/pages/FeedbackAnalytics';
 import ClientLocations from '@/pages/ClientLocations';
+import ClientAnalytics from '@/pages/ClientAnalytics';
 import Imports from '@/pages/Imports';
 
 // Auth guard component
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="clients" element={<Clients />} />
         <Route path="clients/:clientId" element={<ClientDetail />} />
         <Route path="clients/:clientId/locations" element={<ClientLocations />} />
+        <Route path="clients/:clientId/analytics" element={<ClientAnalytics />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="orders" element={<Orders />} />
         <Route path="reports" element={<Reports />} />

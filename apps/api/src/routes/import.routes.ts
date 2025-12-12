@@ -440,6 +440,92 @@ router.post('/:importId/confirm', async (req, res, next) => {
 });
 
 /**
+ * DELETE /api/imports/:importId/data
+ * Delete all data (products and transactions) created by a completed import
+ * This allows users to undo an import and remove all associated data
+ */
+router.delete('/:importId/data', async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const { deleteProducts = true, deleteTransactions = true } = req.query;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) {
+      throw new NotFoundError('Import');
+    }
+
+    let deletedProducts = 0;
+    let deletedTransactions = 0;
+
+    // Delete transactions created by this import
+    if (deleteTransactions !== 'false') {
+      const transactionResult = await prisma.transaction.deleteMany({
+        where: { importBatchId: importId },
+      });
+      deletedTransactions = transactionResult.count;
+    }
+
+    // Delete products created by this import (if they have no other transactions)
+    if (deleteProducts !== 'false') {
+      // Find products that were only created for this import (orphan products from order imports)
+      // and have no transactions from other imports
+      const orphanProducts = await prisma.product.findMany({
+        where: {
+          clientId: importBatch.clientId,
+          isOrphan: true,
+          transactions: {
+            none: {
+              importBatchId: { not: importId },
+            },
+          },
+        },
+        select: { id: true },
+      });
+
+      if (orphanProducts.length > 0) {
+        // First delete their transactions (already done above)
+        // Then delete the products
+        const productResult = await prisma.product.deleteMany({
+          where: {
+            id: { in: orphanProducts.map(p => p.id) },
+          },
+        });
+        deletedProducts = productResult.count;
+      }
+    }
+
+    // Delete the uploaded file if exists
+    if (importBatch.filePath && fs.existsSync(importBatch.filePath)) {
+      fs.unlinkSync(importBatch.filePath);
+    }
+
+    // Update import batch status to indicate it was rolled back
+    await prisma.importBatch.update({
+      where: { id: importId },
+      data: {
+        status: 'rolled_back',
+        completedAt: new Date(),
+      },
+    });
+
+    // Recalculate usage after deletion
+    await recalculateClientUsage(importBatch.clientId);
+    await recalculateClientMonthlyUsage(importBatch.clientId);
+
+    res.json({
+      message: 'Import data deleted successfully',
+      deletedProducts,
+      deletedTransactions,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * DELETE /api/imports/:importId
  * Cancel a pending import
  */
@@ -469,6 +555,73 @@ router.delete('/:importId', async (req, res, next) => {
     });
 
     res.json({ message: 'Import cancelled' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/imports/client/:clientId/data
+ * Delete ALL products and transactions for a client (fresh start)
+ * Use with caution - this removes all inventory data
+ */
+router.delete('/client/:clientId/data', async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+    const { confirm } = req.query;
+
+    // Require explicit confirmation
+    if (confirm !== 'true') {
+      throw new ValidationError('Must confirm deletion by adding ?confirm=true to the request');
+    }
+
+    // Verify client exists
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundError('Client');
+    }
+
+    // Delete in order: transactions first, then usage metrics, then products, then import batches
+    const deletedTransactions = await prisma.transaction.deleteMany({
+      where: {
+        product: { clientId },
+      },
+    });
+
+    const deletedUsageMetrics = await prisma.usageMetric.deleteMany({
+      where: {
+        product: { clientId },
+      },
+    });
+
+    const deletedSnapshots = await prisma.monthlyUsageSnapshot.deleteMany({
+      where: {
+        product: { clientId },
+      },
+    });
+
+    const deletedProducts = await prisma.product.deleteMany({
+      where: { clientId },
+    });
+
+    // Delete import batch records
+    const deletedImports = await prisma.importBatch.deleteMany({
+      where: { clientId },
+    });
+
+    res.json({
+      message: 'All client data deleted successfully',
+      deleted: {
+        transactions: deletedTransactions.count,
+        usageMetrics: deletedUsageMetrics.count,
+        monthlySnapshots: deletedSnapshots.count,
+        products: deletedProducts.count,
+        imports: deletedImports.count,
+      },
+    });
   } catch (error) {
     next(error);
   }

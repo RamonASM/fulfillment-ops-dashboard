@@ -202,6 +202,12 @@ const ORDER_SIGNATURES = [
   'order status',
   'order number',
   'qty ordered',
+  'line item',
+  'quantity multiplier',
+  'extended price',
+  'unit price',
+  'ship to company',
+  'ship to identifier',
 ];
 
 /**

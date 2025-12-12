@@ -645,3 +645,634 @@ export async function refreshRiskScoreCache(): Promise<void> {
 
   logger.info('Refreshed risk score cache', { updatedCount: updated, totalProducts: products.length });
 }
+
+// =============================================================================
+// EXTENDED ANALYTICS - PRODUCT, LOCATION, USER, FINANCIAL
+// =============================================================================
+
+export interface ProductAnalytics {
+  id: string;
+  productId: string;
+  name: string;
+  totalOrders: number;
+  totalUnits: number;
+  avgOrderSize: number;
+  orderFrequency: number;
+  velocity: 'fast' | 'medium' | 'slow' | 'dead';
+  abcClass: 'A' | 'B' | 'C';
+  trend: 'growing' | 'stable' | 'declining';
+  lastOrderDate: Date | null;
+  daysSinceLastOrder: number | null;
+  currentStock: number;
+  monthlyUsage: number;
+  weeksOfSupply: number | null;
+  stockoutDate: Date | null;
+  reorderUrgency: 'critical' | 'soon' | 'ok' | 'overstock';
+}
+
+export interface LocationAnalytics {
+  locationId: string;
+  locationName: string;
+  company: string;
+  totalOrders: number;
+  totalUnits: number;
+  orderFrequency: number;
+  topProducts: Array<{ productId: string; name: string; units: number }>;
+  lastOrderDate: Date | null;
+}
+
+export interface AnomalyAlert {
+  type: 'demand_spike' | 'demand_drop' | 'unusual_order' | 'dead_stock' | 'overstock';
+  severity: 'high' | 'medium' | 'low';
+  productId?: string;
+  productName?: string;
+  locationId?: string;
+  message: string;
+  details: string;
+  detectedAt: Date;
+  value?: number;
+  expectedValue?: number;
+}
+
+export interface ReorderRecommendation {
+  productId: string;
+  productName: string;
+  currentStock: number;
+  monthlyUsage: number;
+  weeksOfSupply: number;
+  suggestedOrderQty: number;
+  urgency: 'critical' | 'soon' | 'planned';
+  reason: string;
+  estimatedStockoutDate: Date | null;
+}
+
+export interface IntelligentDashboardSummary {
+  stockHealth: {
+    critical: number;
+    low: number;
+    watch: number;
+    healthy: number;
+    overstock: number;
+  };
+  activity: {
+    ordersThisWeek: number;
+    ordersLastWeek: number;
+    unitsThisMonth: number;
+    avgDailyOrders: number;
+  };
+  alerts: {
+    critical: number;
+    warnings: number;
+    info: number;
+  };
+  topProducts: Array<{ id: string; name: string; units: number; trend: string }>;
+  upcomingStockouts: Array<{ id: string; name: string; daysUntil: number; currentStock: number }>;
+  reorderQueue: ReorderRecommendation[];
+}
+
+/**
+ * Get comprehensive product analytics with ABC classification, velocity, and trends
+ */
+export async function getProductAnalytics(clientId: string): Promise<ProductAnalytics[]> {
+  const now = new Date();
+  const twelveMonthsAgo = subDays(now, 365);
+  const threeMonthsAgo = subDays(now, 90);
+  const oneMonthAgo = subDays(now, 30);
+  const twoMonthsAgo = subDays(now, 60);
+
+  const products = await prisma.product.findMany({
+    where: { clientId, isActive: true },
+    include: {
+      transactions: {
+        where: {
+          orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+          dateSubmitted: { gte: twelveMonthsAgo },
+        },
+        orderBy: { dateSubmitted: 'desc' },
+      },
+    },
+  });
+
+  // Calculate totals for ABC classification
+  const productTotals = products.map(p => ({
+    id: p.id,
+    totalUnits: p.transactions.reduce((sum, t) => sum + t.quantityUnits, 0),
+  }));
+
+  const grandTotalUnits = productTotals.reduce((sum, p) => sum + p.totalUnits, 0);
+  productTotals.sort((a, b) => b.totalUnits - a.totalUnits);
+
+  // ABC classification (Pareto principle)
+  let cumulative = 0;
+  const abcMap = new Map<string, 'A' | 'B' | 'C'>();
+  for (const p of productTotals) {
+    cumulative += p.totalUnits;
+    const percentage = grandTotalUnits > 0 ? (cumulative / grandTotalUnits) * 100 : 0;
+    abcMap.set(p.id, percentage <= 80 ? 'A' : percentage <= 95 ? 'B' : 'C');
+  }
+
+  const analytics: ProductAnalytics[] = [];
+
+  for (const product of products) {
+    const transactions = product.transactions;
+    const totalUnits = transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const totalOrders = transactions.length;
+
+    // Calculate monthly usage from recent data
+    const recentTransactions = transactions.filter(t => t.dateSubmitted >= threeMonthsAgo);
+    const monthsOfData = 3;
+    const monthlyUsage = recentTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) / monthsOfData;
+
+    // Velocity classification
+    let velocity: 'fast' | 'medium' | 'slow' | 'dead';
+    if (monthlyUsage >= 100) velocity = 'fast';
+    else if (monthlyUsage >= 20) velocity = 'medium';
+    else if (monthlyUsage > 0) velocity = 'slow';
+    else velocity = 'dead';
+
+    // Trend (compare last month vs previous month)
+    const lastMonthTxns = transactions.filter(t => t.dateSubmitted >= oneMonthAgo);
+    const prevMonthTxns = transactions.filter(t => t.dateSubmitted >= twoMonthsAgo && t.dateSubmitted < oneMonthAgo);
+    const lastMonthUnits = lastMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const prevMonthUnits = prevMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+
+    let trend: 'growing' | 'stable' | 'declining';
+    if (prevMonthUnits === 0) {
+      trend = lastMonthUnits > 0 ? 'growing' : 'stable';
+    } else {
+      const change = ((lastMonthUnits - prevMonthUnits) / prevMonthUnits) * 100;
+      trend = change > 15 ? 'growing' : change < -15 ? 'declining' : 'stable';
+    }
+
+    const lastOrderDate = transactions[0]?.dateSubmitted || null;
+    const daysSinceLastOrder = lastOrderDate
+      ? Math.floor((now.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const weeklyUsage = monthlyUsage / 4.33;
+    const weeksOfSupply = weeklyUsage > 0 ? currentStock / weeklyUsage : null;
+
+    const stockoutDate = weeklyUsage > 0 && currentStock > 0
+      ? new Date(now.getTime() + (currentStock / (monthlyUsage / 30)) * 24 * 60 * 60 * 1000)
+      : null;
+
+    let reorderUrgency: 'critical' | 'soon' | 'ok' | 'overstock';
+    if (weeksOfSupply === null || weeksOfSupply > 16) {
+      reorderUrgency = monthlyUsage === 0 ? 'ok' : 'overstock';
+    } else if (weeksOfSupply <= 2) {
+      reorderUrgency = 'critical';
+    } else if (weeksOfSupply <= 4) {
+      reorderUrgency = 'soon';
+    } else {
+      reorderUrgency = 'ok';
+    }
+
+    analytics.push({
+      id: product.id,
+      productId: product.productId,
+      name: product.name,
+      totalOrders,
+      totalUnits,
+      avgOrderSize: totalOrders > 0 ? Math.round(totalUnits / totalOrders) : 0,
+      orderFrequency: Math.round((totalOrders / 12) * 10) / 10,
+      velocity,
+      abcClass: abcMap.get(product.id) || 'C',
+      trend,
+      lastOrderDate,
+      daysSinceLastOrder,
+      currentStock,
+      monthlyUsage: Math.round(monthlyUsage),
+      weeksOfSupply: weeksOfSupply ? Math.round(weeksOfSupply * 10) / 10 : null,
+      stockoutDate,
+      reorderUrgency,
+    });
+  }
+
+  return analytics;
+}
+
+/**
+ * Get analytics by shipping location
+ */
+export async function getLocationAnalytics(clientId: string): Promise<LocationAnalytics[]> {
+  const twelveMonthsAgo = subDays(new Date(), 365);
+
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      product: { clientId },
+      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      dateSubmitted: { gte: twelveMonthsAgo },
+    },
+    include: {
+      product: { select: { productId: true, name: true } },
+    },
+  });
+
+  // Group by location
+  const locationMap = new Map<string, {
+    transactions: typeof transactions;
+    company: string;
+  }>();
+
+  for (const txn of transactions) {
+    const key = txn.shipToLocation || txn.shipToCompany || 'Unknown';
+    if (!locationMap.has(key)) {
+      locationMap.set(key, { transactions: [], company: txn.shipToCompany || 'Unknown' });
+    }
+    locationMap.get(key)!.transactions.push(txn);
+  }
+
+  const analytics: LocationAnalytics[] = [];
+
+  for (const [locationId, data] of locationMap.entries()) {
+    const txns = data.transactions;
+    const totalUnits = txns.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const orderIds = new Set(txns.map(t => t.orderId));
+
+    // Top products
+    const productCounts = new Map<string, { name: string; units: number }>();
+    for (const txn of txns) {
+      const key = txn.product.productId;
+      const existing = productCounts.get(key) || { name: txn.product.name, units: 0 };
+      existing.units += txn.quantityUnits;
+      productCounts.set(key, existing);
+    }
+
+    const topProducts = Array.from(productCounts.entries())
+      .map(([productId, d]) => ({ productId, ...d }))
+      .sort((a, b) => b.units - a.units)
+      .slice(0, 5);
+
+    const lastOrderDate = txns.length > 0
+      ? new Date(Math.max(...txns.map(t => t.dateSubmitted.getTime())))
+      : null;
+
+    analytics.push({
+      locationId,
+      locationName: locationId,
+      company: data.company,
+      totalOrders: orderIds.size,
+      totalUnits,
+      orderFrequency: Math.round((orderIds.size / 12) * 10) / 10,
+      topProducts,
+      lastOrderDate,
+    });
+  }
+
+  return analytics.sort((a, b) => b.totalUnits - a.totalUnits);
+}
+
+/**
+ * Detect anomalies in ordering patterns
+ */
+export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]> {
+  const now = new Date();
+  const alerts: AnomalyAlert[] = [];
+  const oneWeekAgo = subDays(now, 7);
+  const twoWeeksAgo = subDays(now, 14);
+  const threeMonthsAgo = subDays(now, 90);
+  const ninetyDaysAgo = subDays(now, 90);
+
+  const products = await prisma.product.findMany({
+    where: { clientId, isActive: true },
+    include: {
+      transactions: {
+        where: { orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] } },
+        orderBy: { dateSubmitted: 'desc' },
+      },
+    },
+  });
+
+  for (const product of products) {
+    const transactions = product.transactions;
+    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+
+    // Baseline (average weekly units over 3 months, excluding last week)
+    const baselineTransactions = transactions.filter(t =>
+      t.dateSubmitted >= threeMonthsAgo && t.dateSubmitted < oneWeekAgo
+    );
+    const baselineWeeks = Math.max(1, Math.floor((now.getTime() - threeMonthsAgo.getTime()) / (7 * 24 * 60 * 60 * 1000)) - 1);
+    const avgWeeklyUnits = baselineTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) / baselineWeeks;
+
+    // Recent week
+    const recentTransactions = transactions.filter(t => t.dateSubmitted >= oneWeekAgo);
+    const recentUnits = recentTransactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+
+    // Demand spike (2x+ normal)
+    if (avgWeeklyUnits > 5 && recentUnits > avgWeeklyUnits * 2) {
+      alerts.push({
+        type: 'demand_spike',
+        severity: recentUnits > avgWeeklyUnits * 3 ? 'high' : 'medium',
+        productId: product.productId,
+        productName: product.name,
+        message: `Demand spike: ${product.name}`,
+        details: `${recentUnits} units this week vs. avg ${Math.round(avgWeeklyUnits)}/week (${Math.round((recentUnits / avgWeeklyUnits) * 100)}%)`,
+        detectedAt: now,
+        value: recentUnits,
+        expectedValue: avgWeeklyUnits,
+      });
+    }
+
+    // Demand drop (< 25% of normal for 2 weeks)
+    const twoWeekTxns = transactions.filter(t => t.dateSubmitted >= twoWeeksAgo);
+    const twoWeekUnits = twoWeekTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+    if (avgWeeklyUnits > 10 && twoWeekUnits < avgWeeklyUnits * 0.5) {
+      alerts.push({
+        type: 'demand_drop',
+        severity: 'medium',
+        productId: product.productId,
+        productName: product.name,
+        message: `Demand drop: ${product.name}`,
+        details: `Only ${twoWeekUnits} units in 2 weeks vs. expected ${Math.round(avgWeeklyUnits * 2)}`,
+        detectedAt: now,
+        value: twoWeekUnits,
+        expectedValue: avgWeeklyUnits * 2,
+      });
+    }
+
+    // Dead stock (no orders in 90 days with inventory)
+    const lastOrder = transactions[0]?.dateSubmitted;
+    if ((!lastOrder || lastOrder < ninetyDaysAgo) && currentStock > 0) {
+      alerts.push({
+        type: 'dead_stock',
+        severity: currentStock > 100 ? 'high' : 'low',
+        productId: product.productId,
+        productName: product.name,
+        message: `Dead stock: ${product.name}`,
+        details: `No orders in 90+ days, ${currentStock} units in stock`,
+        detectedAt: now,
+        value: currentStock,
+      });
+    }
+
+    // Overstock (> 6 months supply)
+    const monthlyUsage = avgWeeklyUnits * 4.33;
+    if (monthlyUsage > 0 && currentStock > monthlyUsage * 6) {
+      const monthsOfStock = Math.round(currentStock / monthlyUsage);
+      alerts.push({
+        type: 'overstock',
+        severity: monthsOfStock > 12 ? 'high' : 'medium',
+        productId: product.productId,
+        productName: product.name,
+        message: `Overstock: ${product.name}`,
+        details: `${monthsOfStock} months of supply (${currentStock} units)`,
+        detectedAt: now,
+        value: currentStock,
+        expectedValue: monthlyUsage * 3,
+      });
+    }
+  }
+
+  // Sort by severity
+  const severityOrder = { high: 0, medium: 1, low: 2 };
+  alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+  return alerts;
+}
+
+/**
+ * Generate smart reorder recommendations
+ */
+export async function getReorderRecommendations(clientId: string): Promise<ReorderRecommendation[]> {
+  const now = new Date();
+  const threeMonthsAgo = subDays(now, 90);
+
+  const products = await prisma.product.findMany({
+    where: { clientId, isActive: true },
+    include: {
+      transactions: {
+        where: {
+          orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+          dateSubmitted: { gte: threeMonthsAgo },
+        },
+      },
+    },
+  });
+
+  const recommendations: ReorderRecommendation[] = [];
+
+  for (const product of products) {
+    const totalUnits = product.transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const monthlyUsage = totalUnits / 3;
+
+    if (monthlyUsage < 1) continue;
+
+    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const weeklyUsage = monthlyUsage / 4.33;
+    const weeksOfSupply = currentStock / weeklyUsage;
+
+    if (weeksOfSupply > 6) continue; // Sufficient stock
+
+    let urgency: 'critical' | 'soon' | 'planned';
+    let reason: string;
+
+    if (weeksOfSupply <= 2) {
+      urgency = 'critical';
+      reason = `Only ${Math.round(weeksOfSupply * 10) / 10} weeks remaining`;
+    } else if (weeksOfSupply <= 4) {
+      urgency = 'soon';
+      reason = `${Math.round(weeksOfSupply)} weeks remaining`;
+    } else {
+      urgency = 'planned';
+      reason = 'Approaching reorder point';
+    }
+
+    // Suggest 8 weeks of supply
+    const targetStock = weeklyUsage * 8;
+    const suggestedQty = Math.ceil(targetStock - currentStock);
+
+    const daysOfSupply = currentStock / (monthlyUsage / 30);
+    const stockoutDate = new Date(now.getTime() + daysOfSupply * 24 * 60 * 60 * 1000);
+
+    recommendations.push({
+      productId: product.productId,
+      productName: product.name,
+      currentStock: Math.round(currentStock),
+      monthlyUsage: Math.round(monthlyUsage),
+      weeksOfSupply: Math.round(weeksOfSupply * 10) / 10,
+      suggestedOrderQty: suggestedQty,
+      urgency,
+      reason,
+      estimatedStockoutDate: stockoutDate,
+    });
+  }
+
+  const urgencyOrder = { critical: 0, soon: 1, planned: 2 };
+  return recommendations.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+}
+
+/**
+ * Get comprehensive intelligent dashboard summary
+ */
+export async function getIntelligentDashboardSummary(clientId: string): Promise<IntelligentDashboardSummary> {
+  const now = new Date();
+  const oneWeekAgo = subDays(now, 7);
+  const twoWeeksAgo = subDays(now, 14);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // Products with usage
+  const products = await prisma.product.findMany({
+    where: { clientId, isActive: true },
+    select: {
+      id: true,
+      productId: true,
+      name: true,
+      currentStockPacks: true,
+      currentStockUnits: true,
+      packSize: true,
+      monthlyUsageUnits: true,
+    },
+  });
+
+  // Stock health
+  const stockHealth = { critical: 0, low: 0, watch: 0, healthy: 0, overstock: 0 };
+  const upcomingStockouts: Array<{ id: string; name: string; daysUntil: number; currentStock: number }> = [];
+
+  for (const product of products) {
+    const monthlyUsage = product.monthlyUsageUnits || 0;
+    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const weeklyUsage = monthlyUsage / 4.33;
+    const weeksRemaining = weeklyUsage > 0 ? currentStock / weeklyUsage : 999;
+
+    if (weeksRemaining <= 2) {
+      stockHealth.critical++;
+      if (weeksRemaining > 0) {
+        upcomingStockouts.push({
+          id: product.id,
+          name: product.name,
+          daysUntil: Math.round(weeksRemaining * 7),
+          currentStock,
+        });
+      }
+    } else if (weeksRemaining <= 4) {
+      stockHealth.low++;
+      upcomingStockouts.push({
+        id: product.id,
+        name: product.name,
+        daysUntil: Math.round(weeksRemaining * 7),
+        currentStock,
+      });
+    } else if (weeksRemaining <= 8) {
+      stockHealth.watch++;
+    } else if (weeksRemaining > 16 && monthlyUsage > 0) {
+      stockHealth.overstock++;
+    } else {
+      stockHealth.healthy++;
+    }
+  }
+
+  upcomingStockouts.sort((a, b) => a.daysUntil - b.daysUntil);
+
+  // Activity metrics
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      product: { clientId },
+      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      dateSubmitted: { gte: twoWeeksAgo },
+    },
+  });
+
+  const thisWeekOrders = new Set(
+    transactions.filter(t => t.dateSubmitted >= oneWeekAgo).map(t => t.orderId)
+  ).size;
+  const lastWeekOrders = new Set(
+    transactions.filter(t => t.dateSubmitted >= twoWeeksAgo && t.dateSubmitted < oneWeekAgo).map(t => t.orderId)
+  ).size;
+
+  const thisMonthTxns = await prisma.transaction.findMany({
+    where: {
+      product: { clientId },
+      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      dateSubmitted: { gte: startOfMonth },
+    },
+  });
+  const unitsThisMonth = thisMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+
+  // Alerts
+  const anomalies = await detectAnomalies(clientId);
+  const alertCounts = {
+    critical: anomalies.filter(a => a.severity === 'high').length,
+    warnings: anomalies.filter(a => a.severity === 'medium').length,
+    info: anomalies.filter(a => a.severity === 'low').length,
+  };
+
+  // Top products
+  const productAnalytics = await getProductAnalytics(clientId);
+  const topProducts = productAnalytics
+    .filter(p => p.totalUnits > 0)
+    .sort((a, b) => b.totalUnits - a.totalUnits)
+    .slice(0, 5)
+    .map(p => ({ id: p.id, name: p.name, units: p.totalUnits, trend: p.trend }));
+
+  // Reorder queue
+  const reorderQueue = await getReorderRecommendations(clientId);
+
+  return {
+    stockHealth,
+    activity: {
+      ordersThisWeek: thisWeekOrders,
+      ordersLastWeek: lastWeekOrders,
+      unitsThisMonth,
+      avgDailyOrders: Math.round(((thisWeekOrders + lastWeekOrders) / 14) * 10) / 10,
+    },
+    alerts: alertCounts,
+    topProducts,
+    upcomingStockouts: upcomingStockouts.slice(0, 10),
+    reorderQueue: reorderQueue.slice(0, 10),
+  };
+}
+
+/**
+ * Get monthly trend data for charts
+ */
+export async function getMonthlyTrends(clientId: string, months: number = 12): Promise<{
+  labels: string[];
+  orders: number[];
+  units: number[];
+  products: number[];
+}> {
+  const now = new Date();
+  const startDate = subDays(now, months * 30);
+
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      product: { clientId },
+      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      dateSubmitted: { gte: startDate },
+    },
+    select: { orderId: true, quantityUnits: true, dateSubmitted: true, productId: true },
+  });
+
+  // Initialize monthly buckets
+  const monthlyData = new Map<string, { orders: Set<string>; units: number; products: Set<string> }>();
+  for (let i = 0; i < months; i++) {
+    const monthDate = subDays(now, (months - 1 - i) * 30);
+    const monthKey = format(monthDate, 'MMM yyyy');
+    monthlyData.set(monthKey, { orders: new Set(), units: 0, products: new Set() });
+  }
+
+  for (const txn of transactions) {
+    const monthKey = format(txn.dateSubmitted, 'MMM yyyy');
+    const data = monthlyData.get(monthKey);
+    if (data) {
+      data.orders.add(txn.orderId);
+      data.units += txn.quantityUnits;
+      data.products.add(txn.productId);
+    }
+  }
+
+  const labels: string[] = [];
+  const orders: number[] = [];
+  const units: number[] = [];
+  const products: number[] = [];
+
+  for (const [label, data] of monthlyData.entries()) {
+    labels.push(label);
+    orders.push(data.orders.size);
+    units.push(data.units);
+    products.push(data.products.size);
+  }
+
+  return { labels, orders, units, products };
+}
