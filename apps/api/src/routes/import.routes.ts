@@ -9,12 +9,14 @@ import {
   parseFile,
   detectFileType,
   generateColumnMapping,
+  generateColumnMappingWithLearning,
   processImport,
   validateImportData,
 } from '../services/import.service.js';
 import { recalculateClientUsage, recalculateClientMonthlyUsage } from '../services/usage.service.js';
 import { runAlertGeneration } from '../services/alert.service.js';
 import { analyzeImportImpact, generateImportDiff } from '../services/import-analysis.service.js';
+import { storeMappingCorrections } from '../services/mapping-learning.service.js';
 
 const router = Router();
 
@@ -116,7 +118,8 @@ router.post('/upload', upload.single('file'), handleMulterError, async (req, res
     const { headers, rows } = await parseFile(req.file.path);
     const detectedType = detectFileType(headers);
     // Pass sample rows for better data type detection
-    const columnMapping = generateColumnMapping(headers, detectedType, rows.slice(0, 20));
+    // Use learning-enabled mapping to incorporate past user corrections
+    const columnMapping = await generateColumnMappingWithLearning(headers, detectedType, clientId, rows.slice(0, 20));
 
     // Create import batch
     const importBatch = await prisma.importBatch.create({
@@ -208,7 +211,8 @@ router.post('/upload-multiple', upload.array('files', 10), handleMulterError, as
       // Parse file and detect type
       const { headers, rows } = await parseFile(file.path);
       const detectedType = detectFileType(headers);
-      const columnMapping = generateColumnMapping(headers, detectedType, rows.slice(0, 20));
+      // Use learning-enabled mapping to incorporate past user corrections
+      const columnMapping = await generateColumnMappingWithLearning(headers, detectedType, clientId, rows.slice(0, 20));
 
       // Create import batch
       const importBatch = await prisma.importBatch.create({
@@ -409,7 +413,7 @@ router.get('/:importId/diff', async (req, res, next) => {
 router.post('/:importId/confirm', async (req, res, next) => {
   try {
     const { importId } = req.params;
-    const { columnMapping } = req.body;
+    const { columnMapping, originalMapping } = req.body;
 
     const importBatch = await prisma.importBatch.findUnique({
       where: { id: importId },
@@ -421,6 +425,32 @@ router.post('/:importId/confirm', async (req, res, next) => {
 
     if (importBatch.status !== 'pending') {
       throw new ValidationError('Import has already been processed');
+    }
+
+    // Store mapping corrections for learning (if user modified mappings)
+    if (originalMapping && columnMapping && Array.isArray(originalMapping) && Array.isArray(columnMapping)) {
+      const corrections: Array<{
+        header: string;
+        suggestedField: string;
+        confirmedField: string;
+      }> = [];
+
+      for (let i = 0; i < columnMapping.length; i++) {
+        const original = originalMapping[i];
+        const confirmed = columnMapping[i];
+        if (original && confirmed && original.mapsTo !== confirmed.mapsTo) {
+          corrections.push({
+            header: original.source,
+            suggestedField: original.mapsTo,
+            confirmedField: confirmed.mapsTo,
+          });
+        }
+      }
+
+      if (corrections.length > 0) {
+        // Store corrections for learning
+        await storeMappingCorrections(importBatch.clientId, corrections);
+      }
     }
 
     // Process import using the service

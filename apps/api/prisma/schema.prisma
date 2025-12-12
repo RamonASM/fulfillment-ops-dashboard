@@ -326,6 +326,22 @@ model ImportBatch {
   @@map("import_batches")
 }
 
+// Learning from user mapping corrections
+model MappingCorrection {
+  id               String   @id @default(uuid()) @db.Uuid
+  clientId         String   @map("client_id") @db.Uuid
+  headerNormalized String   @map("header_normalized") @db.VarChar(255)
+  suggestedField   String   @map("suggested_field") @db.VarChar(100)
+  confirmedField   String   @map("confirmed_field") @db.VarChar(100)
+  correctionCount  Int      @default(1) @map("correction_count")
+  lastCorrectedAt  DateTime @default(now()) @map("last_corrected_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([clientId, headerNormalized])
+  @@index([clientId])
+  @@map("mapping_corrections")
+}
+
 // -----------------------------------------------------------------------------
 // CLIENT CUSTOM FIELD DEFINITIONS (Smart Import Enhancement)
 // Tracks custom fields discovered from imports and their display preferences

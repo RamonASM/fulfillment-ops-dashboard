@@ -23,6 +23,17 @@ import {
   type ExpectedFieldType,
   type DetectedDataType,
 } from '../lib/data-type-detection.js';
+import {
+  checkBlockingRule,
+  calculateCoOccurrenceBoost,
+  getMinimumConfidence,
+  suggestAlternatives,
+} from '../lib/field-groups.js';
+import {
+  getLearnedBoosts,
+  applyLearnedBoost,
+  type LearnedBoost,
+} from './mapping-learning.service.js';
 
 // =============================================================================
 // TYPES
@@ -38,6 +49,8 @@ export interface ColumnMapping {
   detectedDataType?: DetectedDataType;
   /** Whether this is a custom field (not mapped to a known field) */
   isCustomField?: boolean;
+  /** Whether this mapping was boosted by learned user corrections */
+  isLearned?: boolean;
 }
 
 /** Structure for storing custom fields in Product.metadata */
@@ -593,12 +606,224 @@ const ORDER_PATTERNS: FieldPattern[] = [
     mapsTo: 'orderStatus',
     expectedType: 'categorical',
   },
+  // Granular shipping address fields
+  {
+    patterns: [
+      'ship to street', 'ship to street 1', 'ship to address 1', 'shipping street',
+      'street address', 'address line 1', 'address 1', 'street 1', 'street',
+      'delivery street', 'ship street', 'address line', 'ship to addr',
+    ],
+    mapsTo: 'shipToStreet1',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to street 2', 'ship to address 2', 'address line 2', 'address 2',
+      'street 2', 'apt', 'suite', 'unit', 'apartment', 'floor',
+      'building', 'ship to apt', 'ship to suite',
+    ],
+    mapsTo: 'shipToStreet2',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to city', 'city', 'shipping city', 'delivery city', 'town',
+      'municipality', 'ship city', 'destination city',
+    ],
+    mapsTo: 'shipToCity',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to state', 'state', 'province', 'region', 'shipping state',
+      'delivery state', 'ship state', 'state/province', 'st',
+    ],
+    mapsTo: 'shipToState',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to zip', 'zip', 'zip code', 'postal code', 'postal', 'postcode',
+      'shipping zip', 'delivery zip', 'ship zip', 'zipcode', 'zip/postal',
+    ],
+    mapsTo: 'shipToZip',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'ship to country', 'country', 'country code', 'shipping country',
+      'delivery country', 'ship country', 'nation', 'destination country',
+    ],
+    mapsTo: 'shipToCountry',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to phone', 'phone', 'phone number', 'telephone', 'tel',
+      'contact phone', 'shipping phone', 'delivery phone', 'mobile', 'cell',
+    ],
+    mapsTo: 'shipToPhone',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'ship to email', 'email', 'email address', 'e-mail', 'shipping email',
+      'delivery email', 'contact email', 'recipient email',
+    ],
+    mapsTo: 'shipToEmail',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to id', 'ship to identifier', 'location id', 'location code',
+      'site id', 'site code', 'destination id', 'store number', 'store #',
+      'branch code', 'branch id', 'facility id', 'facility code',
+    ],
+    mapsTo: 'shipToIdentifier',
+    expectedType: 'alphanumeric',
+  },
+  // User/Contact fields (who placed the order)
+  {
+    patterns: [
+      'ordered by', 'user', 'requester', 'submitted by', 'created by',
+      'placed by', 'requested by', 'buyer', 'purchaser', 'order creator',
+      'entered by', 'order by', 'ordering user', 'requestor',
+    ],
+    mapsTo: 'orderedBy',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'contact name', 'attention', 'attn', 'care of', 'c/o',
+      'recipient contact', 'ship to attention', 'delivery contact',
+    ],
+    mapsTo: 'contactName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'customer id', 'customer number', 'customer #', 'account number',
+      'account #', 'account id', 'client id', 'client number', 'client #',
+      'buyer id', 'buyer number',
+    ],
+    mapsTo: 'customerId',
+    expectedType: 'alphanumeric',
+  },
+  // Financial/Pricing fields
+  {
+    patterns: [
+      'unit price', 'price per unit', 'price each', 'price/unit', 'unit prc',
+      'item price', 'line price', 'sell price', 'selling price', 'each price',
+    ],
+    mapsTo: 'unitPrice',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'extended price', 'ext price', 'extended', 'line total', 'line amount',
+      'extended amount', 'ext amt', 'item total', 'line value', 'ext prc',
+    ],
+    mapsTo: 'extendedPrice',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'discount', 'discount amount', 'disc', 'discount %', 'discount pct',
+      'discount percent', 'line discount', 'promo discount',
+    ],
+    mapsTo: 'discount',
+    expectedType: 'numeric',
+  },
+  {
+    patterns: [
+      'tax', 'tax amount', 'sales tax', 'vat', 'tax amt', 'taxes',
+      'tax total', 'tax value', 'gst', 'hst',
+    ],
+    mapsTo: 'taxAmount',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'total price', 'total', 'grand total', 'order total', 'final total',
+      'total amount', 'total value', 'invoice total', 'total cost',
+    ],
+    mapsTo: 'totalPrice',
+    expectedType: 'numeric_positive',
+  },
+  // Order detail fields
+  {
+    patterns: [
+      'line number', 'line #', 'line no', 'row number', 'row #', 'row no',
+      'item number', 'seq', 'sequence', 'line id', 'detail line',
+    ],
+    mapsTo: 'lineNumber',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'line item id', 'detail id', 'line item number', 'item line id',
+      'order line id', 'order detail id',
+    ],
+    mapsTo: 'lineItemId',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'ship method', 'shipping method', 'carrier', 'ship via', 'shipping carrier',
+      'delivery method', 'freight', 'shipment method', 'service level',
+      'shipping service', 'delivery service', 'courier',
+    ],
+    mapsTo: 'shipMethod',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'tracking number', 'tracking #', 'tracking no', 'track number',
+      'shipment tracking', 'carrier tracking', 'tracking id', 'tracking code',
+    ],
+    mapsTo: 'trackingNumber',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'ship date', 'shipped date', 'shipment date', 'date shipped',
+      'shipping date', 'dispatch date', 'date dispatched',
+    ],
+    mapsTo: 'shipDate',
+    expectedType: 'date',
+  },
+  {
+    patterns: [
+      'delivery date', 'expected delivery', 'eta', 'estimated delivery',
+      'arrive date', 'arrival date', 'due date', 'required date',
+      'need by date', 'request date', 'deliver by',
+    ],
+    mapsTo: 'expectedDeliveryDate',
+    expectedType: 'date',
+  },
+  {
+    patterns: [
+      'ship weight', 'weight', 'package weight', 'shipment weight',
+      'total weight', 'gross weight', 'shipping weight',
+    ],
+    mapsTo: 'shipWeight',
+    expectedType: 'numeric_positive',
+  },
+  // Quantity fields (packs vs units)
+  {
+    patterns: [
+      'quantity packs', 'qty packs', 'packs ordered', 'packs qty',
+      'cases ordered', 'cases qty', 'cartons', 'boxes', 'pack quantity',
+    ],
+    mapsTo: 'quantityPacks',
+    expectedType: 'numeric_positive',
+  },
 ];
 
 /**
  * Generate column mappings based on headers using fuzzy matching.
  * Uses Jaro-Winkler similarity with abbreviation expansion for better accuracy.
- * Now also matches extended field patterns and preserves unmapped columns as custom fields.
+ * Now includes blocking rules to prevent bad mappings and co-occurrence boosting.
  */
 export function generateColumnMapping(
   headers: string[],
@@ -619,28 +844,216 @@ export function generateColumnMapping(
   const mappings: ColumnMapping[] = [];
   const usedTargets = new Set<string>();
   const usedExtendedTargets = new Set<string>();
+  const matchedFields = new Set<string>(); // For co-occurrence boosting
 
+  // Two-pass approach: first pass collects high-confidence matches for boosting
+  const firstPassResults: Array<{
+    header: string;
+    mapsTo: string;
+    confidence: number;
+    isExtended: boolean;
+  }> = [];
+
+  // First pass: identify high-confidence matches
+  for (const header of headers) {
+    const result = findBestMatchForHeader(
+      header,
+      corePatterns,
+      EXTENDED_FIELD_PATTERNS,
+      sampleRows,
+      new Set(), // No co-occurrence boost in first pass
+    );
+    if (result.confidence >= 0.7) {
+      firstPassResults.push({
+        header,
+        mapsTo: result.mapsTo,
+        confidence: result.confidence,
+        isExtended: result.isExtended,
+      });
+      matchedFields.add(result.mapsTo);
+    }
+  }
+
+  // Second pass: apply co-occurrence boosting and blocking rules
   for (const header of headers) {
     const normalizedHeader = header.toLowerCase().trim();
-    let bestMatch: {
-      mapsTo: string;
-      confidence: number;
-      warnings: string[];
-      isExtended: boolean;
-      detectedDataType?: DetectedDataType;
-    } = {
-      mapsTo: '',
-      confidence: 0,
-      warnings: [],
-      isExtended: false,
-    };
+    let bestMatch = findBestMatchForHeader(
+      header,
+      corePatterns,
+      EXTENDED_FIELD_PATTERNS,
+      sampleRows,
+      matchedFields, // Apply co-occurrence boost
+    );
 
-    // First, try to match against core patterns
-    for (const { patterns: patternList, mapsTo, expectedType } of corePatterns) {
-      if (usedTargets.has(mapsTo) && bestMatch.confidence >= 0.9) {
-        continue;
+    // Apply blocking rules - check if the best match should be blocked
+    if (bestMatch.mapsTo) {
+      const blockingRule = checkBlockingRule(header, bestMatch.mapsTo);
+      if (blockingRule) {
+        // This mapping is blocked! Find an alternative or clear it
+        const alternatives = suggestAlternatives(header, bestMatch.mapsTo);
+
+        if (alternatives.length > 0) {
+          // Try to find a match among alternatives
+          let foundAlternative = false;
+          for (const altField of alternatives) {
+            // Find patterns for this alternative field
+            const altPattern = [...corePatterns, ...EXTENDED_FIELD_PATTERNS].find(
+              p => p.mapsTo === altField
+            );
+            if (altPattern && !usedTargets.has(altField) && !usedExtendedTargets.has(altField)) {
+              // Check if this alternative passes blocking rules
+              const altBlocked = checkBlockingRule(header, altField);
+              if (!altBlocked) {
+                // Use this alternative
+                bestMatch = {
+                  mapsTo: altField,
+                  confidence: Math.max(0.65, bestMatch.confidence * 0.9), // Slightly reduced confidence
+                  warnings: [`Auto-corrected from "${bestMatch.mapsTo}" to "${altField}"`],
+                  isExtended: !corePatterns.some(p => p.mapsTo === altField),
+                };
+                foundAlternative = true;
+                break;
+              }
+            }
+          }
+
+          if (!foundAlternative) {
+            // No valid alternative found, mark as custom field
+            bestMatch = {
+              mapsTo: normalizeFieldName(header),
+              confidence: 0,
+              warnings: [`Blocked mapping to "${bestMatch.mapsTo}" - ${blockingRule.reason}`],
+              isExtended: true,
+            };
+          }
+        } else {
+          // No alternatives suggested, clear the mapping
+          bestMatch = {
+            mapsTo: normalizeFieldName(header),
+            confidence: 0,
+            warnings: [`Blocked mapping to "${bestMatch.mapsTo}" - ${blockingRule.reason}`],
+            isExtended: true,
+          };
+        }
+      }
+    }
+
+    // Check minimum confidence threshold for the field
+    if (bestMatch.mapsTo && bestMatch.confidence > 0) {
+      const minConfidence = getMinimumConfidence(bestMatch.mapsTo);
+      if (bestMatch.confidence < minConfidence) {
+        // Below minimum threshold for this field type
+        bestMatch.warnings.push(
+          `Low confidence (${Math.round(bestMatch.confidence * 100)}%) - requires ${Math.round(minConfidence * 100)}% for "${bestMatch.mapsTo}"`
+        );
+      }
+    }
+
+    // Detect data type for all columns (useful for custom fields and validation)
+    let detectedDataType: DetectedDataType = 'text';
+    if (sampleRows && sampleRows.length > 0) {
+      const sampleValues = sampleRows.slice(0, 20).map(row => row[header]);
+      const analysis = analyzeColumnDataType(sampleValues);
+      detectedDataType = analysis.detectedType;
+    }
+
+    // Generate warnings for low confidence
+    if (bestMatch.confidence > 0 && bestMatch.confidence < 0.7) {
+      if (!bestMatch.warnings.some(w => w.includes('Low confidence'))) {
+        bestMatch.warnings.push(`Low confidence match - please verify "${header}" maps to "${bestMatch.mapsTo}"`);
+      }
+    }
+
+    // Mark target as used if high confidence
+    if (bestMatch.mapsTo && bestMatch.confidence >= 0.7) {
+      if (bestMatch.isExtended) {
+        usedExtendedTargets.add(bestMatch.mapsTo);
+      } else {
+        usedTargets.add(bestMatch.mapsTo);
+      }
+    }
+
+    // Determine if this is a custom field
+    const isCustomField = !bestMatch.mapsTo || bestMatch.isExtended || bestMatch.confidence < 0.5;
+
+    mappings.push({
+      source: header,
+      mapsTo: bestMatch.mapsTo || normalizeFieldName(header),
+      confidence: bestMatch.confidence,
+      confidenceLevel: getConfidenceLevel(bestMatch.confidence),
+      warnings: bestMatch.warnings.length > 0 ? bestMatch.warnings : undefined,
+      detectedDataType,
+      isCustomField,
+    });
+  }
+
+  // Resolve conflicts - if multiple columns map to same target, keep highest confidence
+  return resolveConflicts(mappings);
+}
+
+/**
+ * Find the best matching field for a header.
+ */
+function findBestMatchForHeader(
+  header: string,
+  corePatterns: FieldPattern[],
+  extendedPatterns: FieldPattern[],
+  sampleRows: ParsedRow[] | undefined,
+  matchedFields: Set<string>
+): {
+  mapsTo: string;
+  confidence: number;
+  warnings: string[];
+  isExtended: boolean;
+} {
+  const normalizedHeader = header.toLowerCase().trim();
+  let bestMatch = {
+    mapsTo: '',
+    confidence: 0,
+    warnings: [] as string[],
+    isExtended: false,
+  };
+
+  // First, try to match against core patterns
+  for (const { patterns: patternList, mapsTo, expectedType } of corePatterns) {
+    for (const pattern of patternList) {
+      let similarity: number;
+
+      if (normalizedHeader === pattern) {
+        similarity = 1.0;
+      } else {
+        similarity = similarityWithExpansion(normalizedHeader, pattern);
       }
 
+      // Apply co-occurrence boosting
+      const boost = calculateCoOccurrenceBoost(mapsTo, matchedFields);
+      similarity = Math.min(1.0, similarity + boost);
+
+      if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
+        const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
+        const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
+
+        if (typeValidation.isValid) {
+          similarity = Math.min(1.0, similarity + 0.1);
+        } else if (typeValidation.matchRatio < 0.5) {
+          similarity = similarity * 0.8;
+        }
+      }
+
+      if (similarity > bestMatch.confidence) {
+        bestMatch = {
+          mapsTo,
+          confidence: similarity,
+          warnings: [],
+          isExtended: false,
+        };
+      }
+    }
+  }
+
+  // If no good match in core patterns, try extended patterns
+  if (bestMatch.confidence < 0.7) {
+    for (const { patterns: patternList, mapsTo, expectedType } of extendedPatterns) {
       for (const pattern of patternList) {
         let similarity: number;
 
@@ -649,6 +1062,10 @@ export function generateColumnMapping(
         } else {
           similarity = similarityWithExpansion(normalizedHeader, pattern);
         }
+
+        // Apply co-occurrence boosting
+        const boost = calculateCoOccurrenceBoost(mapsTo, matchedFields);
+        similarity = Math.min(1.0, similarity + boost);
 
         if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
           const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
@@ -666,91 +1083,118 @@ export function generateColumnMapping(
             mapsTo,
             confidence: similarity,
             warnings: [],
-            isExtended: false,
+            isExtended: true,
           };
         }
       }
     }
+  }
 
-    // If no good match in core patterns, try extended patterns
-    if (bestMatch.confidence < 0.7) {
-      for (const { patterns: patternList, mapsTo, expectedType } of EXTENDED_FIELD_PATTERNS) {
-        if (usedExtendedTargets.has(mapsTo)) {
-          continue;
-        }
+  return bestMatch;
+}
 
-        for (const pattern of patternList) {
-          let similarity: number;
+/**
+ * Resolve conflicts when multiple columns map to the same target field.
+ * Keeps the highest confidence mapping and marks others for review.
+ */
+function resolveConflicts(mappings: ColumnMapping[]): ColumnMapping[] {
+  // Group mappings by target field
+  const targetGroups = new Map<string, ColumnMapping[]>();
+  for (const mapping of mappings) {
+    if (mapping.mapsTo && mapping.confidence >= 0.5) {
+      const existing = targetGroups.get(mapping.mapsTo) || [];
+      existing.push(mapping);
+      targetGroups.set(mapping.mapsTo, existing);
+    }
+  }
 
-          if (normalizedHeader === pattern) {
-            similarity = 1.0;
-          } else {
-            similarity = similarityWithExpansion(normalizedHeader, pattern);
-          }
+  // Find conflicts (same target, multiple sources)
+  const conflicts = new Map<string, ColumnMapping>();
+  for (const [target, group] of targetGroups) {
+    if (group.length > 1) {
+      // Sort by confidence, keep highest
+      group.sort((a, b) => b.confidence - a.confidence);
+      conflicts.set(target, group[0]); // Winner
 
-          if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
-            const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
-            const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
-
-            if (typeValidation.isValid) {
-              similarity = Math.min(1.0, similarity + 0.1);
-            } else if (typeValidation.matchRatio < 0.5) {
-              similarity = similarity * 0.8;
-            }
-          }
-
-          if (similarity > bestMatch.confidence) {
-            bestMatch = {
-              mapsTo,
-              confidence: similarity,
-              warnings: [],
-              isExtended: true,
-            };
-          }
-        }
+      // Mark losers
+      for (let i = 1; i < group.length; i++) {
+        const loser = group[i];
+        loser.warnings = loser.warnings || [];
+        loser.warnings.push(
+          `Conflict: "${group[0].source}" also maps to "${target}" with higher confidence (${Math.round(group[0].confidence * 100)}%)`
+        );
+        // Reduce confidence so it shows as needing review
+        loser.confidence = Math.min(loser.confidence, 0.45);
+        loser.confidenceLevel = getConfidenceLevel(loser.confidence);
+        loser.isCustomField = true;
       }
     }
-
-    // Detect data type for all columns (useful for custom fields and validation)
-    let detectedDataType: DetectedDataType = 'text';
-    if (sampleRows && sampleRows.length > 0) {
-      const sampleValues = sampleRows.slice(0, 20).map(row => row[header]);
-      const analysis = analyzeColumnDataType(sampleValues);
-      detectedDataType = analysis.detectedType;
-    }
-
-    // Generate warnings for low confidence
-    if (bestMatch.confidence > 0 && bestMatch.confidence < 0.7) {
-      bestMatch.warnings.push(`Low confidence match - please verify "${header}" maps to "${bestMatch.mapsTo}"`);
-    }
-
-    // Mark target as used if high confidence
-    if (bestMatch.mapsTo && bestMatch.confidence >= 0.7) {
-      if (bestMatch.isExtended) {
-        usedExtendedTargets.add(bestMatch.mapsTo);
-      } else {
-        usedTargets.add(bestMatch.mapsTo);
-      }
-    }
-
-    // Determine if this is a custom field
-    // A column is a custom field if:
-    // 1. No match found at all, OR
-    // 2. Matched to an extended pattern (stored in metadata, not core fields)
-    const isCustomField = !bestMatch.mapsTo || bestMatch.isExtended || bestMatch.confidence < 0.5;
-
-    mappings.push({
-      source: header,
-      mapsTo: bestMatch.mapsTo || normalizeFieldName(header),
-      confidence: bestMatch.confidence,
-      confidenceLevel: getConfidenceLevel(bestMatch.confidence),
-      warnings: bestMatch.warnings.length > 0 ? bestMatch.warnings : undefined,
-      detectedDataType,
-      isCustomField,
-    });
   }
 
   return mappings;
+}
+
+/**
+ * Generate column mappings with learning from past user corrections.
+ * This is the async version that fetches learned boosts from the database.
+ */
+export async function generateColumnMappingWithLearning(
+  headers: string[],
+  fileType: 'inventory' | 'orders' | 'both',
+  clientId: string,
+  sampleRows?: ParsedRow[]
+): Promise<ColumnMapping[]> {
+  // Get learned boosts for this client
+  const learnedBoosts = await getLearnedBoosts(clientId, headers);
+
+  // Generate base mappings
+  const mappings = generateColumnMapping(headers, fileType, sampleRows);
+
+  // Apply learned boosts to each mapping
+  for (const mapping of mappings) {
+    if (mapping.confidence > 0) {
+      const { confidence, isLearned } = applyLearnedBoost(
+        mapping.source,
+        mapping.mapsTo,
+        mapping.confidence,
+        learnedBoosts
+      );
+      mapping.confidence = confidence;
+      mapping.confidenceLevel = getConfidenceLevel(confidence);
+      mapping.isLearned = isLearned;
+
+      if (isLearned) {
+        // Add a note that this was learned from previous corrections
+        mapping.warnings = mapping.warnings || [];
+        mapping.warnings.push('Mapping improved from previous corrections');
+      }
+    }
+
+    // Also check if there's a learned boost suggesting a different field
+    const boost = learnedBoosts.get(normalizeHeaderForLearning(mapping.source));
+    if (boost && boost.boostedField !== mapping.mapsTo && mapping.confidence < 0.7) {
+      // Suggest the learned field as an alternative
+      mapping.warnings = mapping.warnings || [];
+      mapping.warnings.push(
+        `Previously mapped to "${boost.boostedField}" (${boost.correctionCount} times)`
+      );
+    }
+  }
+
+  return mappings;
+}
+
+/**
+ * Normalize header for learning lookup (matches the normalization in mapping-learning.service.ts)
+ */
+function normalizeHeaderForLearning(header: string): string {
+  return header
+    .toLowerCase()
+    .trim()
+    .replace(/[()[\]{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^(ship to|ship|shipping|deliver to|delivery)\s+/i, '')
+    .trim();
 }
 
 /**

@@ -19,6 +19,7 @@ interface ColumnMapping {
   warnings?: string[];
   detectedDataType?: 'numeric' | 'numeric_positive' | 'numeric_integer' | 'date' | 'alphanumeric' | 'text' | 'boolean' | 'empty';
   isCustomField?: boolean;
+  isLearned?: boolean; // Whether this mapping was boosted by learned user corrections
 }
 
 interface ValidationSummary {
@@ -87,14 +88,44 @@ const ALL_INVENTORY_FIELDS = [
 
 const ORDER_TARGET_FIELDS = [
   { value: '', label: 'Skip this column', category: 'skip' },
+  // Core order fields
   { value: 'productId', label: 'Product ID / SKU', category: 'core' },
   { value: 'productName', label: 'Product Name', category: 'core' },
   { value: 'orderId', label: 'Order ID / PO Number', category: 'core' },
   { value: 'dateSubmitted', label: 'Order Date', category: 'core' },
   { value: 'quantityUnits', label: 'Quantity (Units)', category: 'core' },
-  { value: 'shipToCompany', label: 'Ship To Company', category: 'core' },
-  { value: 'shipToLocation', label: 'Ship To Location', category: 'core' },
+  { value: 'quantityPacks', label: 'Quantity (Packs)', category: 'core' },
   { value: 'orderStatus', label: 'Order Status', category: 'core' },
+  // Shipping address fields
+  { value: 'shipToCompany', label: 'Ship To Company', category: 'shipping' },
+  { value: 'shipToStreet1', label: 'Ship To Street', category: 'shipping' },
+  { value: 'shipToStreet2', label: 'Ship To Street 2', category: 'shipping' },
+  { value: 'shipToCity', label: 'Ship To City', category: 'shipping' },
+  { value: 'shipToState', label: 'Ship To State', category: 'shipping' },
+  { value: 'shipToZip', label: 'Ship To Zip', category: 'shipping' },
+  { value: 'shipToCountry', label: 'Ship To Country', category: 'shipping' },
+  { value: 'shipToLocation', label: 'Ship To Location', category: 'shipping' },
+  { value: 'shipToIdentifier', label: 'Location ID/Code', category: 'shipping' },
+  // Contact fields
+  { value: 'orderedBy', label: 'Ordered By / User', category: 'contact' },
+  { value: 'contactName', label: 'Contact Name', category: 'contact' },
+  { value: 'shipToPhone', label: 'Phone', category: 'contact' },
+  { value: 'shipToEmail', label: 'Email', category: 'contact' },
+  { value: 'customerId', label: 'Customer ID', category: 'contact' },
+  // Financial fields
+  { value: 'unitPrice', label: 'Unit Price', category: 'financial' },
+  { value: 'extendedPrice', label: 'Extended Price', category: 'financial' },
+  { value: 'discount', label: 'Discount', category: 'financial' },
+  { value: 'taxAmount', label: 'Tax Amount', category: 'financial' },
+  { value: 'totalPrice', label: 'Total Price', category: 'financial' },
+  // Order detail fields
+  { value: 'lineNumber', label: 'Line Number', category: 'detail' },
+  { value: 'lineItemId', label: 'Line Item ID', category: 'detail' },
+  { value: 'shipMethod', label: 'Ship Method', category: 'detail' },
+  { value: 'trackingNumber', label: 'Tracking Number', category: 'detail' },
+  { value: 'shipDate', label: 'Ship Date', category: 'detail' },
+  { value: 'expectedDeliveryDate', label: 'Expected Delivery', category: 'detail' },
+  { value: 'shipWeight', label: 'Weight', category: 'detail' },
 ];
 
 interface MultiImportResponse {
@@ -214,8 +245,10 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
       if (!preview) throw new Error('Preview not found');
 
       const mappings = getMappingsForPreview(preview);
+      // Send both original and edited mappings so backend can learn from corrections
       return api.post<ImportResult>(`/imports/${importId}/confirm`, {
         columnMapping: mappings,
+        originalMapping: preview.columns, // Original auto-detected mappings
       });
     },
     onSuccess: (data) => {
@@ -522,6 +555,10 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                           <span className="w-2 h-2 rounded-full bg-blue-500"></span>
                           Custom field
                         </span>
+                        <span className="flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">AI</span>
+                          Learned
+                        </span>
                       </div>
                     </div>
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -594,15 +631,22 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                                   )}
                                 </td>
                                 <td className="px-4 py-2">
-                                  <span className={clsx(
-                                    'px-2 py-0.5 rounded text-xs font-medium',
-                                    col.confidence > 0.8 ? 'bg-green-100 text-green-700' :
-                                    col.confidence > 0.5 ? 'bg-amber-100 text-amber-700' :
-                                    col.confidence > 0 ? 'bg-red-100 text-red-700' :
-                                    'bg-gray-100 text-gray-500'
-                                  )}>
-                                    {col.confidence > 0 ? `${Math.round(col.confidence * 100)}%` : 'New'}
-                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <span className={clsx(
+                                      'px-2 py-0.5 rounded text-xs font-medium',
+                                      col.confidence > 0.8 ? 'bg-green-100 text-green-700' :
+                                      col.confidence > 0.5 ? 'bg-amber-100 text-amber-700' :
+                                      col.confidence > 0 ? 'bg-red-100 text-red-700' :
+                                      'bg-gray-100 text-gray-500'
+                                    )}>
+                                      {col.confidence > 0 ? `${Math.round(col.confidence * 100)}%` : 'New'}
+                                    </span>
+                                    {col.isLearned && (
+                                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium" title="Mapping improved from past corrections">
+                                        AI
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );

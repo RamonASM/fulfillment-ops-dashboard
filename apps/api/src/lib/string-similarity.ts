@@ -218,14 +218,39 @@ export const ABBREVIATIONS: Record<string, string> = {
   // Date/Time
   dt: 'date',
 
-  // Location
+  // Location/Address
   addr: 'address',
   loc: 'location',
+  str: 'street',
+  st: 'street',
+  cty: 'city',
+  prov: 'province',
+  cntry: 'country',
+  ctry: 'country',
 
   // Shipping
   shp: 'ship',
   dlvr: 'deliver',
   dlv: 'delivery',
+  dest: 'destination',
+  recip: 'recipient',
+  consig: 'consignee',
+
+  // Financial/Price
+  prc: 'price',
+  pce: 'price',
+  ext: 'extended',
+  disc: 'discount',
+  val: 'value',
+  cst: 'cost',
+
+  // Contact/User
+  usr: 'user',
+  req: 'requester',
+  attn: 'attention',
+  cont: 'contact',
+  cust: 'customer',
+  acct: 'account',
 
   // Status
   stat: 'status',
@@ -239,6 +264,13 @@ export const ABBREVIATIONS: Record<string, string> = {
   tot: 'total',
   pt: 'point',
   cfg: 'configuration',
+  ln: 'line',
+  seq: 'sequence',
+  trk: 'tracking',
+  carr: 'carrier',
+  meth: 'method',
+  wgt: 'weight',
+  wt: 'weight',
 };
 
 /**
