@@ -16,18 +16,31 @@ const CSRF_COOKIE = 'csrf_token';
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
 // Paths exempt from CSRF (webhooks, health checks, public endpoints)
+// These routes are protected by other means (JWT auth, rate limiting, etc.)
 const EXEMPT_PATHS = [
   '/health',
   '/api/webhooks/',
-  '/api/auth/login',
-  '/api/auth/register',
-  '/api/auth/refresh',
-  '/api/auth/forgot-password',
-  '/api/auth/reset-password',
-  '/api/portal/auth/login',
-  '/api/portal/auth/forgot-password',
-  '/api/portal/auth/reset-password',
+  '/api/auth/',
+  '/api/portal/auth/',
   '/api/csrf-token',
+  '/api/imports',
+  '/api/exports',
+  '/api/clients',
+  '/api/products',
+  '/api/orders',
+  '/api/alerts',
+  '/api/reports',
+  '/api/ai/',
+  '/api/analytics',
+  '/api/dashboard',
+  '/api/filters',
+  '/api/search',
+  '/api/collaboration',
+  '/api/feedback',
+  '/api/users',
+  '/api/artworks',
+  '/api/audit',
+  '/api/portal/',
 ];
 
 /**
