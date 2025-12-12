@@ -17,6 +17,12 @@ import { recalculateClientUsage, recalculateClientMonthlyUsage } from '../servic
 import { runAlertGeneration } from '../services/alert.service.js';
 import { analyzeImportImpact, generateImportDiff } from '../services/import-analysis.service.js';
 import { storeMappingCorrections } from '../services/mapping-learning.service.js';
+import {
+  getClientCustomFields,
+  discoverCustomFields,
+  updateCustomFieldDefinition,
+  getCustomFieldStats,
+} from '../services/custom-field.service.js';
 
 const router = Router();
 
@@ -697,6 +703,141 @@ router.post('/recalculate/:clientId', async (req, res, next) => {
       message: 'Recalculation completed',
       alerts: alertResult,
       fixedProducts: fixedProducts.count,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================================================
+// CUSTOM FIELD ENDPOINTS
+// =============================================================================
+
+/**
+ * GET /api/imports/custom-fields/:clientId
+ * Get all custom field definitions for a client
+ * Used by MappingComboBox to show existing custom fields
+ */
+router.get('/custom-fields/:clientId', async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+
+    // Verify client exists
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundError('Client');
+    }
+
+    const customFields = await getClientCustomFields(clientId);
+
+    res.json({
+      data: customFields,
+      count: customFields.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/custom-fields/:clientId
+ * Create a new custom field definition on-the-fly
+ * Used when user types a new field name in the MappingComboBox
+ */
+router.post('/custom-fields/:clientId', async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+    const { fieldName, sourceColumnName, dataType = 'text' } = req.body;
+
+    if (!fieldName) {
+      throw new ValidationError('Field name is required');
+    }
+
+    // Verify client exists
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundError('Client');
+    }
+
+    // Normalize field name to camelCase
+    const normalizedName = fieldName
+      .toLowerCase()
+      .trim()
+      .replace(/[()[\]{}]/g, '')
+      .replace(/[-_\s]+(.)?/g, (_: string, c: string) => c ? c.toUpperCase() : '')
+      .replace(/^./, (c: string) => c.toLowerCase());
+
+    // Create custom field using the discovery service
+    const [customField] = await discoverCustomFields(clientId, [{
+      source: sourceColumnName || fieldName,
+      mapsTo: normalizedName,
+      dataType,
+    }]);
+
+    res.json({
+      data: customField,
+      message: 'Custom field created successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/imports/custom-fields/:fieldId
+ * Update a custom field definition
+ */
+router.patch('/custom-fields/:fieldId', async (req, res, next) => {
+  try {
+    const { fieldId } = req.params;
+    const { displayName, isDisplayed, isPinned, displayOrder, aggregationType, formatPattern } = req.body;
+
+    const updated = await updateCustomFieldDefinition(fieldId, {
+      displayName,
+      isDisplayed,
+      isPinned,
+      displayOrder,
+      aggregationType,
+      formatPattern,
+    });
+
+    res.json({
+      data: updated,
+      message: 'Custom field updated successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/imports/custom-fields/:clientId/stats
+ * Get statistics for all custom fields
+ */
+router.get('/custom-fields/:clientId/stats', async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+
+    // Verify client exists
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundError('Client');
+    }
+
+    const stats = await getCustomFieldStats(clientId);
+
+    res.json({
+      data: stats,
+      count: stats.length,
     });
   } catch (error) {
     next(error);

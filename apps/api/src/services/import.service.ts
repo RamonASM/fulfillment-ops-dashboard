@@ -28,6 +28,7 @@ import {
   calculateCoOccurrenceBoost,
   getMinimumConfidence,
   suggestAlternatives,
+  checkSemanticCompatibility,
 } from '../lib/field-groups.js';
 import {
   getLearnedBoosts,
@@ -566,11 +567,9 @@ const ORDER_PATTERNS: FieldPattern[] = [
   },
   {
     patterns: [
-      'total quantity', 'qty ordered', 'quantity', 'qty', 'order qty',
-      'order quantity', 'ordered quantity', 'units ordered', 'units',
-      'quantity ordered', 'shipped qty', 'ship qty', 'amount',
-      'qty shipped', 'quantity shipped', 'pack qty', 'case qty',
-      'unit qty', 'total units', 'total qty', 'line qty', 'line quantity',
+      'qty ordered', 'quantity ordered', 'order qty', 'order quantity',
+      'units ordered', 'shipped qty', 'ship qty', 'qty shipped',
+      'quantity shipped', 'line qty', 'line quantity', 'unit qty',
     ],
     mapsTo: 'quantityUnits',
     expectedType: 'numeric_positive',
@@ -818,6 +817,103 @@ const ORDER_PATTERNS: FieldPattern[] = [
     mapsTo: 'quantityPacks',
     expectedType: 'numeric_positive',
   },
+
+  // =============================================================================
+  // NEW FIELD PATTERNS - Fix semantic mismatches
+  // =============================================================================
+
+  // Order type - categorical field, NOT financial
+  {
+    patterns: [
+      'order type', 'type of order', 'order category', 'order classification',
+      'transaction type', 'sale type', 'request type',
+    ],
+    mapsTo: 'orderType',
+    expectedType: 'categorical',
+  },
+
+  // Person name fields - should NOT map to address components
+  {
+    patterns: [
+      'ship to first name', 'first name', 'firstname', 'fname', 'given name',
+      'ship to fname', 'recipient first name', 'delivery first name',
+    ],
+    mapsTo: 'shipToFirstName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'ship to last name', 'last name', 'lastname', 'lname', 'surname',
+      'family name', 'ship to lname', 'recipient last name', 'delivery last name',
+    ],
+    mapsTo: 'shipToLastName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'contact first name', 'buyer first name', 'customer first name',
+    ],
+    mapsTo: 'contactFirstName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'contact last name', 'buyer last name', 'customer last name',
+    ],
+    mapsTo: 'contactLastName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'full name', 'recipient name', 'addressee', 'ship to name',
+    ],
+    mapsTo: 'fullName',
+    expectedType: 'text',
+  },
+
+  // Quantity multiplier / Total quantity - distinct from quantityUnits
+  {
+    patterns: [
+      'quantity multiplier', 'multiplier', 'pack multiplier', 'qty multiplier',
+      'conversion factor', 'factor', 'per pack', 'units per pack',
+    ],
+    mapsTo: 'quantityMultiplier',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'total quantity', 'total qty', 'total units', 'aggregate quantity',
+      'sum quantity', 'sum qty', 'total count', 'grand total qty',
+    ],
+    mapsTo: 'totalQuantity',
+    expectedType: 'numeric_positive',
+  },
+
+  // Contact info - distinct phone/email fields
+  {
+    patterns: [
+      'contact phone', 'buyer phone', 'customer phone', 'order phone',
+    ],
+    mapsTo: 'contactPhone',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'contact email', 'buyer email', 'customer email', 'order email',
+    ],
+    mapsTo: 'contactEmail',
+    expectedType: 'text',
+  },
+
+  // Customized product fields
+  {
+    patterns: [
+      'customized product id', 'custom product id', 'personalized id',
+      'customized sku', 'custom sku', 'personalized product',
+    ],
+    mapsTo: 'customizedProductId',
+    expectedType: 'alphanumeric',
+  },
 ];
 
 /**
@@ -993,6 +1089,7 @@ export function generateColumnMapping(
 
 /**
  * Find the best matching field for a header.
+ * Now includes semantic compatibility checking to prevent mismatches.
  */
 function findBestMatchForHeader(
   header: string,
@@ -1014,6 +1111,14 @@ function findBestMatchForHeader(
     isExtended: false,
   };
 
+  // Detect data type from sample data for semantic compatibility checking
+  let detectedDataType: string | undefined;
+  if (sampleRows && sampleRows.length > 0) {
+    const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
+    const analysis = analyzeColumnDataType(sampleValues);
+    detectedDataType = analysis.detectedType;
+  }
+
   // First, try to match against core patterns
   for (const { patterns: patternList, mapsTo, expectedType } of corePatterns) {
     for (const pattern of patternList) {
@@ -1029,6 +1134,13 @@ function findBestMatchForHeader(
       const boost = calculateCoOccurrenceBoost(mapsTo, matchedFields);
       similarity = Math.min(1.0, similarity + boost);
 
+      // Apply semantic compatibility check - penalize semantically incompatible matches
+      const semanticCheck = checkSemanticCompatibility(header, mapsTo, detectedDataType);
+      if (!semanticCheck.compatible) {
+        // Heavily penalize semantically incompatible matches
+        similarity = similarity * 0.3;
+      }
+
       if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
         const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
         const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
@@ -1041,10 +1153,14 @@ function findBestMatchForHeader(
       }
 
       if (similarity > bestMatch.confidence) {
+        const warnings: string[] = [];
+        if (!semanticCheck.compatible && semanticCheck.reason) {
+          warnings.push(`Semantic warning: ${semanticCheck.reason}`);
+        }
         bestMatch = {
           mapsTo,
           confidence: similarity,
-          warnings: [],
+          warnings,
           isExtended: false,
         };
       }
@@ -1067,6 +1183,12 @@ function findBestMatchForHeader(
         const boost = calculateCoOccurrenceBoost(mapsTo, matchedFields);
         similarity = Math.min(1.0, similarity + boost);
 
+        // Apply semantic compatibility check - penalize semantically incompatible matches
+        const semanticCheck = checkSemanticCompatibility(header, mapsTo, detectedDataType);
+        if (!semanticCheck.compatible) {
+          similarity = similarity * 0.3;
+        }
+
         if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
           const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
           const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
@@ -1079,10 +1201,14 @@ function findBestMatchForHeader(
         }
 
         if (similarity > bestMatch.confidence) {
+          const warnings: string[] = [];
+          if (!semanticCheck.compatible && semanticCheck.reason) {
+            warnings.push(`Semantic warning: ${semanticCheck.reason}`);
+          }
           bestMatch = {
             mapsTo,
             confidence: similarity,
-            warnings: [],
+            warnings,
             isExtended: true,
           };
         }

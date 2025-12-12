@@ -6,6 +6,172 @@
  */
 
 // =============================================================================
+// SEMANTIC CATEGORIES WITH INCOMPATIBILITY RULES
+// =============================================================================
+
+/**
+ * Semantic categories define field types and which categories are incompatible.
+ * This prevents semantic mismatches like "Order Type" → "Total Price".
+ */
+export const SEMANTIC_CATEGORIES = {
+  // Order metadata - categorical/descriptive properties of orders
+  ORDER_METADATA: {
+    fields: ['orderType', 'orderStatus', 'lineNumber', 'lineItemId', 'orderPriority', 'orderSource'],
+    incompatibleWith: ['FINANCIAL', 'ADDRESS', 'QUANTITIES'],
+    expectedDataTypes: ['categorical', 'text', 'alphanumeric'],
+  },
+
+  // Financial - monetary values
+  FINANCIAL: {
+    fields: ['unitPrice', 'extendedPrice', 'totalPrice', 'discount', 'taxAmount', 'unitCost', 'listPrice', 'totalValue', 'currency'],
+    incompatibleWith: ['ORDER_METADATA', 'ADDRESS', 'CONTACT', 'PERSON_NAME'],
+    expectedDataTypes: ['numeric_positive', 'numeric'],
+  },
+
+  // Address components
+  ADDRESS: {
+    fields: ['shipToCompany', 'shipToStreet1', 'shipToStreet2', 'shipToCity', 'shipToState', 'shipToZip', 'shipToCountry', 'shipToLocation', 'shipToIdentifier'],
+    incompatibleWith: ['FINANCIAL', 'QUANTITIES', 'PERSON_NAME'],
+    expectedDataTypes: ['text', 'alphanumeric'],
+  },
+
+  // Person name fields
+  PERSON_NAME: {
+    fields: ['shipToFirstName', 'shipToLastName', 'contactFirstName', 'contactLastName', 'fullName'],
+    incompatibleWith: ['FINANCIAL', 'ADDRESS', 'QUANTITIES'],
+    expectedDataTypes: ['text'],
+  },
+
+  // Contact information (non-name)
+  CONTACT: {
+    fields: ['shipToPhone', 'shipToEmail', 'contactPhone', 'contactEmail', 'orderedBy', 'contactName', 'customerId'],
+    incompatibleWith: ['FINANCIAL', 'QUANTITIES'],
+    expectedDataTypes: ['text', 'alphanumeric'],
+  },
+
+  // Quantity fields
+  QUANTITIES: {
+    fields: ['quantityUnits', 'quantityPacks', 'currentStockPacks', 'packSize', 'quantityMultiplier', 'totalQuantity'],
+    incompatibleWith: ['ADDRESS', 'ORDER_METADATA', 'PERSON_NAME', 'CONTACT'],
+    expectedDataTypes: ['numeric_positive', 'numeric_integer'],
+  },
+
+  // Product identification
+  PRODUCT_IDENTITY: {
+    fields: ['productId', 'name', 'productName', 'sku', 'customizedProductId'],
+    incompatibleWith: [],
+    expectedDataTypes: ['text', 'alphanumeric'],
+  },
+} as const;
+
+export type SemanticCategory = keyof typeof SEMANTIC_CATEGORIES;
+
+/**
+ * Find the semantic category for a field.
+ */
+export function getFieldCategory(field: string): SemanticCategory | null {
+  for (const [category, config] of Object.entries(SEMANTIC_CATEGORIES)) {
+    if ((config.fields as readonly string[]).includes(field)) {
+      return category as SemanticCategory;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a header is semantically compatible with a target field.
+ * Returns compatibility info with reason if incompatible.
+ */
+export function checkSemanticCompatibility(
+  header: string,
+  targetField: string,
+  detectedDataType?: string
+): { compatible: boolean; reason?: string; suggestedCategory?: SemanticCategory } {
+  const normalizedHeader = header.toLowerCase().trim();
+  const targetCategory = getFieldCategory(targetField);
+
+  if (!targetCategory) {
+    return { compatible: true };
+  }
+
+  const targetConfig = SEMANTIC_CATEGORIES[targetCategory];
+
+  // Check if header suggests a different semantic category
+  const headerCategory = inferCategoryFromHeader(normalizedHeader);
+
+  if (headerCategory && (targetConfig.incompatibleWith as readonly string[]).includes(headerCategory)) {
+    return {
+      compatible: false,
+      reason: `"${header}" appears to be ${headerCategory} but "${targetField}" is ${targetCategory}`,
+      suggestedCategory: headerCategory,
+    };
+  }
+
+  // Check data type compatibility if provided
+  if (detectedDataType && !(targetConfig.expectedDataTypes as readonly string[]).includes(detectedDataType)) {
+    return {
+      compatible: false,
+      reason: `Data type "${detectedDataType}" doesn't match expected types for ${targetCategory}`,
+    };
+  }
+
+  return { compatible: true };
+}
+
+/**
+ * Infer the semantic category from header text.
+ */
+function inferCategoryFromHeader(header: string): SemanticCategory | null {
+  const h = header.toLowerCase();
+
+  // Order metadata indicators
+  if (h.includes('order type') || h.includes('type') && !h.includes('item type')) {
+    if (h.includes('price') || h.includes('cost') || h.includes('amount')) {
+      return 'FINANCIAL';
+    }
+    return 'ORDER_METADATA';
+  }
+  if (h.includes('priority') || h.includes('source') || h.includes('channel')) {
+    return 'ORDER_METADATA';
+  }
+
+  // Person name indicators
+  if (h.includes('first name') || h.includes('firstname') || h.includes('fname') ||
+      h.includes('last name') || h.includes('lastname') || h.includes('lname') ||
+      h.includes('full name') || h.includes('given name') || h.includes('surname')) {
+    return 'PERSON_NAME';
+  }
+
+  // Financial indicators
+  if (h.includes('price') || h.includes('cost') || h.includes('amount') ||
+      h.includes('total') && (h.includes('$') || h.includes('price') || h.includes('cost')) ||
+      h.includes('discount') || h.includes('tax')) {
+    return 'FINANCIAL';
+  }
+
+  // Address indicators
+  if (h.includes('street') || h.includes('city') || h.includes('state') ||
+      h.includes('zip') || h.includes('postal') || h.includes('country') ||
+      h.includes('address')) {
+    return 'ADDRESS';
+  }
+
+  // Quantity indicators
+  if (h.includes('quantity') || h.includes('qty') || h.includes('count') ||
+      h.includes('multiplier') || h.includes('pack size') || h.includes('units')) {
+    return 'QUANTITIES';
+  }
+
+  // Contact indicators
+  if (h.includes('phone') || h.includes('email') || h.includes('contact') ||
+      h.includes('ordered by') || h.includes('requester')) {
+    return 'CONTACT';
+  }
+
+  return null;
+}
+
+// =============================================================================
 // SEMANTIC FIELD GROUPS
 // =============================================================================
 
@@ -161,6 +327,133 @@ export const BLOCKING_RULES: BlockingRule[] = [
     headerPatterns: ['packs', 'cases', 'cartons', 'boxes'],
     blockedFields: ['quantityUnits'],
     reason: 'Pack quantities should not map to unit quantities',
+  },
+
+  // =============================================================================
+  // NEW BLOCKING RULES - Fix semantic mismatches from screenshot
+  // =============================================================================
+
+  // ORDER TYPE should NEVER map to financial fields
+  {
+    headerPatterns: ['order type', 'type', 'item type', 'product type', 'category type'],
+    blockedFields: ['totalPrice', 'unitPrice', 'extendedPrice', 'discount', 'taxAmount', 'unitCost', 'listPrice', 'totalValue'],
+    reason: 'Type/category fields are ORDER_METADATA, not FINANCIAL - "Order Type" should never map to price fields',
+  },
+
+  // COMPANY NAME should NOT map to country/state/city
+  {
+    headerPatterns: ['company name', 'company', 'organization', 'business name', 'firm'],
+    blockedFields: ['shipToCountry', 'shipToState', 'shipToCity', 'shipToZip', 'shipToStreet1'],
+    reason: 'Company name is entity name, not geographic location - should map to shipToCompany',
+  },
+
+  // FIRST NAME / LAST NAME should NOT map to address components
+  {
+    headerPatterns: ['first name', 'firstname', 'fname', 'given name', 'forename'],
+    blockedFields: ['shipToState', 'shipToCity', 'shipToCountry', 'shipToZip', 'shipToStreet1', 'shipToCompany'],
+    reason: 'First name is PERSON_NAME, not ADDRESS - should map to shipToFirstName or contactFirstName',
+  },
+  {
+    headerPatterns: ['last name', 'lastname', 'lname', 'surname', 'family name'],
+    blockedFields: ['shipToState', 'shipToCity', 'shipToCountry', 'shipToZip', 'shipToStreet1', 'shipToCompany'],
+    reason: 'Last name is PERSON_NAME, not ADDRESS - should map to shipToLastName or contactLastName',
+  },
+  {
+    headerPatterns: ['full name', 'name', 'recipient name', 'attention'],
+    blockedFields: ['shipToState', 'shipToCity', 'shipToCountry', 'shipToZip'],
+    reason: 'Person name should not map to address components',
+  },
+
+  // PHONE should NOT map to street/address/non-contact fields or date/numeric fields
+  {
+    headerPatterns: ['phone', 'telephone', 'tel', 'mobile', 'cell', 'fax', 'ship to phone'],
+    blockedFields: [
+      'shipToStreet1', 'shipToStreet2', 'shipToCity', 'shipToState', 'shipToCountry', 'shipToZip', 'shipToCompany',
+      'leadTimeDays', 'shipWeight', 'expectedDeliveryDate', 'shipDate', 'dateSubmitted',
+      'quantityUnits', 'quantityPacks', 'totalQuantity', 'packSize',
+    ],
+    reason: 'Phone is CONTACT information - should map to shipToPhone or contactPhone, not dates/quantities',
+  },
+
+  // EMAIL should NOT map to address fields
+  {
+    headerPatterns: ['email', 'e-mail', 'mail'],
+    blockedFields: ['shipToStreet1', 'shipToStreet2', 'shipToCity', 'shipToState', 'shipToCountry', 'shipToZip', 'shipToCompany'],
+    reason: 'Email is CONTACT information, not ADDRESS - should map to shipToEmail or contactEmail',
+  },
+
+  // MULTIPLIER should NOT map to quantity fields directly
+  {
+    headerPatterns: ['multiplier', 'quantity multiplier', 'factor', 'pack qty', 'per pack', 'per case'],
+    blockedFields: ['quantityUnits', 'currentStockPacks', 'quantityPacks'],
+    reason: 'Multiplier is pack conversion factor, not quantity - should map to packSize',
+  },
+
+  // TOTAL QUANTITY should map to totalQuantity, not quantityUnits
+  {
+    headerPatterns: ['total quantity', 'total qty', 'total units', 'sum qty', 'total count'],
+    blockedFields: ['quantityPacks', 'packSize', 'currentStockPacks'],
+    reason: 'Total quantity is aggregate units, should map to totalQuantity or quantityUnits',
+  },
+
+  // CUSTOMIZED PRODUCT ID should NOT map to address fields
+  {
+    headerPatterns: ['customized product', 'custom product', 'customized id', 'custom id', 'personalized'],
+    blockedFields: ['shipToStreet1', 'shipToStreet2', 'shipToCity', 'shipToState', 'shipToCountry', 'shipToZip', 'shipToCompany'],
+    reason: 'Customized product ID is PRODUCT_IDENTITY, not ADDRESS',
+  },
+
+  // =============================================================================
+  // ADDITIONAL BLOCKING RULES - Fix remaining fuzzy match issues
+  // =============================================================================
+
+  // EXTENDED PRICE should NOT map to dates
+  {
+    headerPatterns: ['extended price', 'ext price', 'extended', 'extended amount'],
+    blockedFields: ['expectedDeliveryDate', 'shipDate', 'dateSubmitted', 'leadTimeDays', 'shipWeight', 'quantityUnits', 'quantityPacks'],
+    reason: 'Extended price is FINANCIAL - should map to extendedPrice, not dates/quantities',
+  },
+
+  // TOTAL PRICE should NOT map to quantities or other price fields
+  {
+    headerPatterns: ['total price', 'total cost', 'total amount', 'grand total', 'invoice total'],
+    blockedFields: ['quantityUnits', 'quantityPacks', 'totalQuantity', 'packSize', 'shipWeight', 'leadTimeDays', 'unitPrice', 'extendedPrice', 'listPrice', 'unitCost', 'discount'],
+    reason: 'Total price is FINANCIAL aggregate - should map to totalPrice only',
+  },
+
+  // TOTAL QUANTITY should NOT map to weight or dates
+  {
+    headerPatterns: ['total quantity', 'total qty', 'total units', 'sum quantity', 'aggregate quantity'],
+    blockedFields: ['shipWeight', 'leadTimeDays', 'expectedDeliveryDate', 'shipDate', 'totalPrice', 'unitPrice', 'extendedPrice'],
+    reason: 'Total quantity is QUANTITIES - should map to totalQuantity, not weight/dates/prices',
+  },
+
+  // QUANTITY MULTIPLIER should NOT map to minimumOrderQuantity
+  {
+    headerPatterns: ['quantity multiplier', 'multiplier', 'pack multiplier', 'qty multiplier', 'factor'],
+    blockedFields: ['minimumOrderQuantity', 'quantityUnits', 'leadTimeDays', 'shipWeight'],
+    reason: 'Quantity multiplier is pack conversion - should map to quantityMultiplier or packSize',
+  },
+
+  // SHIP TO STREET should NOT map to dates or numeric fields
+  {
+    headerPatterns: ['ship to street', 'street', 'street address', 'address line', 'address 1'],
+    blockedFields: ['leadTimeDays', 'shipWeight', 'expectedDeliveryDate', 'shipDate', 'quantityUnits', 'totalPrice'],
+    reason: 'Ship to street is ADDRESS - should map to shipToStreet1',
+  },
+
+  // WEIGHT should NOT map to address or contact fields
+  {
+    headerPatterns: ['weight', 'ship weight', 'package weight', 'gross weight'],
+    blockedFields: ['shipToStreet1', 'shipToCity', 'shipToState', 'shipToPhone', 'totalQuantity', 'quantityUnits'],
+    reason: 'Weight is LOGISTICS - should map to shipWeight',
+  },
+
+  // LEAD TIME should NOT map to contact or address fields
+  {
+    headerPatterns: ['lead time', 'lead days', 'leadtime'],
+    blockedFields: ['shipToPhone', 'shipToStreet1', 'shipToCity', 'quantityUnits', 'totalQuantity'],
+    reason: 'Lead time is VENDOR info - should map to leadTimeDays',
   },
 ];
 
@@ -341,14 +634,46 @@ export function suggestAlternatives(
   if (normalizedHeader.includes('zip') || normalizedHeader.includes('postal')) {
     return ['shipToZip'];
   }
+  if (normalizedHeader.includes('country')) {
+    return ['shipToCountry'];
+  }
   if (normalizedHeader.includes('user') || normalizedHeader.includes('requester')) {
     return ['orderedBy', 'contactName'];
   }
   if (normalizedHeader.includes('price') && !normalizedHeader.includes('ext')) {
     return ['unitPrice', 'listPrice'];
   }
-  if (normalizedHeader.includes('ext') || normalizedHeader.includes('total')) {
+  if (normalizedHeader.includes('ext') || (normalizedHeader.includes('total') && normalizedHeader.includes('price'))) {
     return ['extendedPrice', 'totalPrice'];
+  }
+
+  // New field suggestions for semantic fixes
+  if (normalizedHeader.includes('order type') || normalizedHeader.includes('type')) {
+    return ['orderType', 'itemType'];
+  }
+  if (normalizedHeader.includes('first name') || normalizedHeader.includes('firstname')) {
+    return ['shipToFirstName', 'contactFirstName'];
+  }
+  if (normalizedHeader.includes('last name') || normalizedHeader.includes('lastname')) {
+    return ['shipToLastName', 'contactLastName'];
+  }
+  if (normalizedHeader.includes('company name') || normalizedHeader.includes('company')) {
+    return ['shipToCompany'];
+  }
+  if (normalizedHeader.includes('phone') || normalizedHeader.includes('telephone') || normalizedHeader.includes('tel')) {
+    return ['shipToPhone', 'contactPhone'];
+  }
+  if (normalizedHeader.includes('email')) {
+    return ['shipToEmail', 'contactEmail'];
+  }
+  if (normalizedHeader.includes('multiplier') || normalizedHeader.includes('pack size') || normalizedHeader.includes('per pack')) {
+    return ['packSize', 'quantityMultiplier'];
+  }
+  if (normalizedHeader.includes('total quantity') || normalizedHeader.includes('total qty')) {
+    return ['totalQuantity', 'quantityUnits'];
+  }
+  if (normalizedHeader.includes('customized') || normalizedHeader.includes('custom product')) {
+    return ['customizedProductId', 'sku'];
   }
 
   return [];
@@ -363,6 +688,8 @@ export const FIELD_DISPLAY_NAMES: Record<string, string> = {
   productId: 'Product ID / SKU',
   name: 'Product Name',
   productName: 'Product Name',
+  sku: 'SKU',
+  customizedProductId: 'Customized Product ID',
 
   // Inventory fields
   currentStockPacks: 'Available Quantity (Packs)',
@@ -376,6 +703,11 @@ export const FIELD_DISPLAY_NAMES: Record<string, string> = {
   quantityUnits: 'Quantity (Units)',
   quantityPacks: 'Quantity (Packs)',
   orderStatus: 'Order Status',
+  orderType: 'Order Type',
+  orderPriority: 'Order Priority',
+  orderSource: 'Order Source',
+  totalQuantity: 'Total Quantity',
+  quantityMultiplier: 'Quantity Multiplier',
 
   // Shipping address
   shipToCompany: 'Ship To Company',
@@ -388,10 +720,19 @@ export const FIELD_DISPLAY_NAMES: Record<string, string> = {
   shipToLocation: 'Ship To Location',
   shipToIdentifier: 'Location ID',
 
+  // Person name fields
+  shipToFirstName: 'Ship To First Name',
+  shipToLastName: 'Ship To Last Name',
+  contactFirstName: 'Contact First Name',
+  contactLastName: 'Contact Last Name',
+  fullName: 'Full Name',
+
   // Contact
   shipToPhone: 'Phone',
   shipToEmail: 'Email',
   contactName: 'Contact Name',
+  contactPhone: 'Contact Phone',
+  contactEmail: 'Contact Email',
   orderedBy: 'Ordered By',
   customerId: 'Customer ID',
 
