@@ -12,7 +12,7 @@ import {
   processImport,
   validateImportData,
 } from '../services/import.service.js';
-import { recalculateClientUsage } from '../services/usage.service.js';
+import { recalculateClientUsage, recalculateClientMonthlyUsage } from '../services/usage.service.js';
 import { runAlertGeneration } from '../services/alert.service.js';
 import { analyzeImportImpact, generateImportDiff } from '../services/import-analysis.service.js';
 
@@ -491,13 +491,29 @@ router.post('/recalculate/:clientId', async (req, res, next) => {
       throw new NotFoundError('Client');
     }
 
+    // Fix any products that have isActive = false (shouldn't happen but fix legacy data)
+    const fixedProducts = await prisma.product.updateMany({
+      where: {
+        clientId,
+        isActive: false,
+      },
+      data: {
+        isActive: true,
+      },
+    });
+
     // Run recalculations
     await recalculateClientUsage(clientId);
+
+    // Calculate monthly usage for Phase 13 features
+    await recalculateClientMonthlyUsage(clientId);
+
     const alertResult = await runAlertGeneration(clientId);
 
     res.json({
       message: 'Recalculation completed',
       alerts: alertResult,
+      fixedProducts: fixedProducts.count,
     });
   } catch (error) {
     next(error);

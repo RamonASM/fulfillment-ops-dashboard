@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
-import { recalculateClientUsage } from './usage.service.js';
+import { recalculateClientUsage, recalculateClientMonthlyUsage } from './usage.service.js';
 import { runAlertGeneration } from './alert.service.js';
 import { discoverCustomFields } from './custom-field.service.js';
 import {
@@ -1390,6 +1390,7 @@ export async function processInventoryImport(
         notificationPoint: row.notificationPoint ? Number(row.notificationPoint) : null,
         currentStockPacks: Number(row.currentStockPacks) || 0,
         isOrphan: false,
+        isActive: true,  // Explicitly set to ensure products show in listings
       };
 
       // Build metadata with custom fields
@@ -1545,6 +1546,7 @@ export async function processOrdersImport(
             productId: productIdStr,
             name: String(row.productName || row.productId),
             isOrphan: true,
+            isActive: true,  // Explicitly set to ensure products show in listings
             packSize: 1,
           },
         });
@@ -1754,6 +1756,9 @@ export async function processImport(
 
     // Recalculate usage metrics
     await recalculateClientUsage(importBatch.clientId);
+
+    // Calculate monthly usage for Phase 13 features (stock health, AI insights)
+    await recalculateClientMonthlyUsage(importBatch.clientId);
 
     // Generate alerts
     await runAlertGeneration(importBatch.clientId);
