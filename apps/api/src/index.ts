@@ -38,6 +38,9 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy - required for rate limiting and secure cookies behind nginx/load balancer
+app.set('trust proxy', 1);
+
 // Initialize WebSocket
 initializeWebSocket(httpServer);
 
