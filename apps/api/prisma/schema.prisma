@@ -40,13 +40,13 @@ model User {
 }
 
 model PasswordResetToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  token     String   @unique @db.VarChar(255)
-  email     String   @db.VarChar(255)
-  userType  String   @map("user_type") @db.VarChar(20) // 'admin' or 'portal'
-  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  id        String    @id @default(uuid()) @db.Uuid
+  token     String    @unique @db.VarChar(255)
+  email     String    @db.VarChar(255)
+  userType  String    @map("user_type") @db.VarChar(20) // 'admin' or 'portal'
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
   usedAt    DateTime? @map("used_at") @db.Timestamptz
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([token])
   @@index([email])
@@ -67,22 +67,24 @@ model Client {
   isActive  Boolean  @default(true) @map("is_active")
 
   // Relations
-  users             UserClient[]
-  products          Product[]
-  alerts            Alert[]
-  importBatches     ImportBatch[]
-  portalUsers       PortalUser[]
-  orderRequests     OrderRequest[]
-  auditLogs         AuditLog[]
-  dailyAlertMetrics DailyAlertMetrics[]
+  users                  UserClient[]
+  products               Product[]
+  alerts                 Alert[]
+  importBatches          ImportBatch[]
+  portalUsers            PortalUser[]
+  orderRequests          OrderRequest[]
+  auditLogs              AuditLog[]
+  dailyAlertMetrics      DailyAlertMetrics[]
   // Phase 13 relations
-  locations         Location[]
-  activityFeed      ActivityFeed[]
-  todos             Todo[]
-  configuration     ClientConfiguration?
-  reports           Report[]
+  locations              Location[]
+  activityFeed           ActivityFeed[]
+  todos                  Todo[]
+  configuration          ClientConfiguration?
+  reports                Report[]
   // Artwork relations
-  artworks          Artwork[]
+  artworks               Artwork[]
+  // Smart Import Enhancement
+  customFieldDefinitions ClientCustomFieldDefinition[]
 
   @@index([code])
   @@index([isActive])
@@ -309,6 +311,11 @@ model ImportBatch {
   completedAt    DateTime? @map("completed_at") @db.Timestamptz
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
+  // Smart Import Enhancement: Column tracking
+  sourceHeaders Json? @map("source_headers") // All original column headers from file
+  mappedHeaders Json? @map("mapped_headers") // Headers that matched core fields
+  customHeaders Json? @map("custom_headers") // Headers stored as custom fields in metadata
+
   // Relations
   client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   user         User?         @relation(fields: [importedBy], references: [id])
@@ -317,6 +324,36 @@ model ImportBatch {
   @@index([clientId])
   @@index([status])
   @@map("import_batches")
+}
+
+// -----------------------------------------------------------------------------
+// CLIENT CUSTOM FIELD DEFINITIONS (Smart Import Enhancement)
+// Tracks custom fields discovered from imports and their display preferences
+// -----------------------------------------------------------------------------
+
+model ClientCustomFieldDefinition {
+  id              String   @id @default(uuid()) @db.Uuid
+  clientId        String   @map("client_id") @db.Uuid
+  normalizedName  String   @map("normalized_name") @db.VarChar(100) // camelCase field name
+  displayName     String   @map("display_name") @db.VarChar(255) // Human-readable name
+  dataType        String   @map("data_type") @db.VarChar(50) // numeric, text, date, etc.
+  category        String?  @db.VarChar(50) // financial, vendor, logistics, etc.
+  knownAliases    Json     @default("[]") @map("known_aliases") // Alternative header names
+  isDisplayed     Boolean  @default(true) @map("is_displayed") // Show in product detail
+  isPinned        Boolean  @default(false) @map("is_pinned") // Pin to summary view
+  displayOrder    Int      @default(0) @map("display_order") // Sort order in display
+  aggregationType String?  @map("aggregation_type") @db.VarChar(20) // sum, avg, count, min, max
+  formatPattern   String?  @map("format_pattern") @db.VarChar(100) // e.g., "$#,##0.00" for currency
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, normalizedName])
+  @@index([clientId])
+  @@index([clientId, isDisplayed])
+  @@map("client_custom_field_definitions")
 }
 
 // -----------------------------------------------------------------------------

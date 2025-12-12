@@ -12,8 +12,24 @@ import toast from 'react-hot-toast';
 
 interface ColumnMapping {
   source: string;
-  target: string;
+  mapsTo: string; // Backend uses mapsTo
+  target?: string; // Alias for compatibility
   confidence: number;
+  confidenceLevel?: 'high' | 'medium' | 'low' | 'none';
+  warnings?: string[];
+  detectedDataType?: 'numeric' | 'numeric_positive' | 'numeric_integer' | 'date' | 'alphanumeric' | 'text' | 'boolean' | 'empty';
+  isCustomField?: boolean;
+}
+
+interface ValidationSummary {
+  isValid: boolean;
+  totalErrors: number;
+  totalWarnings: number;
+  summary: {
+    errorsByField: Record<string, number>;
+    warningsByField: Record<string, number>;
+  };
+  sampleIssues?: string[];
 }
 
 interface ImportPreview {
@@ -24,29 +40,61 @@ interface ImportPreview {
   columns: ColumnMapping[];
   sampleRows: Record<string, unknown>[];
   warnings: { type: string; message: string; affectedRows: number }[];
+  validation?: ValidationSummary;
 }
 
-// Available target fields for mapping
+// Available target fields for mapping - CORE fields (stored in database columns)
 const INVENTORY_TARGET_FIELDS = [
-  { value: '', label: 'Skip this column' },
-  { value: 'productId', label: 'Product ID / SKU' },
-  { value: 'name', label: 'Product Name' },
-  { value: 'currentStockPacks', label: 'Current Stock (Packs)' },
-  { value: 'packSize', label: 'Pack Size / Units per Pack' },
-  { value: 'notificationPoint', label: 'Reorder Point' },
-  { value: 'itemType', label: 'Item Type (evergreen/event)' },
+  { value: '', label: 'Skip this column', category: 'skip' },
+  { value: 'productId', label: 'Product ID / SKU', category: 'core' },
+  { value: 'name', label: 'Product Name', category: 'core' },
+  { value: 'currentStockPacks', label: 'Current Stock (Packs)', category: 'core' },
+  { value: 'packSize', label: 'Pack Size / Units per Pack', category: 'core' },
+  { value: 'notificationPoint', label: 'Reorder Point', category: 'core' },
+  { value: 'itemType', label: 'Item Type (evergreen/event)', category: 'core' },
+];
+
+// Extended fields (stored in metadata.customFields)
+const EXTENDED_INVENTORY_FIELDS = [
+  { value: 'unitCost', label: 'Unit Cost', category: 'financial' },
+  { value: 'listPrice', label: 'List/Retail Price', category: 'financial' },
+  { value: 'totalValue', label: 'Total Value', category: 'financial' },
+  { value: 'currency', label: 'Currency', category: 'financial' },
+  { value: 'vendorName', label: 'Vendor/Supplier Name', category: 'vendor' },
+  { value: 'vendorCode', label: 'Vendor Code', category: 'vendor' },
+  { value: 'vendorSku', label: 'Vendor SKU', category: 'vendor' },
+  { value: 'leadTimeDays', label: 'Lead Time (Days)', category: 'vendor' },
+  { value: 'minimumOrderQuantity', label: 'Minimum Order Qty', category: 'vendor' },
+  { value: 'warehouse', label: 'Warehouse', category: 'logistics' },
+  { value: 'binLocation', label: 'Bin Location', category: 'logistics' },
+  { value: 'weight', label: 'Weight', category: 'logistics' },
+  { value: 'dimensions', label: 'Dimensions', category: 'logistics' },
+  { value: 'countryOfOrigin', label: 'Country of Origin', category: 'logistics' },
+  { value: 'productCategory', label: 'Category', category: 'classification' },
+  { value: 'subcategory', label: 'Subcategory', category: 'classification' },
+  { value: 'brand', label: 'Brand', category: 'classification' },
+  { value: 'department', label: 'Department', category: 'classification' },
+  { value: 'productStatus', label: 'Product Status', category: 'status' },
+  { value: 'notes', label: 'Notes/Comments', category: 'other' },
+];
+
+// All inventory fields combined
+const ALL_INVENTORY_FIELDS = [
+  ...INVENTORY_TARGET_FIELDS,
+  { value: '_separator_', label: '── Extended Fields (saved to metadata) ──', category: 'separator', disabled: true },
+  ...EXTENDED_INVENTORY_FIELDS,
 ];
 
 const ORDER_TARGET_FIELDS = [
-  { value: '', label: 'Skip this column' },
-  { value: 'productId', label: 'Product ID / SKU' },
-  { value: 'productName', label: 'Product Name' },
-  { value: 'orderId', label: 'Order ID / PO Number' },
-  { value: 'dateSubmitted', label: 'Order Date' },
-  { value: 'quantityUnits', label: 'Quantity (Units)' },
-  { value: 'shipToCompany', label: 'Ship To Company' },
-  { value: 'shipToLocation', label: 'Ship To Location' },
-  { value: 'orderStatus', label: 'Order Status' },
+  { value: '', label: 'Skip this column', category: 'skip' },
+  { value: 'productId', label: 'Product ID / SKU', category: 'core' },
+  { value: 'productName', label: 'Product Name', category: 'core' },
+  { value: 'orderId', label: 'Order ID / PO Number', category: 'core' },
+  { value: 'dateSubmitted', label: 'Order Date', category: 'core' },
+  { value: 'quantityUnits', label: 'Quantity (Units)', category: 'core' },
+  { value: 'shipToCompany', label: 'Ship To Company', category: 'core' },
+  { value: 'shipToLocation', label: 'Ship To Location', category: 'core' },
+  { value: 'orderStatus', label: 'Order Status', category: 'core' },
 ];
 
 interface MultiImportResponse {
@@ -134,14 +182,29 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
       if (!preview) return prev;
 
       const currentMappings = prev[importId] || preview.columns;
+
+      // Check if this is an extended field
+      const isExtendedField = EXTENDED_INVENTORY_FIELDS.some(f => f.value === newTarget);
+
       const updatedMappings = currentMappings.map(col =>
         col.source === sourceColumn
-          ? { ...col, target: newTarget, confidence: newTarget ? 1 : 0 }
+          ? {
+            ...col,
+            mapsTo: newTarget,
+            target: newTarget, // Keep for compatibility
+            confidence: newTarget ? 1 : 0,
+            isCustomField: isExtendedField || !newTarget,
+          }
           : col
       );
 
       return { ...prev, [importId]: updatedMappings };
     });
+  };
+
+  // Get the mapping target (handles both mapsTo and target)
+  const getMappingTarget = (col: ColumnMapping): string => {
+    return col.mapsTo || col.target || '';
   };
 
   // Confirm import mutation
@@ -450,7 +513,16 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <h3 className="font-medium text-gray-900">Column Mapping</h3>
-                      <p className="text-xs text-gray-500">Click on a mapping to change it</p>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-primary-500"></span>
+                          Core field
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                          Custom field
+                        </span>
+                      </div>
                     </div>
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
@@ -458,23 +530,36 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                           <tr>
                             <th className="px-4 py-2 text-left font-medium text-gray-600">Source Column</th>
                             <th className="px-4 py-2 text-left font-medium text-gray-600">Maps To</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-600 w-24">Confidence</th>
+                            <th className="px-4 py-2 text-left font-medium text-gray-600 w-20">Type</th>
+                            <th className="px-4 py-2 text-left font-medium text-gray-600 w-20">Match</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
                           {getMappingsForPreview(currentPreview).map((col, i) => {
-                            const targetFields = currentPreview.detectedType === 'order'
+                            const targetFields = currentPreview.detectedType === 'orders'
                               ? ORDER_TARGET_FIELDS
-                              : INVENTORY_TARGET_FIELDS;
+                              : ALL_INVENTORY_FIELDS;
+                            const mappingTarget = getMappingTarget(col);
+                            const isCustomField = col.isCustomField ||
+                              EXTENDED_INVENTORY_FIELDS.some(f => f.value === mappingTarget);
 
                             return (
-                              <tr key={i} className={clsx(col.confidence < 0.5 && 'bg-amber-50')}>
+                              <tr key={i} className={clsx(
+                                col.confidence < 0.5 && !isCustomField && 'bg-amber-50',
+                                isCustomField && 'bg-blue-50/50'
+                              )}>
                                 <td className="px-4 py-2 text-gray-900">
-                                  <span className="font-medium">{col.source}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className={clsx(
+                                      'w-2 h-2 rounded-full flex-shrink-0',
+                                      isCustomField ? 'bg-blue-500' : 'bg-primary-500'
+                                    )}></span>
+                                    <span className="font-medium">{col.source}</span>
+                                  </div>
                                 </td>
                                 <td className="px-4 py-2">
                                   <select
-                                    value={col.target || ''}
+                                    value={mappingTarget}
                                     onChange={(e) => updateColumnMapping(
                                       currentPreview.importId,
                                       col.source,
@@ -482,26 +567,41 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                                     )}
                                     className={clsx(
                                       'w-full px-2 py-1 text-sm border rounded-md',
-                                      col.confidence < 0.5
+                                      col.confidence < 0.5 && !isCustomField
                                         ? 'border-amber-300 bg-amber-50 focus:border-amber-500 focus:ring-amber-500'
-                                        : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
+                                        : isCustomField
+                                          ? 'border-blue-300 bg-blue-50 focus:border-blue-500 focus:ring-blue-500'
+                                          : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500'
                                     )}
                                   >
                                     {targetFields.map((field) => (
-                                      <option key={field.value} value={field.value}>
+                                      <option
+                                        key={field.value}
+                                        value={field.value}
+                                        disabled={(field as any).disabled}
+                                        className={(field as any).disabled ? 'font-semibold text-gray-400' : ''}
+                                      >
                                         {field.label}
                                       </option>
                                     ))}
                                   </select>
                                 </td>
                                 <td className="px-4 py-2">
+                                  {col.detectedDataType && (
+                                    <span className="text-xs text-gray-500 capitalize">
+                                      {col.detectedDataType.replace('_', ' ')}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2">
                                   <span className={clsx(
                                     'px-2 py-0.5 rounded text-xs font-medium',
                                     col.confidence > 0.8 ? 'bg-green-100 text-green-700' :
                                     col.confidence > 0.5 ? 'bg-amber-100 text-amber-700' :
-                                    'bg-red-100 text-red-700'
+                                    col.confidence > 0 ? 'bg-red-100 text-red-700' :
+                                    'bg-gray-100 text-gray-500'
                                   )}>
-                                    {Math.round(col.confidence * 100)}%
+                                    {col.confidence > 0 ? `${Math.round(col.confidence * 100)}%` : 'New'}
                                   </span>
                                 </td>
                               </tr>
@@ -510,7 +610,18 @@ export function ImportModal({ clientId, clientName, isOpen, onClose, onSuccess }
                         </tbody>
                       </table>
                     </div>
-                    {getMappingsForPreview(currentPreview).some(col => col.confidence < 0.5) && (
+
+                    {/* Custom fields info */}
+                    {getMappingsForPreview(currentPreview).some(col =>
+                      col.isCustomField || EXTENDED_INVENTORY_FIELDS.some(f => f.value === getMappingTarget(col))
+                    ) && (
+                      <p className="text-xs text-blue-600 flex items-center gap-1 bg-blue-50 p-2 rounded">
+                        <Check className="w-3 h-3" />
+                        Custom fields will be preserved in product metadata and shown in the dashboard.
+                      </p>
+                    )}
+
+                    {getMappingsForPreview(currentPreview).some(col => col.confidence < 0.5 && !col.isCustomField) && (
                       <p className="text-xs text-amber-600 flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3" />
                         Low confidence mappings are highlighted. Please review and adjust as needed.

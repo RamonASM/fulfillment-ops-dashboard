@@ -14,7 +14,9 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { usePortalAuthStore } from '@/stores/auth.store';
+import { portalApi } from '@/api/client';
 import { clsx } from 'clsx';
 
 const navigation = [
@@ -32,6 +34,16 @@ export default function PortalLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const { user, logout } = usePortalAuthStore();
+
+  // Fetch unread alert count for the notification badge
+  const { data: alertsData } = useQuery({
+    queryKey: ['portal', 'alerts', 'unread-count'],
+    queryFn: () => portalApi.get<{ data: { unreadCount: number } }>('/alerts/unread-count'),
+    refetchInterval: 60000, // Refresh every minute
+    staleTime: 30000,
+  });
+
+  const unreadAlertCount = alertsData?.data?.unreadCount || 0;
 
   const handleLogout = () => {
     logout();
@@ -171,9 +183,12 @@ export default function PortalLayout() {
               <button
                 onClick={() => navigate('/alerts')}
                 className="relative p-2 text-gray-500 hover:text-gray-700"
+                aria-label={`Alerts${unreadAlertCount > 0 ? ` (${unreadAlertCount} unread)` : ''}`}
               >
                 <Bell className="w-5 h-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                {unreadAlertCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                )}
               </button>
             </div>
           </div>

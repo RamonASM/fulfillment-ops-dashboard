@@ -20,8 +20,14 @@ const EXEMPT_PATHS = [
   '/health',
   '/api/webhooks/',
   '/api/auth/login',
-  '/api/auth/portal/login',
+  '/api/auth/register',
   '/api/auth/refresh',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+  '/api/portal/auth/login',
+  '/api/portal/auth/forgot-password',
+  '/api/portal/auth/reset-password',
+  '/api/csrf-token',
 ];
 
 /**

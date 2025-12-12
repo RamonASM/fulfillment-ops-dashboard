@@ -13,6 +13,7 @@ import { CommentThread } from '@/components/CommentThread';
 import { ActivityFeed } from '@/components/ActivityFeed';
 import { TodoList } from '@/components/TodoList';
 import { ImportModal } from '@/components/ImportModal';
+import { CustomDataInsightsWidget } from '@/components/widgets/CustomDataInsightsWidget';
 import toast from 'react-hot-toast';
 
 type ItemTypeTab = 'evergreen' | 'event' | 'completed';
@@ -258,6 +259,11 @@ export default function ClientDetail() {
           />
         </div>
       </div>
+
+      {/* Custom Data Insights Widget - Shows insights from imported custom fields */}
+      {clientId && (
+        <CustomDataInsightsWidget clientId={clientId} />
+      )}
 
       {/* Section Tabs */}
       <div className="flex items-center gap-4 border-b border-gray-200">

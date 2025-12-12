@@ -116,6 +116,10 @@ app.use(requestIdMiddleware);
 // Request logging
 app.use(requestLogger);
 
+// CSRF protection (after cookie parser, before routes)
+// Uses double-submit cookie pattern, safe methods (GET, HEAD, OPTIONS) and exempt paths are skipped
+app.use(csrfProtection);
+
 // =============================================================================
 // ROUTES
 // =============================================================================

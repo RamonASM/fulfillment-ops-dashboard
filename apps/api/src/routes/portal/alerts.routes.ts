@@ -61,6 +61,28 @@ router.get('/', portalAuth, async (req: Request, res: Response) => {
   }
 });
 
+// Get unread alert count (lightweight endpoint for badge)
+router.get('/unread-count', portalAuth, async (req: Request, res: Response) => {
+  try {
+    const clientId = req.portalUser!.clientId;
+
+    const unreadCount = await prisma.alert.count({
+      where: {
+        clientId,
+        status: 'active',
+        alertType: {
+          in: ['stockout', 'critical_stock', 'low_stock', 'reorder_due'],
+        },
+      },
+    });
+
+    res.json({ data: { unreadCount } });
+  } catch (error) {
+    logger.error('Portal unread count error', error as Error);
+    res.status(500).json({ message: 'Failed to get unread count' });
+  }
+});
+
 // Mark alert as read
 router.patch('/:id/read', portalAuth, async (req: Request, res: Response) => {
   try {

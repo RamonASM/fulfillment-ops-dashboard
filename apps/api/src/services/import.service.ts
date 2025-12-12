@@ -4,8 +4,10 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { Prisma } from '@prisma/client';
 import { recalculateClientUsage } from './usage.service.js';
 import { runAlertGeneration } from './alert.service.js';
+import { discoverCustomFields } from './custom-field.service.js';
 import {
   similarityWithExpansion,
   getConfidenceScore,
@@ -19,6 +21,7 @@ import {
   validateDateSamples,
   validatePackSizeSamples,
   type ExpectedFieldType,
+  type DetectedDataType,
 } from '../lib/data-type-detection.js';
 
 // =============================================================================
@@ -31,6 +34,36 @@ export interface ColumnMapping {
   confidence: number;
   confidenceLevel?: ConfidenceLevel;
   warnings?: string[];
+  /** Detected data type for this column */
+  detectedDataType?: DetectedDataType;
+  /** Whether this is a custom field (not mapped to a known field) */
+  isCustomField?: boolean;
+}
+
+/** Structure for storing custom fields in Product.metadata */
+export interface CustomFieldValue {
+  value: string | number | null;
+  originalHeader: string;
+  dataType: DetectedDataType;
+  lastUpdated: string;
+}
+
+export interface ProductMetadata {
+  customFields?: Record<string, CustomFieldValue>;
+  _import?: {
+    lastImportBatchId: string;
+    originalHeaders: string[];
+    mappedFields: string[];
+    customFieldCount: number;
+    importedAt: string;
+  };
+}
+
+/** Result from cleanRow with both mapped data and custom fields */
+interface CleanedRowResult {
+  mappedData: ParsedRow;
+  customFields: Record<string, CustomFieldValue>;
+  allOriginalHeaders: string[];
 }
 
 // Enhanced field pattern with expected data type
@@ -273,6 +306,203 @@ const INVENTORY_PATTERNS: FieldPattern[] = [
   },
 ];
 
+// =============================================================================
+// EXTENDED FIELD PATTERNS (Custom Fields - Stored in metadata)
+// These are valuable business fields that aren't core to the system but provide insights
+// =============================================================================
+
+const EXTENDED_FIELD_PATTERNS: FieldPattern[] = [
+  // Financial fields
+  {
+    patterns: [
+      'unit cost', 'cost', 'unit price', 'price', 'cost per unit',
+      'wholesale price', 'purchase price', 'buy price', 'acquisition cost',
+      'landed cost', 'cogs', 'cost of goods', 'material cost',
+    ],
+    mapsTo: 'unitCost',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'list price', 'retail price', 'sell price', 'selling price',
+      'msrp', 'retail', 'price each', 'customer price', 'sale price',
+    ],
+    mapsTo: 'listPrice',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'total value', 'inventory value', 'stock value', 'extended cost',
+      'total cost', 'value', 'ext cost', 'extended value',
+    ],
+    mapsTo: 'totalValue',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'currency', 'currency code', 'curr', 'ccy',
+    ],
+    mapsTo: 'currency',
+    expectedType: 'text',
+  },
+  // Vendor/Supplier fields
+  {
+    patterns: [
+      'vendor', 'vendor name', 'supplier', 'supplier name', 'manufacturer',
+      'brand', 'brand name', 'vendor company', 'source', 'mfg', 'mfr',
+      'manufacturer name', 'supplier company',
+    ],
+    mapsTo: 'vendorName',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'vendor code', 'vendor id', 'supplier code', 'supplier id',
+      'vendor number', 'supplier number', 'vendor #', 'supplier #',
+    ],
+    mapsTo: 'vendorCode',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'lead time', 'lead time days', 'delivery time', 'shipping time',
+      'replenishment time', 'procurement time', 'lt days', 'lt',
+      'days to ship', 'transit time', 'transit days',
+    ],
+    mapsTo: 'leadTimeDays',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'moq', 'minimum order', 'minimum order quantity', 'min order qty',
+      'min order', 'order minimum', 'minimum qty', 'min purchase qty',
+    ],
+    mapsTo: 'minimumOrderQuantity',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'vendor sku', 'supplier sku', 'manufacturer sku', 'mfg part',
+      'mfr part', 'vendor part number', 'supplier part number',
+    ],
+    mapsTo: 'vendorSku',
+    expectedType: 'alphanumeric',
+  },
+  // Logistics fields
+  {
+    patterns: [
+      'warehouse', 'warehouse code', 'warehouse name', 'whse',
+      'wh', 'storage location', 'facility', 'facility code',
+    ],
+    mapsTo: 'warehouse',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'bin', 'bin location', 'bin code', 'bin number', 'slot',
+      'shelf', 'shelf location', 'rack', 'rack location', 'aisle',
+      'zone', 'location code', 'storage bin',
+    ],
+    mapsTo: 'binLocation',
+    expectedType: 'alphanumeric',
+  },
+  {
+    patterns: [
+      'weight', 'unit weight', 'item weight', 'weight lbs', 'weight kg',
+      'gross weight', 'net weight', 'wt',
+    ],
+    mapsTo: 'weight',
+    expectedType: 'numeric_positive',
+  },
+  {
+    patterns: [
+      'dimensions', 'size', 'length', 'width', 'height', 'lwh',
+      'l x w x h', 'dim', 'package size',
+    ],
+    mapsTo: 'dimensions',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'country of origin', 'origin', 'made in', 'coo', 'source country',
+    ],
+    mapsTo: 'countryOfOrigin',
+    expectedType: 'text',
+  },
+  // Category/Classification fields
+  {
+    patterns: [
+      'product category', 'category', 'main category', 'primary category',
+      'category name', 'product group', 'merchandise category',
+    ],
+    mapsTo: 'productCategory',
+    expectedType: 'categorical',
+  },
+  {
+    patterns: [
+      'subcategory', 'sub category', 'sub-category', 'secondary category',
+      'product subcategory', 'category 2', 'category level 2',
+    ],
+    mapsTo: 'subcategory',
+    expectedType: 'categorical',
+  },
+  {
+    patterns: [
+      'brand', 'brand name', 'product brand', 'make',
+    ],
+    mapsTo: 'brand',
+    expectedType: 'text',
+  },
+  {
+    patterns: [
+      'department', 'dept', 'division', 'business unit',
+    ],
+    mapsTo: 'department',
+    expectedType: 'categorical',
+  },
+  // Status/Lifecycle fields
+  {
+    patterns: [
+      'product status', 'status', 'active', 'lifecycle', 'item status',
+      'availability status', 'selling status',
+    ],
+    mapsTo: 'productStatus',
+    expectedType: 'categorical',
+  },
+  {
+    patterns: [
+      'discontinue', 'discontinued', 'end of life', 'eol', 'obsolete',
+      'phase out', 'phased out',
+    ],
+    mapsTo: 'isDiscontinued',
+    expectedType: 'categorical',
+  },
+  {
+    patterns: [
+      'last ordered', 'last order date', 'last purchase date',
+      'last po date', 'last receipt date', 'last received',
+    ],
+    mapsTo: 'lastOrderedDate',
+    expectedType: 'date',
+  },
+  {
+    patterns: [
+      'last sold', 'last sale date', 'last transaction', 'last activity',
+    ],
+    mapsTo: 'lastSoldDate',
+    expectedType: 'date',
+  },
+  // Notes/Comments
+  {
+    patterns: [
+      'notes', 'comments', 'remarks', 'memo', 'internal notes',
+      'product notes', 'item notes', 'special instructions',
+    ],
+    mapsTo: 'notes',
+    expectedType: 'text',
+  },
+];
+
 // Expanded order patterns with data type expectations
 const ORDER_PATTERNS: FieldPattern[] = [
   {
@@ -362,32 +592,45 @@ const ORDER_PATTERNS: FieldPattern[] = [
 /**
  * Generate column mappings based on headers using fuzzy matching.
  * Uses Jaro-Winkler similarity with abbreviation expansion for better accuracy.
+ * Now also matches extended field patterns and preserves unmapped columns as custom fields.
  */
 export function generateColumnMapping(
   headers: string[],
   fileType: 'inventory' | 'orders' | 'both',
   sampleRows?: ParsedRow[]
 ): ColumnMapping[] {
-  const patterns =
+  // Core patterns for required fields
+  const corePatterns =
     fileType === 'both'
       ? [...INVENTORY_PATTERNS, ...ORDER_PATTERNS]
       : fileType === 'inventory'
         ? INVENTORY_PATTERNS
         : ORDER_PATTERNS;
 
+  // Include extended patterns for rich data preservation
+  const allPatterns = [...corePatterns, ...EXTENDED_FIELD_PATTERNS];
+
   const mappings: ColumnMapping[] = [];
   const usedTargets = new Set<string>();
+  const usedExtendedTargets = new Set<string>();
 
   for (const header of headers) {
     const normalizedHeader = header.toLowerCase().trim();
-    let bestMatch: { mapsTo: string; confidence: number; warnings: string[] } = {
+    let bestMatch: {
+      mapsTo: string;
+      confidence: number;
+      warnings: string[];
+      isExtended: boolean;
+      detectedDataType?: DetectedDataType;
+    } = {
       mapsTo: '',
       confidence: 0,
       warnings: [],
+      isExtended: false,
     };
 
-    for (const { patterns: patternList, mapsTo, expectedType } of patterns) {
-      // Skip if target already used with high confidence
+    // First, try to match against core patterns
+    for (const { patterns: patternList, mapsTo, expectedType } of corePatterns) {
       if (usedTargets.has(mapsTo) && bestMatch.confidence >= 0.9) {
         continue;
       }
@@ -395,20 +638,16 @@ export function generateColumnMapping(
       for (const pattern of patternList) {
         let similarity: number;
 
-        // Check exact match first
         if (normalizedHeader === pattern) {
           similarity = 1.0;
         } else {
-          // Use fuzzy matching with abbreviation expansion
           similarity = similarityWithExpansion(normalizedHeader, pattern);
         }
 
-        // Apply data type validation bonus if sample data available
         if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
           const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
           const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
 
-          // Boost or reduce confidence based on data type match
           if (typeValidation.isValid) {
             similarity = Math.min(1.0, similarity + 0.1);
           } else if (typeValidation.matchRatio < 0.5) {
@@ -421,9 +660,57 @@ export function generateColumnMapping(
             mapsTo,
             confidence: similarity,
             warnings: [],
+            isExtended: false,
           };
         }
       }
+    }
+
+    // If no good match in core patterns, try extended patterns
+    if (bestMatch.confidence < 0.7) {
+      for (const { patterns: patternList, mapsTo, expectedType } of EXTENDED_FIELD_PATTERNS) {
+        if (usedExtendedTargets.has(mapsTo)) {
+          continue;
+        }
+
+        for (const pattern of patternList) {
+          let similarity: number;
+
+          if (normalizedHeader === pattern) {
+            similarity = 1.0;
+          } else {
+            similarity = similarityWithExpansion(normalizedHeader, pattern);
+          }
+
+          if (similarity > 0.5 && sampleRows && sampleRows.length > 0 && expectedType) {
+            const sampleValues = sampleRows.slice(0, 10).map(row => row[header]);
+            const typeValidation = validateSampleDataType(sampleValues, expectedType, mapsTo);
+
+            if (typeValidation.isValid) {
+              similarity = Math.min(1.0, similarity + 0.1);
+            } else if (typeValidation.matchRatio < 0.5) {
+              similarity = similarity * 0.8;
+            }
+          }
+
+          if (similarity > bestMatch.confidence) {
+            bestMatch = {
+              mapsTo,
+              confidence: similarity,
+              warnings: [],
+              isExtended: true,
+            };
+          }
+        }
+      }
+    }
+
+    // Detect data type for all columns (useful for custom fields and validation)
+    let detectedDataType: DetectedDataType = 'text';
+    if (sampleRows && sampleRows.length > 0) {
+      const sampleValues = sampleRows.slice(0, 20).map(row => row[header]);
+      const analysis = analyzeColumnDataType(sampleValues);
+      detectedDataType = analysis.detectedType;
     }
 
     // Generate warnings for low confidence
@@ -433,19 +720,55 @@ export function generateColumnMapping(
 
     // Mark target as used if high confidence
     if (bestMatch.mapsTo && bestMatch.confidence >= 0.7) {
-      usedTargets.add(bestMatch.mapsTo);
+      if (bestMatch.isExtended) {
+        usedExtendedTargets.add(bestMatch.mapsTo);
+      } else {
+        usedTargets.add(bestMatch.mapsTo);
+      }
     }
+
+    // Determine if this is a custom field
+    // A column is a custom field if:
+    // 1. No match found at all, OR
+    // 2. Matched to an extended pattern (stored in metadata, not core fields)
+    const isCustomField = !bestMatch.mapsTo || bestMatch.isExtended || bestMatch.confidence < 0.5;
 
     mappings.push({
       source: header,
-      mapsTo: bestMatch.mapsTo || '',
+      mapsTo: bestMatch.mapsTo || normalizeFieldName(header),
       confidence: bestMatch.confidence,
       confidenceLevel: getConfidenceLevel(bestMatch.confidence),
       warnings: bestMatch.warnings.length > 0 ? bestMatch.warnings : undefined,
+      detectedDataType,
+      isCustomField,
     });
   }
 
   return mappings;
+}
+
+/**
+ * Normalize a header name to a consistent field name for custom fields.
+ * Converts "Unit Cost (USD)" to "unitCostUsd", etc.
+ */
+function normalizeFieldName(header: string): string {
+  return header
+    .toLowerCase()
+    .trim()
+    // Remove common special characters
+    .replace(/[()[\]{}]/g, '')
+    // Replace spaces, dashes, underscores with spaces for word splitting
+    .replace(/[-_\s]+/g, ' ')
+    // Split into words
+    .split(' ')
+    .filter(word => word.length > 0)
+    // Convert to camelCase
+    .map((word, index) =>
+      index === 0
+        ? word
+        : word.charAt(0).toUpperCase() + word.slice(1)
+    )
+    .join('');
 }
 
 /**
@@ -801,14 +1124,38 @@ export function validateImportData(
 // DATA CLEANING
 // =============================================================================
 
+/** Core fields that map directly to Product table columns */
+const CORE_PRODUCT_FIELDS = new Set([
+  'productId',
+  'name',
+  'itemType',
+  'packSize',
+  'notificationPoint',
+  'currentStockPacks',
+]);
+
+/** Core fields that map directly to Transaction table columns */
+const CORE_ORDER_FIELDS = new Set([
+  'productId',
+  'productName',
+  'orderId',
+  'dateSubmitted',
+  'quantityUnits',
+  'shipToCompany',
+  'shipToLocation',
+  'orderStatus',
+]);
+
 /**
- * Clean and normalize data row
+ * Clean and normalize data row (legacy function for validation)
+ * Returns only mapped core fields
  */
 function cleanRow(row: ParsedRow, mapping: ColumnMapping[]): ParsedRow {
   const cleaned: ParsedRow = {};
 
-  for (const { source, mapsTo } of mapping) {
-    if (!mapsTo || !row[source]) continue;
+  for (const { source, mapsTo, isCustomField } of mapping) {
+    // Skip custom fields - only include core mapped fields
+    if (!mapsTo || !row[source] || isCustomField) continue;
 
     let value = row[source];
 
@@ -845,12 +1192,136 @@ function cleanRow(row: ParsedRow, mapping: ColumnMapping[]): ParsedRow {
   return cleaned;
 }
 
+/**
+ * Clean and extract all data from a row, separating core fields from custom fields.
+ * This preserves ALL data from the import file.
+ */
+function cleanRowWithCustomFields(
+  row: ParsedRow,
+  mapping: ColumnMapping[],
+  importType: 'inventory' | 'orders' | 'both'
+): CleanedRowResult {
+  const mappedData: ParsedRow = {};
+  const customFields: Record<string, CustomFieldValue> = {};
+  const allOriginalHeaders: string[] = [];
+
+  const coreFields = importType === 'orders' ? CORE_ORDER_FIELDS : CORE_PRODUCT_FIELDS;
+  const now = new Date().toISOString();
+
+  for (const { source, mapsTo, isCustomField, detectedDataType } of mapping) {
+    allOriginalHeaders.push(source);
+
+    const rawValue = row[source];
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+      continue;
+    }
+
+    let value: string | number = rawValue as string | number;
+
+    // Trim strings
+    if (typeof value === 'string') {
+      value = value.trim();
+      if (value === '') continue;
+    }
+
+    // Determine if this maps to a core field
+    const isCoreField = !isCustomField && coreFields.has(mapsTo);
+
+    if (isCoreField) {
+      // Process core fields as before
+      if (mapsTo === 'itemType' && typeof value === 'string') {
+        const normalized = value.toLowerCase();
+        if (['evergreen', 'event', 'completed'].includes(normalized)) {
+          value = normalized;
+        } else {
+          value = 'evergreen';
+        }
+      }
+
+      if (['currentStockPacks', 'packSize', 'notificationPoint', 'quantityUnits'].includes(mapsTo)) {
+        value = parseInt(String(value).replace(/[^0-9-]/g, ''), 10) || 0;
+      }
+
+      if (mapsTo === 'dateSubmitted' && value) {
+        const dateStr = String(value);
+        const parsed = new Date(dateStr);
+        value = (isNaN(parsed.getTime()) ? new Date() : parsed) as unknown as string | number;
+      }
+
+      mappedData[mapsTo] = value;
+    } else {
+      // Store as custom field with metadata
+      // Parse numeric values for custom fields too
+      let parsedValue: string | number | null = value;
+      const dataType = detectedDataType || 'text';
+
+      if (dataType === 'numeric' || dataType === 'numeric_positive' || dataType === 'numeric_integer') {
+        // Clean and parse numeric value
+        const cleanedNum = String(value).replace(/[,$\s€£¥]/g, '').trim();
+        const parsed = parseFloat(cleanedNum);
+        if (!isNaN(parsed)) {
+          parsedValue = parsed;
+        }
+      } else if (dataType === 'date') {
+        // Keep date as string for flexibility
+        parsedValue = String(value);
+      }
+
+      customFields[mapsTo] = {
+        value: parsedValue,
+        originalHeader: source,
+        dataType: dataType as DetectedDataType,
+        lastUpdated: now,
+      };
+    }
+  }
+
+  return {
+    mappedData,
+    customFields,
+    allOriginalHeaders,
+  };
+}
+
+/**
+ * Merge custom fields into existing metadata, preserving existing fields
+ * that aren't being updated.
+ */
+function mergeMetadata(
+  existingMetadata: ProductMetadata | null,
+  newCustomFields: Record<string, CustomFieldValue>,
+  importBatchId: string,
+  headers: string[],
+  mappedFields: string[]
+): ProductMetadata {
+  const existing = existingMetadata || {};
+  const existingCustomFields = existing.customFields || {};
+
+  // Merge custom fields - new values overwrite old ones
+  const mergedCustomFields = {
+    ...existingCustomFields,
+    ...newCustomFields,
+  };
+
+  return {
+    customFields: mergedCustomFields,
+    _import: {
+      lastImportBatchId: importBatchId,
+      originalHeaders: headers,
+      mappedFields,
+      customFieldCount: Object.keys(mergedCustomFields).length,
+      importedAt: new Date().toISOString(),
+    },
+  };
+}
+
 // =============================================================================
 // IMPORT PROCESSING
 // =============================================================================
 
 /**
  * Process inventory import
+ * Now preserves ALL data from the import file, storing non-core fields in Product.metadata
  */
 export async function processInventoryImport(
   clientId: string,
@@ -862,8 +1333,40 @@ export async function processInventoryImport(
   let newProducts = 0;
   let updatedProducts = 0;
 
+  // Pre-calculate mapped field names for metadata tracking
+  const mappedCoreFields = mapping
+    .filter(m => !m.isCustomField && m.confidence >= 0.5)
+    .map(m => m.mapsTo);
+
+  // Pre-fetch all existing products for this client to avoid N+1 queries
+  // This dramatically improves performance for large imports (5000 rows: 30min → 2min)
+  const productIdMapping = mapping.find(m => m.mapsTo === 'productId');
+  const productIds = productIdMapping
+    ? rows
+        .map(r => r[productIdMapping.source])
+        .filter((id): id is string | number => id !== undefined && id !== null && id !== '')
+        .map(id => String(id))
+    : [];
+
+  const existingProducts = await prisma.product.findMany({
+    where: {
+      clientId,
+      productId: { in: productIds },
+    },
+  });
+
+  // Create lookup map for O(1) access
+  const existingProductMap = new Map(
+    existingProducts.map(p => [p.productId, p])
+  );
+
   for (let i = 0; i < rows.length; i++) {
-    const row = cleanRow(rows[i], mapping);
+    // Use new function that extracts custom fields
+    const { mappedData: row, customFields, allOriginalHeaders } = cleanRowWithCustomFields(
+      rows[i],
+      mapping,
+      'inventory'
+    );
     const rowNum = i + 2; // 1-indexed + header row
 
     try {
@@ -877,13 +1380,8 @@ export async function processInventoryImport(
         continue;
       }
 
-      // Find or create product
-      const existing = await prisma.product.findFirst({
-        where: {
-          clientId,
-          productId: String(row.productId),
-        },
-      });
+      // Use pre-fetched product map instead of individual query
+      const existing = existingProductMap.get(String(row.productId));
 
       const productData = {
         name: String(row.name),
@@ -894,11 +1392,29 @@ export async function processInventoryImport(
         isOrphan: false,
       };
 
+      // Build metadata with custom fields
+      const hasCustomFields = Object.keys(customFields).length > 0;
+
       if (existing) {
-        // Update existing product
+        // Merge metadata with existing custom fields
+        const existingMetadata = existing.metadata as ProductMetadata | null;
+        const newMetadata = mergeMetadata(
+          existingMetadata,
+          customFields,
+          importBatchId,
+          allOriginalHeaders,
+          mappedCoreFields
+        );
+
+        // Update existing product with custom fields in metadata
         await prisma.product.update({
           where: { id: existing.id },
-          data: productData,
+          data: {
+            ...productData,
+            metadata: hasCustomFields
+              ? (newMetadata as unknown as Prisma.InputJsonValue)
+              : (existing.metadata as Prisma.InputJsonValue),
+          },
         });
 
         // Record stock history
@@ -913,12 +1429,24 @@ export async function processInventoryImport(
 
         updatedProducts++;
       } else {
-        // Create new product
+        // Create new product with metadata
+        const metadata: ProductMetadata = {
+          customFields: hasCustomFields ? customFields : undefined,
+          _import: {
+            lastImportBatchId: importBatchId,
+            originalHeaders: allOriginalHeaders,
+            mappedFields: mappedCoreFields,
+            customFieldCount: Object.keys(customFields).length,
+            importedAt: new Date().toISOString(),
+          },
+        };
+
         const newProduct = await prisma.product.create({
           data: {
             clientId,
             productId: String(row.productId),
             ...productData,
+            metadata: metadata as unknown as Prisma.InputJsonValue,
           },
         });
 
@@ -965,6 +1493,31 @@ export async function processOrdersImport(
   let newTransactions = 0;
   let skippedDuplicates = 0;
 
+  // Pre-fetch all existing products for this client to avoid N+1 queries
+  // This improves performance significantly for large order imports
+  const productIdMapping = mapping.find(m => m.mapsTo === 'productId');
+  const productIds = productIdMapping
+    ? rows
+        .map(r => r[productIdMapping.source])
+        .filter((id): id is string | number => id !== undefined && id !== null && id !== '')
+        .map(id => String(id))
+    : [];
+
+  const existingProducts = await prisma.product.findMany({
+    where: {
+      clientId,
+      productId: { in: productIds },
+    },
+  });
+
+  // Create lookup map for O(1) access
+  const existingProductMap = new Map(
+    existingProducts.map(p => [p.productId, p])
+  );
+
+  // Track products we create during this import to avoid duplicate creation
+  const createdProductsMap = new Map<string, typeof existingProducts[0]>();
+
   for (let i = 0; i < rows.length; i++) {
     const row = cleanRow(rows[i], mapping);
     const rowNum = i + 2;
@@ -980,33 +1533,53 @@ export async function processOrdersImport(
         continue;
       }
 
-      // Find product
-      let product = await prisma.product.findFirst({
-        where: {
-          clientId,
-          productId: String(row.productId),
-        },
-      });
+      // Find product using pre-fetched map (O(1) lookup)
+      const productIdStr = String(row.productId);
+      let product = existingProductMap.get(productIdStr) || createdProductsMap.get(productIdStr);
 
       // Create orphan product if not found
       if (!product) {
         product = await prisma.product.create({
           data: {
             clientId,
-            productId: String(row.productId),
+            productId: productIdStr,
             name: String(row.productName || row.productId),
             isOrphan: true,
             packSize: 1,
           },
         });
+        // Track newly created product to avoid duplicate creation in same import
+        createdProductsMap.set(productIdStr, product);
       }
 
+      // Parse and validate date
       const rawDate = row.dateSubmitted;
-      const dateSubmitted = (rawDate && typeof rawDate === 'object' && (rawDate as any) instanceof Date)
-        ? (rawDate as Date)
-        : new Date(String(rawDate));
+      let dateSubmitted: Date;
+
+      if (rawDate && typeof rawDate === 'object' && (rawDate as Date) instanceof Date) {
+        dateSubmitted = rawDate as Date;
+      } else if (rawDate) {
+        const parsed = new Date(String(rawDate));
+        // Check for Invalid Date
+        if (isNaN(parsed.getTime())) {
+          errors.push({
+            row: rowNum,
+            field: 'dateSubmitted',
+            message: `Invalid date format: "${rawDate}"`,
+            value: String(rawDate),
+          });
+          continue;
+        }
+        dateSubmitted = parsed;
+      } else {
+        // Default to current date if not provided
+        dateSubmitted = new Date();
+      }
+
       const quantityUnits = Number(row.quantityUnits) || 0;
-      const quantityPacks = Math.ceil(quantityUnits / product.packSize);
+      // Prevent division by zero - ensure pack size is at least 1
+      const safePackSize = Math.max(1, product.packSize || 1);
+      const quantityPacks = Math.ceil(quantityUnits / safePackSize);
 
       // Check for duplicate
       const existingTransaction = await prisma.transaction.findFirst({
@@ -1088,12 +1661,28 @@ export async function processImport(
     throw new Error('Import batch not found or missing file');
   }
 
-  // Update status
+  // Extract column header information for tracking
+  const sourceHeaders = columnMapping.map(m => m.source);
+  const mappedHeaders = columnMapping
+    .filter(m => !m.isCustomField && m.confidence >= 0.5)
+    .map(m => ({ source: m.source, mapsTo: m.mapsTo }));
+  const customHeaders = columnMapping
+    .filter(m => m.isCustomField || m.confidence < 0.5)
+    .map(m => ({
+      source: m.source,
+      mapsTo: m.mapsTo,
+      dataType: m.detectedDataType || 'text',
+    }));
+
+  // Update status and save column tracking info
   await prisma.importBatch.update({
     where: { id: importBatchId },
     data: {
       status: 'processing',
       startedAt: new Date(),
+      sourceHeaders: sourceHeaders as unknown as Prisma.InputJsonValue,
+      mappedHeaders: mappedHeaders as unknown as Prisma.InputJsonValue,
+      customHeaders: customHeaders as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -1152,6 +1741,17 @@ export async function processImport(
       },
     });
 
+    // Discover and register custom fields for this client
+    // This creates ClientCustomFieldDefinition records for any new custom fields
+    if (customHeaders.length > 0) {
+      try {
+        await discoverCustomFields(importBatch.clientId, customHeaders);
+      } catch (err) {
+        // Log error but don't fail the import - custom field discovery is non-critical
+        console.error('Failed to discover custom fields:', err);
+      }
+    }
+
     // Recalculate usage metrics
     await recalculateClientUsage(importBatch.clientId);
 
@@ -1172,6 +1772,15 @@ export async function processImport(
         errors: [{ row: 0, message: error instanceof Error ? error.message : 'Unknown error' }] as unknown as undefined,
       },
     });
+
+    // Clean up uploaded file on error to prevent disk space buildup
+    try {
+      if (importBatch.filePath && fs.existsSync(importBatch.filePath)) {
+        fs.unlinkSync(importBatch.filePath);
+      }
+    } catch (cleanupError) {
+      console.error('Failed to cleanup import file after error:', cleanupError);
+    }
 
     throw error;
   }

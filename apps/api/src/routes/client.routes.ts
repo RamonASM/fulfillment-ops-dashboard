@@ -5,6 +5,14 @@ import { authenticate, requireRole, requireClientAccess } from '../middleware/au
 import { NotFoundError, ValidationError } from '../middleware/error-handler.js';
 import { getBatchClientStats, getDefaultClientStats } from '../lib/batch-loader.js';
 import { recalculateClientMonthlyUsage } from '../services/usage.service.js';
+import {
+  getClientCustomFields,
+  updateCustomFieldDefinition,
+  deleteCustomFieldDefinition,
+  getCustomFieldStats,
+  getCustomFieldAggregates,
+  getCustomFieldDistribution,
+} from '../services/custom-field.service.js';
 import { cache, CacheTTL, CacheKeys } from '../lib/cache.js';
 import type { ClientStats, StockStatus } from '@inventory/shared';
 
@@ -254,6 +262,124 @@ router.post('/:clientId/recalculate-monthly-usage', requireClientAccess, async (
       processed: result.processed,
       errors: result.errors,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================================================
+// CUSTOM FIELDS API
+// =============================================================================
+
+const updateCustomFieldSchema = z.object({
+  displayName: z.string().min(1).max(255).optional(),
+  isDisplayed: z.boolean().optional(),
+  isPinned: z.boolean().optional(),
+  displayOrder: z.number().int().min(0).optional(),
+  aggregationType: z.enum(['sum', 'avg', 'min', 'max', 'count']).nullable().optional(),
+  formatPattern: z.string().max(100).nullable().optional(),
+});
+
+/**
+ * GET /api/clients/:clientId/custom-fields
+ * Get all custom field definitions for a client
+ */
+router.get('/:clientId/custom-fields', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+    const fields = await getClientCustomFields(clientId);
+    res.json({ data: fields });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/clients/:clientId/custom-fields/:fieldId
+ * Update a custom field definition
+ */
+router.patch('/:clientId/custom-fields/:fieldId', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId, fieldId } = req.params;
+    const data = updateCustomFieldSchema.parse(req.body);
+
+    // Verify field belongs to client
+    const existing = await prisma.clientCustomFieldDefinition.findFirst({
+      where: { id: fieldId, clientId },
+    });
+
+    if (!existing) {
+      throw new NotFoundError('Custom field');
+    }
+
+    const updated = await updateCustomFieldDefinition(fieldId, data);
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/clients/:clientId/custom-fields/:fieldId
+ * Delete a custom field definition (does not delete data from products)
+ */
+router.delete('/:clientId/custom-fields/:fieldId', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId, fieldId } = req.params;
+
+    // Verify field belongs to client
+    const existing = await prisma.clientCustomFieldDefinition.findFirst({
+      where: { id: fieldId, clientId },
+    });
+
+    if (!existing) {
+      throw new NotFoundError('Custom field');
+    }
+
+    await deleteCustomFieldDefinition(fieldId);
+    res.json({ message: 'Custom field deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/custom-field-stats
+ * Get statistics for all custom fields (for dashboard overview)
+ */
+router.get('/:clientId/custom-field-stats', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+    const stats = await getCustomFieldStats(clientId);
+    res.json({ data: stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/custom-field-aggregates/:fieldName
+ * Get aggregate values for a specific custom field
+ */
+router.get('/:clientId/custom-field-aggregates/:fieldName', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId, fieldName } = req.params;
+    const aggregates = await getCustomFieldAggregates(clientId, fieldName);
+    res.json(aggregates);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/custom-field-distribution/:fieldName
+ * Get value distribution for a categorical custom field
+ */
+router.get('/:clientId/custom-field-distribution/:fieldName', requireClientAccess, async (req, res, next) => {
+  try {
+    const { clientId, fieldName } = req.params;
+    const distribution = await getCustomFieldDistribution(clientId, fieldName);
+    res.json({ data: distribution });
   } catch (error) {
     next(error);
   }
