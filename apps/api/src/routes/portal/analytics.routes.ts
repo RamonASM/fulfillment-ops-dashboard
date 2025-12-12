@@ -152,4 +152,236 @@ router.get('/risk-products', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/portal/analytics/summary
+ * Get intelligent dashboard summary for the client
+ */
+router.get('/summary', async (req: Request, res: Response) => {
+  try {
+    const { clientId } = (req as any).portalUser;
+    const now = new Date();
+    const oneWeekAgo = subDays(now, 7);
+    const twoWeeksAgo = subDays(now, 14);
+    const threeMonthsAgo = subDays(now, 90);
+
+    // Products
+    const products = await prisma.product.findMany({
+      where: { clientId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        currentStockPacks: true,
+        currentStockUnits: true,
+        packSize: true,
+        monthlyUsageUnits: true,
+        stockStatus: true,
+      },
+    });
+
+    // Stock health counts
+    const stockHealth = { critical: 0, low: 0, watch: 0, healthy: 0, overstock: 0 };
+    const upcomingStockouts: Array<{ name: string; daysUntil: number; currentStock: number }> = [];
+
+    for (const product of products) {
+      const monthlyUsage = product.monthlyUsageUnits || 0;
+      const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+      const weeklyUsage = monthlyUsage / 4.33;
+      const weeksRemaining = weeklyUsage > 0 ? currentStock / weeklyUsage : 999;
+
+      if (weeksRemaining <= 2) {
+        stockHealth.critical++;
+        if (weeksRemaining > 0) {
+          upcomingStockouts.push({
+            name: product.name,
+            daysUntil: Math.round(weeksRemaining * 7),
+            currentStock,
+          });
+        }
+      } else if (weeksRemaining <= 4) {
+        stockHealth.low++;
+        upcomingStockouts.push({
+          name: product.name,
+          daysUntil: Math.round(weeksRemaining * 7),
+          currentStock,
+        });
+      } else if (weeksRemaining <= 8) {
+        stockHealth.watch++;
+      } else if (weeksRemaining > 16 && monthlyUsage > 0) {
+        stockHealth.overstock++;
+      } else {
+        stockHealth.healthy++;
+      }
+    }
+
+    upcomingStockouts.sort((a, b) => a.daysUntil - b.daysUntil);
+
+    // Activity metrics
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        product: { clientId },
+        dateSubmitted: { gte: twoWeeksAgo },
+      },
+    });
+
+    const thisWeekOrders = new Set(
+      transactions.filter(t => t.dateSubmitted >= oneWeekAgo).map(t => t.orderId)
+    ).size;
+    const lastWeekOrders = new Set(
+      transactions.filter(t => t.dateSubmitted >= twoWeeksAgo && t.dateSubmitted < oneWeekAgo).map(t => t.orderId)
+    ).size;
+
+    // Top products (last 3 months)
+    const recentTransactions = await prisma.transaction.findMany({
+      where: {
+        product: { clientId },
+        dateSubmitted: { gte: threeMonthsAgo },
+      },
+      include: { product: { select: { name: true } } },
+    });
+
+    const productUsage = new Map<string, { name: string; units: number }>();
+    for (const txn of recentTransactions) {
+      const existing = productUsage.get(txn.productId) || { name: txn.product.name, units: 0 };
+      existing.units += txn.quantityUnits;
+      productUsage.set(txn.productId, existing);
+    }
+
+    const topProducts = Array.from(productUsage.entries())
+      .map(([id, data]) => ({ id, ...data }))
+      .sort((a, b) => b.units - a.units)
+      .slice(0, 5);
+
+    res.json({
+      data: {
+        stockHealth,
+        activity: {
+          ordersThisWeek: thisWeekOrders,
+          ordersLastWeek: lastWeekOrders,
+          trend: thisWeekOrders > lastWeekOrders ? 'up' : thisWeekOrders < lastWeekOrders ? 'down' : 'stable',
+        },
+        topProducts,
+        upcomingStockouts: upcomingStockouts.slice(0, 5),
+        totalProducts: products.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Error fetching portal summary', error as Error);
+    res.status(500).json({ error: 'Failed to fetch summary' });
+  }
+});
+
+/**
+ * GET /api/portal/analytics/locations
+ * Get analytics by shipping location for the client
+ */
+router.get('/locations', async (req: Request, res: Response) => {
+  try {
+    const { clientId } = (req as any).portalUser;
+    const twelveMonthsAgo = subDays(new Date(), 365);
+
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        product: { clientId },
+        dateSubmitted: { gte: twelveMonthsAgo },
+      },
+      include: {
+        product: { select: { productId: true, name: true } },
+      },
+    });
+
+    // Group by location
+    const locationMap = new Map<string, {
+      transactions: typeof transactions;
+      company: string;
+    }>();
+
+    for (const txn of transactions) {
+      const key = txn.shipToLocation || txn.shipToCompany || 'Unknown';
+      if (!locationMap.has(key)) {
+        locationMap.set(key, { transactions: [], company: txn.shipToCompany || 'Unknown' });
+      }
+      locationMap.get(key)!.transactions.push(txn);
+    }
+
+    const locationData = Array.from(locationMap.entries()).map(([location, data]) => {
+      const totalUnits = data.transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+      const orderIds = new Set(data.transactions.map(t => t.orderId));
+
+      return {
+        location,
+        company: data.company,
+        totalOrders: orderIds.size,
+        totalUnits,
+        avgOrderSize: orderIds.size > 0 ? Math.round(totalUnits / orderIds.size) : 0,
+      };
+    });
+
+    res.json({ data: locationData.sort((a, b) => b.totalUnits - a.totalUnits).slice(0, 10) });
+  } catch (error) {
+    logger.error('Error fetching location analytics', error as Error);
+    res.status(500).json({ error: 'Failed to fetch location analytics' });
+  }
+});
+
+/**
+ * GET /api/portal/analytics/reorder-suggestions
+ * Get reorder suggestions for products running low
+ */
+router.get('/reorder-suggestions', async (req: Request, res: Response) => {
+  try {
+    const { clientId } = (req as any).portalUser;
+    const threeMonthsAgo = subDays(new Date(), 90);
+
+    const products = await prisma.product.findMany({
+      where: { clientId, isActive: true },
+      include: {
+        transactions: {
+          where: { dateSubmitted: { gte: threeMonthsAgo } },
+        },
+      },
+    });
+
+    const suggestions = [];
+
+    for (const product of products) {
+      const totalUnits = product.transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+      const monthlyUsage = totalUnits / 3;
+
+      if (monthlyUsage < 1) continue;
+
+      const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+      const weeklyUsage = monthlyUsage / 4.33;
+      const weeksOfSupply = currentStock / weeklyUsage;
+
+      if (weeksOfSupply > 6) continue;
+
+      let urgency: 'critical' | 'soon' | 'planned';
+      if (weeksOfSupply <= 2) urgency = 'critical';
+      else if (weeksOfSupply <= 4) urgency = 'soon';
+      else urgency = 'planned';
+
+      // Suggest 8 weeks of supply
+      const suggestedQty = Math.ceil(weeklyUsage * 8 - currentStock);
+
+      suggestions.push({
+        productId: product.productId,
+        productName: product.name,
+        currentStock: Math.round(currentStock),
+        monthlyUsage: Math.round(monthlyUsage),
+        weeksOfSupply: Math.round(weeksOfSupply * 10) / 10,
+        suggestedOrderQty: suggestedQty,
+        urgency,
+      });
+    }
+
+    const urgencyOrder = { critical: 0, soon: 1, planned: 2 };
+    suggestions.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+
+    res.json({ data: suggestions });
+  } catch (error) {
+    logger.error('Error fetching reorder suggestions', error as Error);
+    res.status(500).json({ error: 'Failed to fetch reorder suggestions' });
+  }
+});
+
 export default router;
