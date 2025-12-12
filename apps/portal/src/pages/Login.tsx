@@ -123,12 +123,13 @@ export default function Login() {
           </div>
 
           {/* Demo Account */}
-          <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <p className="text-center text-xs text-gray-400 mb-2">Want to explore?</p>
             <button
               type="button"
               onClick={() => {
-                setEmail('admin@everstory.com');
-                setPassword('everstory1234');
+                setEmail('bob.wilson@techstart.io');
+                setPassword('Portal2025!');
               }}
               className="w-full py-2.5 px-4 text-sm text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
             >
@@ -141,14 +142,16 @@ export default function Login() {
         <p className="text-center text-sm text-gray-500 mt-6">
           Powered by Inventory IQ
         </p>
-        <a
-          href="https://yourtechassist.us"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 mx-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white hover:bg-gray-50 border border-gray-200 rounded-full transition-colors"
-        >
-          Built by <span className="font-medium text-gray-700">yourtechassist.us</span>
-        </a>
+        <div className="flex justify-center mt-3">
+          <a
+            href="https://yourtechassist.us"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white hover:bg-gray-50 border border-gray-200 rounded-full transition-colors"
+          >
+            Built by <span className="font-medium text-gray-700">yourtechassist.us</span>
+          </a>
+        </div>
       </div>
     </div>
   );
