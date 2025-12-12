@@ -10,9 +10,11 @@ import {
   detectFileType,
   generateColumnMapping,
   processImport,
+  validateImportData,
 } from '../services/import.service.js';
 import { recalculateClientUsage } from '../services/usage.service.js';
 import { runAlertGeneration } from '../services/alert.service.js';
+import { analyzeImportImpact, generateImportDiff } from '../services/import-analysis.service.js';
 
 const router = Router();
 
@@ -35,6 +37,7 @@ const upload = multer({
   storage,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB limit
+    fieldSize: 50 * 1024 * 1024, // 50MB field size limit
   },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = [
@@ -42,6 +45,7 @@ const upload = multer({
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'text/tab-separated-values',
+      'application/octet-stream', // Some systems send files with generic type
     ];
     const allowedExtensions = ['.csv', '.xlsx', '.xls', '.tsv'];
 
@@ -54,6 +58,29 @@ const upload = multer({
   },
 });
 
+// Multer error handler middleware
+const handleMulterError = (err: any, req: any, res: any, next: any) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: 'File too large',
+        message: 'File size exceeds the 50MB limit. Please upload a smaller file.',
+        maxSize: '50MB',
+      });
+    }
+    return res.status(400).json({
+      error: 'Upload error',
+      message: err.message,
+    });
+  } else if (err) {
+    return res.status(400).json({
+      error: 'Upload error',
+      message: err.message || 'An error occurred during file upload',
+    });
+  }
+  next();
+};
+
 // Apply authentication
 router.use(authenticate);
 
@@ -65,7 +92,7 @@ router.use(authenticate);
  * POST /api/imports/upload
  * Upload a single file for import
  */
-router.post('/upload', upload.single('file'), async (req, res, next) => {
+router.post('/upload', upload.single('file'), handleMulterError, async (req, res, next) => {
   try {
     if (!req.file) {
       throw new ValidationError('No file uploaded');
@@ -88,7 +115,8 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
     // Parse file and detect type
     const { headers, rows } = await parseFile(req.file.path);
     const detectedType = detectFileType(headers);
-    const columnMapping = generateColumnMapping(headers, detectedType);
+    // Pass sample rows for better data type detection
+    const columnMapping = generateColumnMapping(headers, detectedType, rows.slice(0, 20));
 
     // Create import batch
     const importBatch = await prisma.importBatch.create({
@@ -103,8 +131,11 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       },
     });
 
-    // Generate preview
+    // Generate preview warnings (legacy)
     const warnings = generateWarnings(headers, rows);
+
+    // Run validation on sample data
+    const validationResult = validateImportData(rows.slice(0, 100), columnMapping, detectedType);
 
     const preview = {
       importId: importBatch.id,
@@ -113,6 +144,17 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       columns: columnMapping,
       sampleRows: rows.slice(0, 5),
       warnings,
+      validation: {
+        isValid: validationResult.isValid,
+        totalErrors: validationResult.totalErrors,
+        totalWarnings: validationResult.totalWarnings,
+        summary: validationResult.summary,
+        // Only include first 10 detailed results to keep response size manageable
+        sampleIssues: validationResult.rowResults
+          .filter(r => r.errors.length > 0 || r.warnings.length > 0)
+          .slice(0, 10)
+          .flatMap(r => [...r.errors, ...r.warnings]),
+      },
     };
 
     res.json(preview);
@@ -125,7 +167,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
  * POST /api/imports/upload-multiple
  * Upload multiple files for import (processes sequentially)
  */
-router.post('/upload-multiple', upload.array('files', 10), async (req, res, next) => {
+router.post('/upload-multiple', upload.array('files', 10), handleMulterError, async (req, res, next) => {
   try {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) {
@@ -146,13 +188,27 @@ router.post('/upload-multiple', upload.array('files', 10), async (req, res, next
       throw new NotFoundError('Client');
     }
 
-    const previews = [];
+    const previews: Array<{
+      importId: string;
+      filename: string;
+      detectedType: string;
+      rowCount: number;
+      columns: ReturnType<typeof generateColumnMapping>;
+      sampleRows: Record<string, string | number | undefined>[];
+      warnings: ReturnType<typeof generateWarnings>;
+      validation: {
+        isValid: boolean;
+        totalErrors: number;
+        totalWarnings: number;
+        summary: { errorsByField: Record<string, number>; warningsByField: Record<string, number> };
+      };
+    }> = [];
 
     for (const file of files) {
       // Parse file and detect type
       const { headers, rows } = await parseFile(file.path);
       const detectedType = detectFileType(headers);
-      const columnMapping = generateColumnMapping(headers, detectedType);
+      const columnMapping = generateColumnMapping(headers, detectedType, rows.slice(0, 20));
 
       // Create import batch
       const importBatch = await prisma.importBatch.create({
@@ -170,6 +226,9 @@ router.post('/upload-multiple', upload.array('files', 10), async (req, res, next
       // Generate warnings
       const warnings = generateWarnings(headers, rows);
 
+      // Run validation on sample data
+      const validationResult = validateImportData(rows.slice(0, 100), columnMapping, detectedType);
+
       previews.push({
         importId: importBatch.id,
         filename: file.originalname,
@@ -178,6 +237,12 @@ router.post('/upload-multiple', upload.array('files', 10), async (req, res, next
         columns: columnMapping,
         sampleRows: rows.slice(0, 3),
         warnings,
+        validation: {
+          isValid: validationResult.isValid,
+          totalErrors: validationResult.totalErrors,
+          totalWarnings: validationResult.totalWarnings,
+          summary: validationResult.summary,
+        },
       });
     }
 
@@ -263,6 +328,75 @@ router.get('/:importId', async (req, res, next) => {
     }
 
     res.json(importBatch);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/:importId/analyze
+ * Analyze import impact before confirming
+ * Returns projections of status changes, anomalies, and alert impact
+ */
+router.post('/:importId/analyze', async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const { columnMapping } = req.body;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) {
+      throw new NotFoundError('Import');
+    }
+
+    if (importBatch.status !== 'pending') {
+      throw new ValidationError('Can only analyze pending imports');
+    }
+
+    // If no column mapping provided, generate one
+    let mapping = columnMapping;
+    if (!mapping || mapping.length === 0) {
+      const { headers, rows } = await parseFile(importBatch.filePath!);
+      mapping = generateColumnMapping(headers, importBatch.importType as 'inventory' | 'orders' | 'both', rows.slice(0, 20));
+    }
+
+    const analysis = await analyzeImportImpact(importId, mapping);
+
+    res.json(analysis);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/imports/:importId/diff
+ * Get side-by-side comparison of existing vs import data
+ */
+router.get('/:importId/diff', async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) {
+      throw new NotFoundError('Import');
+    }
+
+    // Generate column mapping
+    const { headers, rows } = await parseFile(importBatch.filePath!);
+    const mapping = generateColumnMapping(
+      headers,
+      importBatch.importType as 'inventory' | 'orders' | 'both',
+      rows.slice(0, 20)
+    );
+
+    const diff = await generateImportDiff(importId, mapping);
+
+    res.json(diff);
   } catch (error) {
     next(error);
   }

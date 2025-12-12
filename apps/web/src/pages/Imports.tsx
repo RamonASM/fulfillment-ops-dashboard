@@ -193,7 +193,7 @@ export default function Imports() {
                 )}
               </p>
               <p className="text-sm text-gray-500 mt-1">
-                Supports CSV, XLSX, XLS, and TSV files up to 10MB
+                Supports CSV, XLSX, XLS, and TSV files up to 50MB
               </p>
               <div className="flex items-center justify-center gap-2 mt-3">
                 <span className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-600">CSV</span>

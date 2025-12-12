@@ -51,8 +51,16 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
       </div>
 
       {/* Right panel - Auth form */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex flex-col items-center justify-center p-8">
         <div className="w-full max-w-md">{children}</div>
+        <a
+          href="https://yourtechassist.us"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-8 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full transition-colors"
+        >
+          Built by <span className="font-medium text-gray-700">yourtechassist.us</span>
+        </a>
       </div>
     </div>
   );

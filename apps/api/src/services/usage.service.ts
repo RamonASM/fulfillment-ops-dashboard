@@ -196,7 +196,11 @@ function calculate3MonthAverage(
     (sum, t) => sum + t.quantityUnits,
     0
   );
-  const avgMonthlyUnits = totalUnits / 3;
+  // FIX: Calculate actual months with data, not hardcoded 3
+  const monthsWithData = new Set(
+    relevantTransactions.map(t => format(t.dateSubmitted, 'yyyy-MM'))
+  ).size;
+  const avgMonthlyUnits = totalUnits / Math.max(1, monthsWithData);
   const avgDailyUnits = avgMonthlyUnits / 30.44;
   const avgWeeklyUnits = avgDailyUnits * 7;
 
@@ -587,14 +591,16 @@ export async function calculateMonthlyUsage(productId: string): Promise<MonthlyU
     confidence = 'medium';
     const recentMonths = monthlyBreakdown.slice(-6);
     const totalUnits = recentMonths.reduce((sum, m) => sum + m.units, 0);
-    monthlyUsageUnits = totalUnits / 6;
+    // FIX: Divide by actual month count, not hardcoded 6
+    monthlyUsageUnits = totalUnits / recentMonths.length;
   } else if (dataMonths >= 3) {
     // Use 3-month average
     calculationTier = '3_month';
     confidence = 'medium';
     const recentMonths = monthlyBreakdown.slice(-3);
     const totalUnits = recentMonths.reduce((sum, m) => sum + m.units, 0);
-    monthlyUsageUnits = totalUnits / 3;
+    // FIX: Divide by actual month count, not hardcoded 3
+    monthlyUsageUnits = totalUnits / recentMonths.length;
   } else {
     // Less than 3 months - extrapolate from weekly rate
     calculationTier = 'weekly';

@@ -102,9 +102,9 @@ const reportLimiter = rateLimit({
 // Apply default limiter globally
 app.use(defaultLimiter);
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+// Body parsing - 50MB limit to match multer file upload limits
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // Request ID middleware (must be before request logger)

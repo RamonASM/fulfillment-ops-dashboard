@@ -157,6 +157,22 @@ export default function Login() {
           Contact your administrator
         </button>
       </p>
+
+      {/* Demo Account */}
+      <div className="mt-6 pt-6 border-t border-gray-200">
+        <p className="text-center text-xs text-gray-400 mb-2">Want to explore?</p>
+        <button
+          type="button"
+          onClick={() => {
+            setEmail('sarah.chen@inventoryiq.com');
+            setPassword('demo1234');
+          }}
+          className="w-full py-2.5 px-4 text-sm text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+        >
+          <span className="font-medium">Demo Account</span>
+          <span className="block text-xs text-gray-400 mt-0.5">View sample inventory data</span>
+        </button>
+      </div>
     </div>
   );
 }
