@@ -341,7 +341,15 @@ router.get('/reorder-suggestions', async (req: Request, res: Response) => {
       },
     });
 
-    const suggestions = [];
+    const suggestions: Array<{
+      productId: string;
+      productName: string;
+      currentStock: number;
+      monthlyUsage: number;
+      weeksOfSupply: number;
+      suggestedOrderQty: number;
+      urgency: 'critical' | 'soon' | 'planned';
+    }> = [];
 
     for (const product of products) {
       const totalUnits = product.transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
