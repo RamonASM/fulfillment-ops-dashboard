@@ -206,49 +206,14 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Start API server in background
-        working-directory: apps/api
-        run: |
-          npm start &
-          echo $! > api.pid
-          echo "Waiting for API to start..."
-          sleep 10
-        env:
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-          REDIS_URL: ${{ env.REDIS_URL }}
-          JWT_SECRET: ${{ env.JWT_SECRET }}
-          NODE_ENV: ${{ env.NODE_ENV }}
-          PORT: 3001
-
-      - name: Start web server in background
-        working-directory: apps/web
-        run: |
-          npm run preview -- --port 4173 --host &
-          echo $! > web.pid
-          sleep 5
-
-      - name: Start portal server in background
-        working-directory: apps/portal
-        run: |
-          npm run preview -- --port 4174 --host &
-          echo $! > portal.pid
-          sleep 5
-
-      - name: Wait for services to be ready
-        run: |
-          echo "Waiting for API..."
-          timeout 60 bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done' || exit 1
-          echo "Waiting for Web..."
-          timeout 30 bash -c 'until curl -I http://localhost:4173; do sleep 2; done' || exit 1
-          echo "Waiting for Portal..."
-          timeout 30 bash -c 'until curl -I http://localhost:4174; do sleep 2; done' || exit 1
-          echo "All services ready!"
-
-      - name: Run E2E tests
+      - name: Run E2E tests (Playwright starts servers automatically)
         run: npm run test:e2e
         env:
           NODE_ENV: test
-          VITE_API_URL: http://localhost:3001
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          REDIS_URL: ${{ env.REDIS_URL }}
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          PORT: 3001
 
       - name: Upload Playwright report
         if: failure()
@@ -265,13 +230,6 @@ jobs:
           name: test-results
           path: test-results/
           retention-days: 7
-
-      - name: Stop servers on cleanup
-        if: always()
-        run: |
-          kill $(cat apps/api/api.pid 2>/dev/null) 2>/dev/null || true
-          kill $(cat apps/web/web.pid 2>/dev/null) 2>/dev/null || true
-          kill $(cat apps/portal/portal.pid 2>/dev/null) 2>/dev/null || true
 
   # =============================================================================
   # Security Audit

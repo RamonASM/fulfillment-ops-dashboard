@@ -21,33 +21,33 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
-    // Add more browsers as needed
-    // {
-    //   name: 'firefox',
-    //   use: { ...devices['Desktop Firefox'] },
-    // },
-    // {
-    //   name: 'webkit',
-    //   use: { ...devices['Desktop Safari'] },
-    // },
   ],
 
-  /* webServer: [
+  // Playwright automatically starts these servers before tests and stops them after
+  webServer: [
     {
       command: 'npm run start:api',
       url: 'http://localhost:3001/health',
       reuseExistingServer: !process.env.CI,
-      cwd: '.',
-      env: {
-        NODE_ENV: 'test',
-        PORT: '3001',
-      },
+      timeout: 120000, // 2 minutes to start
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
     {
       command: 'npm run preview:web',
       url: 'http://localhost:4173',
       reuseExistingServer: !process.env.CI,
-      cwd: '.',
+      timeout: 60000, // 1 minute to start
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
-  ], */
+    {
+      command: 'npm run preview:portal',
+      url: 'http://localhost:4174',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
 });
