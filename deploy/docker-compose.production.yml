@@ -42,8 +42,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - backup_data:/backups
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    expose:
+      - "5432"
     healthcheck:
       test:
         [
@@ -59,6 +59,14 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
 
   # ===========================================================================
   # Cache & Session Store - Redis
@@ -69,11 +77,11 @@ services:
     restart: unless-stopped
     networks:
       - inventory-network
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -85,6 +93,14 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
 
   # ===========================================================================
   # API Server - Node.js Express
@@ -143,6 +159,14 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "1.0"
+          memory: 512M
 
   # ===========================================================================
   # ML Analytics Service - Python FastAPI
@@ -179,6 +203,14 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
 
   # ===========================================================================
   # Web Dashboard & Portal - Nginx Static Server
@@ -195,6 +227,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8080:8080"
     volumes:
       - ./nginx/inventory-docker.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro

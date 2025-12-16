@@ -1,5 +1,5 @@
-import { PrismaClient, Prisma } from '@prisma/client';
-import { logger } from './logger.js';
+import { PrismaClient, Prisma } from "@prisma/client";
+import { logger } from "./logger.js";
 
 export { Prisma };
 
@@ -10,19 +10,33 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient(): PrismaClient {
+  // Add connection pooling parameters for production performance
+  const databaseUrl = process.env.DATABASE_URL || "";
+  const hasParams = databaseUrl.includes("?");
+  const poolingParams =
+    "connection_limit=20&pool_timeout=20&connect_timeout=10";
+  const datasourceUrl = hasParams
+    ? `${databaseUrl}&${poolingParams}`
+    : `${databaseUrl}?${poolingParams}`;
+
   const client = new PrismaClient({
+    datasources: {
+      db: {
+        url: datasourceUrl,
+      },
+    },
     log: [
-      { level: 'query', emit: 'event' },
-      { level: 'error', emit: 'stdout' },
-      { level: 'warn', emit: 'stdout' },
+      { level: "query", emit: "event" },
+      { level: "error", emit: "stdout" },
+      { level: "warn", emit: "stdout" },
     ],
   });
 
   // Log slow queries
-  client.$on('query', (e) => {
+  client.$on("query", (e) => {
     const duration = e.duration;
     if (duration > SLOW_QUERY_THRESHOLD_MS) {
-      logger.warn('Slow query detected', {
+      logger.warn("Slow query detected", {
         query: e.query.substring(0, 200), // Truncate long queries
         params: e.params.substring(0, 100),
         duration,
@@ -36,6 +50,6 @@ function createPrismaClient(): PrismaClient {
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }

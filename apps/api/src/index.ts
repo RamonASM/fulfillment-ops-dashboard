@@ -47,6 +47,8 @@ import mlRoutes from "./routes/ml.routes.js";
 import benchmarkingRoutes from "./routes/benchmarking.routes.js";
 import preferencesRoutes from "./routes/preferences.routes.js";
 import documentationRoutes from "./routes/documentation.routes.js";
+import clientHealthRoutes from "./routes/client-health.routes.js";
+import notificationPreferencesRoutes from "./routes/notification-preferences.routes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -65,13 +67,25 @@ initializeWebSocket(httpServer);
 // Security headers
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration with strict production validation
+const getAllowedOrigins = (): string[] => {
+  const corsOrigins =
+    process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) || [];
+
+  if (process.env.NODE_ENV === "production" && corsOrigins.length === 0) {
+    throw new Error(
+      "CRITICAL: CORS_ORIGINS must be set in production environment",
+    );
+  }
+
+  return corsOrigins.length > 0
+    ? corsOrigins
+    : ["http://localhost:5173", "http://localhost:5174"];
+};
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN?.split(",") || [
-      "http://localhost:5173",
-      "http://localhost:5174",
-    ],
+    origin: getAllowedOrigins(),
     credentials: true,
   }),
 );
@@ -154,6 +168,8 @@ app.use("/api/ml", aiLimiter, mlRoutes);
 app.use("/api/benchmarking", benchmarkingRoutes);
 app.use("/api/preferences", preferencesRoutes);
 app.use("/api/documentation", documentationRoutes);
+app.use("/api/client-health", clientHealthRoutes);
+app.use("/api/notification-preferences", notificationPreferencesRoutes);
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));
