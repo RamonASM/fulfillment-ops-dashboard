@@ -11,7 +11,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: 'http://localhost:80',
+    baseURL: process.env.CI ? 'http://localhost:4173' : 'http://localhost:80',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
