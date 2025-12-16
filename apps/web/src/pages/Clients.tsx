@@ -1,45 +1,45 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { Plus, Search, Building2, X, Loader2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '@/api/client';
-import type { ClientWithStats } from '@inventory/shared';
-import { STATUS_COLORS } from '@inventory/shared';
-import { useState } from 'react';
-import { fadeInUp, staggerContainer, staggerItem } from '@/lib/animations';
-import toast from 'react-hot-toast';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { Plus, Search, Building2, X, Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { api } from "@/api/client";
+import type { ClientWithStats } from "@inventory/shared";
+import { STATUS_COLORS } from "@inventory/shared";
+import { useState } from "react";
+import { fadeInUp, staggerContainer, staggerItem } from "@/lib/animations";
+import toast from "react-hot-toast";
 
 export default function Clients() {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newClientName, setNewClientName] = useState('');
-  const [newClientCode, setNewClientCode] = useState('');
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientCode, setNewClientCode] = useState("");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['clients'],
-    queryFn: () => api.get<{ data: ClientWithStats[] }>('/clients'),
+    queryKey: ["clients"],
+    queryFn: () => api.get<{ data: ClientWithStats[] }>("/clients"),
   });
 
   const createClientMutation = useMutation({
     mutationFn: (data: { name: string; code: string }) =>
-      api.post<{ id: string; name: string; code: string }>('/clients', data),
+      api.post<{ id: string; name: string; code: string }>("/clients", data),
     onSuccess: (newClient) => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
       setShowCreateModal(false);
-      setNewClientName('');
-      setNewClientCode('');
+      setNewClientName("");
+      setNewClientCode("");
       toast.success(`Client "${newClient.name}" created successfully`);
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to create client');
+      toast.error(error.message || "Failed to create client");
     },
   });
 
   const handleCreateClient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClientName.trim() || !newClientCode.trim()) {
-      toast.error('Please fill in all fields');
+      toast.error("Please fill in all fields");
       return;
     }
     createClientMutation.mutate({
@@ -52,7 +52,7 @@ export default function Clients() {
   const filteredClients = clients.filter(
     (client) =>
       client.name.toLowerCase().includes(search.toLowerCase()) ||
-      client.code.toLowerCase().includes(search.toLowerCase())
+      client.code.toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
@@ -70,7 +70,10 @@ export default function Clients() {
             Manage your client inventory accounts
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowCreateModal(true)}>
+        <button
+          className="btn-primary"
+          onClick={() => setShowCreateModal(true)}
+        >
           <Plus className="w-4 h-4 mr-2" />
           Add Client
         </button>
@@ -108,8 +111,8 @@ export default function Clients() {
           </h3>
           <p className="mt-2 text-gray-500">
             {search
-              ? 'Try adjusting your search terms'
-              : 'Get started by adding your first client'}
+              ? "Try adjusting your search terms"
+              : "Get started by adding your first client"}
           </p>
         </div>
       ) : (
@@ -143,7 +146,9 @@ export default function Clients() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between p-4 border-b border-border">
-                <h2 className="text-lg font-semibold text-gray-900">Add New Client</h2>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Add New Client
+                </h2>
                 <button
                   onClick={() => setShowCreateModal(false)}
                   className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
@@ -174,7 +179,9 @@ export default function Clients() {
                   <input
                     type="text"
                     value={newClientCode}
-                    onChange={(e) => setNewClientCode(e.target.value.toUpperCase())}
+                    onChange={(e) =>
+                      setNewClientCode(e.target.value.toUpperCase())
+                    }
                     className="input uppercase"
                     placeholder="e.g., ACME"
                     maxLength={20}
@@ -204,7 +211,7 @@ export default function Clients() {
                         Creating...
                       </>
                     ) : (
-                      'Create Client'
+                      "Create Client"
                     )}
                   </button>
                 </div>
@@ -224,94 +231,110 @@ function ClientCard({ client }: { client: ClientWithStats }) {
   const low = stats?.lowCount || 0;
   const watch = stats?.watchCount || 0;
   const healthy = stats?.healthyCount || 0;
+  const weeksRemaining = stats?.lowestWeeksRemaining;
+
+  // Determine badge color based on weeks remaining
+  const getWeeksBadgeClass = () => {
+    if (weeksRemaining === null) return "bg-gray-100 text-gray-600";
+    if (weeksRemaining < 2) return "bg-red-100 text-red-700";
+    if (weeksRemaining < 4) return "bg-amber-100 text-amber-700";
+    return "bg-emerald-100 text-emerald-700";
+  };
 
   return (
     <motion.div variants={staggerItem}>
-      <Link
-        to={`/clients/${client.id}`}
-        className="card-interactive p-6 block"
-      >
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <h3 className="font-semibold text-gray-900">{client.name}</h3>
-          <p className="text-sm text-gray-500">{client.code}</p>
+      <Link to={`/clients/${client.id}`} className="card-interactive p-6 block">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="font-semibold text-gray-900">{client.name}</h3>
+            <p className="text-sm text-gray-500">{client.code}</p>
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            {weeksRemaining !== null && (
+              <span
+                className={`text-xs font-medium px-2 py-0.5 rounded-full ${getWeeksBadgeClass()}`}
+              >
+                {weeksRemaining < 1 ? "<1" : weeksRemaining} wk
+                {weeksRemaining !== 1 ? "s" : ""} left
+              </span>
+            )}
+            {critical > 0 && (
+              <span className="badge-critical">{critical} critical</span>
+            )}
+          </div>
         </div>
-        {critical > 0 && (
-          <span className="badge-critical">{critical} critical</span>
-        )}
-      </div>
 
-      {/* Progress bar */}
-      <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex mb-3">
-        {critical > 0 && (
-          <div
-            className="h-full transition-all"
-            style={{
-              width: `${(critical / total) * 100}%`,
-              backgroundColor: STATUS_COLORS.critical,
-            }}
-          />
-        )}
-        {low > 0 && (
-          <div
-            className="h-full transition-all"
-            style={{
-              width: `${(low / total) * 100}%`,
-              backgroundColor: STATUS_COLORS.low,
-            }}
-          />
-        )}
-        {watch > 0 && (
-          <div
-            className="h-full transition-all"
-            style={{
-              width: `${(watch / total) * 100}%`,
-              backgroundColor: STATUS_COLORS.watch,
-            }}
-          />
-        )}
-        {healthy > 0 && (
-          <div
-            className="h-full transition-all"
-            style={{
-              width: `${(healthy / total) * 100}%`,
-              backgroundColor: STATUS_COLORS.healthy,
-            }}
-          />
-        )}
-      </div>
-
-      {/* Stats row */}
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-gray-600">{total} products</span>
-        <div className="flex items-center gap-3">
+        {/* Progress bar */}
+        <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex mb-3">
           {critical > 0 && (
-            <span className="flex items-center gap-1 text-red-600">
-              <span className="status-dot-critical" />
-              {critical}
-            </span>
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${(critical / total) * 100}%`,
+                backgroundColor: STATUS_COLORS.critical,
+              }}
+            />
           )}
           {low > 0 && (
-            <span className="flex items-center gap-1 text-amber-600">
-              <span className="status-dot-warning" />
-              {low}
-            </span>
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${(low / total) * 100}%`,
+                backgroundColor: STATUS_COLORS.low,
+              }}
+            />
           )}
-          <span className="flex items-center gap-1 text-green-600">
-            <span className="status-dot-healthy" />
-            {healthy}
-          </span>
+          {watch > 0 && (
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${(watch / total) * 100}%`,
+                backgroundColor: STATUS_COLORS.watch,
+              }}
+            />
+          )}
+          {healthy > 0 && (
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${(healthy / total) * 100}%`,
+                backgroundColor: STATUS_COLORS.healthy,
+              }}
+            />
+          )}
         </div>
-      </div>
 
-      {/* Alerts indicator */}
-      {(stats?.alertCount || 0) > 0 && (
-        <div className="mt-4 pt-4 border-t border-border">
-          <span className="text-sm text-amber-600">
-            {stats?.alertCount} unread alerts
-          </span>
+        {/* Stats row */}
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-600">{total} products</span>
+          <div className="flex items-center gap-3">
+            {critical > 0 && (
+              <span className="flex items-center gap-1 text-red-600">
+                <span className="status-dot-critical" />
+                {critical}
+              </span>
+            )}
+            {low > 0 && (
+              <span className="flex items-center gap-1 text-amber-600">
+                <span className="status-dot-warning" />
+                {low}
+              </span>
+            )}
+            <span className="flex items-center gap-1 text-green-600">
+              <span className="status-dot-healthy" />
+              {healthy}
+            </span>
+          </div>
         </div>
-      )}
+
+        {/* Alerts indicator */}
+        {(stats?.alertCount || 0) > 0 && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <span className="text-sm text-amber-600">
+              {stats?.alertCount} unread alerts
+            </span>
+          </div>
+        )}
       </Link>
     </motion.div>
   );

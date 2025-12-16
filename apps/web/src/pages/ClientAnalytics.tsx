@@ -3,22 +3,23 @@
 // Comprehensive analytics dashboard for a specific client
 // =============================================================================
 
-import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, TrendingUp, RefreshCw } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { api } from '@/api/client';
-import { fadeInUp } from '@/lib/animations';
+import { useState } from "react";
+import { useParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronLeft, TrendingUp, RefreshCw } from "lucide-react";
+import { motion } from "framer-motion";
+import { api } from "@/api/client";
+import { fadeInUp } from "@/lib/animations";
 
 // Import all analytics widgets
-import { StockHealthDonut } from '@/components/widgets/StockHealthDonut';
-import { TopProductsWidget } from '@/components/widgets/TopProductsWidget';
-import { UpcomingStockoutsWidget } from '@/components/widgets/UpcomingStockoutsWidget';
-import { ReorderQueueWidget } from '@/components/widgets/ReorderQueueWidget';
-import { MonthlyTrendsChart } from '@/components/widgets/MonthlyTrendsChart';
-import { AnomalyAlertsWidget } from '@/components/widgets/AnomalyAlertsWidget';
-import { LocationAnalyticsWidget } from '@/components/widgets/LocationAnalyticsWidget';
-import { KPIGrid } from '@/components/widgets/KPICard';
+import { StockHealthDonut } from "@/components/widgets/StockHealthDonut";
+import { TopProductsWidget } from "@/components/widgets/TopProductsWidget";
+import { UpcomingStockoutsWidget } from "@/components/widgets/UpcomingStockoutsWidget";
+import { ReorderQueueWidget } from "@/components/widgets/ReorderQueueWidget";
+import { MonthlyTrendsChart } from "@/components/widgets/MonthlyTrendsChart";
+import { AnomalyAlertsWidget } from "@/components/widgets/AnomalyAlertsWidget";
+import { LocationAnalyticsWidget } from "@/components/widgets/LocationAnalyticsWidget";
+import { KPIGrid } from "@/components/widgets/KPICard";
 
 interface IntelligentSummary {
   stockHealth: {
@@ -39,8 +40,18 @@ interface IntelligentSummary {
     warnings: number;
     info: number;
   };
-  topProducts: Array<{ id: string; name: string; units: number; trend: string }>;
-  upcomingStockouts: Array<{ id: string; name: string; daysUntil: number; currentStock: number }>;
+  topProducts: Array<{
+    id: string;
+    name: string;
+    units: number;
+    trend: string;
+  }>;
+  upcomingStockouts: Array<{
+    id: string;
+    name: string;
+    daysUntil: number;
+    currentStock: number;
+  }>;
   reorderQueue: Array<{
     productId: string;
     productName: string;
@@ -48,15 +59,20 @@ interface IntelligentSummary {
     monthlyUsage: number;
     weeksOfSupply: number;
     suggestedOrderQty: number;
-    urgency: 'critical' | 'soon' | 'planned';
+    urgency: "critical" | "soon" | "planned";
     reason: string;
     estimatedStockoutDate: string | null;
   }>;
 }
 
 interface AnomalyAlert {
-  type: 'demand_spike' | 'demand_drop' | 'unusual_order' | 'dead_stock' | 'overstock';
-  severity: 'high' | 'medium' | 'low';
+  type:
+    | "demand_spike"
+    | "demand_drop"
+    | "unusual_order"
+    | "dead_stock"
+    | "overstock";
+  severity: "high" | "medium" | "low";
   productId?: string;
   productName?: string;
   locationId?: string;
@@ -88,41 +104,58 @@ interface MonthlyTrends {
 export default function ClientAnalytics() {
   const { clientId } = useParams<{ clientId: string }>();
 
+  // State for expanded views
+  const [showAllLocations, setShowAllLocations] = useState(false);
+  const [showAllAnomalies, setShowAllAnomalies] = useState(false);
+
   // Fetch client info
   const { data: client, isLoading: clientLoading } = useQuery({
-    queryKey: ['client', clientId],
-    queryFn: () => api.get<{ name: string; code: string }>(`/clients/${clientId}`),
+    queryKey: ["client", clientId],
+    queryFn: () =>
+      api.get<{ name: string; code: string }>(`/clients/${clientId}`),
     enabled: !!clientId,
   });
 
   // Fetch intelligent summary
-  const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
-    queryKey: ['analytics', 'intelligent-summary', clientId],
-    queryFn: () => api.get<{ data: IntelligentSummary }>(`/analytics/intelligent-summary/${clientId}`),
+  const {
+    data: summaryData,
+    isLoading: summaryLoading,
+    refetch: refetchSummary,
+  } = useQuery({
+    queryKey: ["analytics", "intelligent-summary", clientId],
+    queryFn: () =>
+      api.get<{ data: IntelligentSummary }>(
+        `/analytics/intelligent-summary/${clientId}`,
+      ),
     enabled: !!clientId,
     staleTime: 60000, // 1 minute
   });
 
   // Fetch anomalies
   const { data: anomaliesData, isLoading: anomaliesLoading } = useQuery({
-    queryKey: ['analytics', 'anomalies', clientId],
-    queryFn: () => api.get<{ data: AnomalyAlert[] }>(`/analytics/anomalies/${clientId}`),
+    queryKey: ["analytics", "anomalies", clientId],
+    queryFn: () =>
+      api.get<{ data: AnomalyAlert[] }>(`/analytics/anomalies/${clientId}`),
     enabled: !!clientId,
     staleTime: 60000,
   });
 
   // Fetch locations
   const { data: locationsData, isLoading: locationsLoading } = useQuery({
-    queryKey: ['analytics', 'locations', clientId],
-    queryFn: () => api.get<{ data: LocationAnalytics[] }>(`/analytics/locations/${clientId}`),
+    queryKey: ["analytics", "locations", clientId],
+    queryFn: () =>
+      api.get<{ data: LocationAnalytics[] }>(
+        `/analytics/locations/${clientId}`,
+      ),
     enabled: !!clientId,
     staleTime: 60000,
   });
 
   // Fetch monthly trends
   const { data: trendsData, isLoading: trendsLoading } = useQuery({
-    queryKey: ['analytics', 'monthly-trends', clientId],
-    queryFn: () => api.get<{ data: MonthlyTrends }>(`/analytics/monthly-trends/${clientId}`),
+    queryKey: ["analytics", "monthly-trends", clientId],
+    queryFn: () =>
+      api.get<{ data: MonthlyTrends }>(`/analytics/monthly-trends/${clientId}`),
     enabled: !!clientId,
     staleTime: 60000,
   });
@@ -130,7 +163,12 @@ export default function ClientAnalytics() {
   const summary = summaryData?.data;
   const anomalies = anomaliesData?.data || [];
   const locations = locationsData?.data || [];
-  const trends = trendsData?.data || { labels: [], orders: [], units: [], products: [] };
+  const trends = trendsData?.data || {
+    labels: [],
+    orders: [],
+    units: [],
+    products: [],
+  };
 
   const isLoading = clientLoading || summaryLoading;
 
@@ -138,7 +176,7 @@ export default function ClientAnalytics() {
   const kpiCards = summary
     ? [
         {
-          label: 'Total Products',
+          label: "Total Products",
           value:
             summary.stockHealth.critical +
             summary.stockHealth.low +
@@ -146,58 +184,67 @@ export default function ClientAnalytics() {
             summary.stockHealth.healthy +
             summary.stockHealth.overstock,
           trend: {
-            direction: 'stable' as const,
+            direction: "stable" as const,
             percent: 0,
-            period: 'all time',
+            period: "all time",
           },
           sparkline: trends.products.slice(-7),
-          color: 'blue' as const,
+          color: "blue" as const,
         },
         {
-          label: 'Orders This Week',
+          label: "Orders This Week",
           value: summary.activity.ordersThisWeek,
           trend: {
             direction:
               summary.activity.ordersThisWeek > summary.activity.ordersLastWeek
-                ? ('up' as const)
-                : summary.activity.ordersThisWeek < summary.activity.ordersLastWeek
-                ? ('down' as const)
-                : ('stable' as const),
+                ? ("up" as const)
+                : summary.activity.ordersThisWeek <
+                    summary.activity.ordersLastWeek
+                  ? ("down" as const)
+                  : ("stable" as const),
             percent:
               summary.activity.ordersLastWeek > 0
                 ? Math.abs(
-                    ((summary.activity.ordersThisWeek - summary.activity.ordersLastWeek) /
+                    ((summary.activity.ordersThisWeek -
+                      summary.activity.ordersLastWeek) /
                       summary.activity.ordersLastWeek) *
-                      100
+                      100,
                   )
                 : 0,
-            period: 'vs last week',
+            period: "vs last week",
           },
           sparkline: trends.orders.slice(-7),
-          color: 'green' as const,
+          color: "green" as const,
         },
         {
-          label: 'Units This Month',
+          label: "Units This Month",
           value: summary.activity.unitsThisMonth,
-          unit: 'units',
+          unit: "units",
           trend: {
-            direction: 'stable' as const,
+            direction: "stable" as const,
             percent: 0,
-            period: 'this month',
+            period: "this month",
           },
           sparkline: trends.units.slice(-7),
-          color: 'amber' as const,
+          color: "amber" as const,
         },
         {
-          label: 'Active Alerts',
-          value: summary.alerts.critical + summary.alerts.warnings + summary.alerts.info,
+          label: "Active Alerts",
+          value:
+            summary.alerts.critical +
+            summary.alerts.warnings +
+            summary.alerts.info,
           trend: {
-            direction: summary.alerts.critical > 0 ? ('up' as const) : ('stable' as const),
+            direction:
+              summary.alerts.critical > 0
+                ? ("up" as const)
+                : ("stable" as const),
             percent: summary.alerts.critical,
-            period: 'critical',
+            period: "critical",
           },
           sparkline: [],
-          color: summary.alerts.critical > 0 ? ('red' as const) : ('blue' as const),
+          color:
+            summary.alerts.critical > 0 ? ("red" as const) : ("blue" as const),
         },
       ]
     : [];
@@ -222,7 +269,8 @@ export default function ClientAnalytics() {
             <div className="flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-blue-600" />
               <h1 className="text-2xl font-bold text-gray-900">
-                {clientLoading ? 'Loading...' : client?.name || 'Client'} Analytics
+                {clientLoading ? "Loading..." : client?.name || "Client"}{" "}
+                Analytics
               </h1>
             </div>
             <p className="text-gray-500 mt-1">
@@ -270,7 +318,7 @@ export default function ClientAnalytics() {
               products={
                 summary?.topProducts.map((p) => ({
                   ...p,
-                  trend: p.trend as 'growing' | 'stable' | 'declining',
+                  trend: p.trend as "growing" | "stable" | "declining",
                 })) || []
               }
               clientId={clientId}
@@ -292,7 +340,11 @@ export default function ClientAnalytics() {
 
             {/* Anomaly Alerts */}
             {!anomaliesLoading && (
-              <AnomalyAlertsWidget anomalies={anomalies} limit={4} />
+              <AnomalyAlertsWidget
+                anomalies={anomalies}
+                limit={showAllAnomalies ? 999 : 4}
+                onViewAll={() => setShowAllAnomalies(true)}
+              />
             )}
           </div>
 
@@ -306,7 +358,11 @@ export default function ClientAnalytics() {
 
             {/* Location Analytics */}
             {!locationsLoading && (
-              <LocationAnalyticsWidget locations={locations} limit={4} />
+              <LocationAnalyticsWidget
+                locations={locations}
+                limit={showAllLocations ? 999 : 4}
+                onViewMore={() => setShowAllLocations(true)}
+              />
             )}
           </div>
         </>

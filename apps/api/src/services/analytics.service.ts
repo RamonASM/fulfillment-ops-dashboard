@@ -3,10 +3,16 @@
 // Pre-aggregated analytics and trend calculations
 // =============================================================================
 
-import { prisma, Prisma } from '../lib/prisma.js';
-import { logger } from '../lib/logger.js';
-import { cache, CacheTTL, CacheKeys } from '../lib/cache.js';
-import { subDays, startOfDay, endOfDay, format, differenceInHours } from 'date-fns';
+import { prisma, Prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
+import { cache, CacheTTL, CacheKeys } from "../lib/cache.js";
+import {
+  subDays,
+  startOfDay,
+  endOfDay,
+  format,
+  differenceInHours,
+} from "date-fns";
 
 // Types
 interface DailySummary {
@@ -37,7 +43,7 @@ interface InventoryHealthMetrics {
     criticalCount: number;
   }>;
   trend: {
-    direction: 'improving' | 'declining' | 'stable';
+    direction: "improving" | "declining" | "stable";
     changePercent: number;
   };
 }
@@ -55,7 +61,7 @@ interface PortfolioRisk {
   avgRiskScore: number;
   highRiskProducts: number;
   totalProducts: number;
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "low" | "medium" | "high" | "critical";
   topRiskFactors: Array<{ factor: string; count: number }>;
 }
 
@@ -84,7 +90,7 @@ interface ForecastAccuracy {
 
 export async function getDailySummary(
   clientId: string,
-  days: number = 30
+  days: number = 30,
 ): Promise<DailySummary[]> {
   const startDate = subDays(new Date(), days);
 
@@ -94,7 +100,7 @@ export async function getDailySummary(
       product: { clientId },
       snapshotDate: { gte: startDate },
     },
-    orderBy: { snapshotDate: 'asc' },
+    orderBy: { snapshotDate: "asc" },
   });
 
   // Get daily alert metrics
@@ -103,14 +109,14 @@ export async function getDailySummary(
       clientId,
       metricDate: { gte: startDate },
     },
-    orderBy: { metricDate: 'asc' },
+    orderBy: { metricDate: "asc" },
   });
 
   // Group by date
   const summaryMap = new Map<string, DailySummary>();
 
   for (const snapshot of snapshots) {
-    const dateKey = format(snapshot.snapshotDate, 'yyyy-MM-dd');
+    const dateKey = format(snapshot.snapshotDate, "yyyy-MM-dd");
     const existing = summaryMap.get(dateKey) || {
       date: dateKey,
       totalProducts: 0,
@@ -127,11 +133,21 @@ export async function getDailySummary(
     existing.alertsCreated += snapshot.alertsCreated;
 
     switch (snapshot.stockStatus) {
-      case 'HEALTHY': existing.healthyCount++; break;
-      case 'WATCH': existing.watchCount++; break;
-      case 'LOW': existing.lowCount++; break;
-      case 'CRITICAL': existing.criticalCount++; break;
-      case 'STOCKOUT': existing.stockoutCount++; break;
+      case "HEALTHY":
+        existing.healthyCount++;
+        break;
+      case "WATCH":
+        existing.watchCount++;
+        break;
+      case "LOW":
+        existing.lowCount++;
+        break;
+      case "CRITICAL":
+        existing.criticalCount++;
+        break;
+      case "STOCKOUT":
+        existing.stockoutCount++;
+        break;
     }
 
     summaryMap.set(dateKey, existing);
@@ -139,7 +155,7 @@ export async function getDailySummary(
 
   // Add alert resolution data
   for (const metric of alertMetrics) {
-    const dateKey = format(metric.metricDate, 'yyyy-MM-dd');
+    const dateKey = format(metric.metricDate, "yyyy-MM-dd");
     const existing = summaryMap.get(dateKey);
     if (existing) {
       existing.alertsCreated = metric.createdCount;
@@ -148,7 +164,7 @@ export async function getDailySummary(
   }
 
   return Array.from(summaryMap.values()).sort((a, b) =>
-    a.date.localeCompare(b.date)
+    a.date.localeCompare(b.date),
   );
 }
 
@@ -174,20 +190,23 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
     STOCKOUT: 0,
   };
 
-  const clientMap = new Map<string, {
-    clientId: string;
-    clientName: string;
-    total: number;
-    healthy: number;
-    critical: number;
-    weeksSum: number;
-  }>();
+  const clientMap = new Map<
+    string,
+    {
+      clientId: string;
+      clientName: string;
+      total: number;
+      healthy: number;
+      critical: number;
+      weeksSum: number;
+    }
+  >();
 
   let totalWeeksRemaining = 0;
   let productsWithWeeks = 0;
 
   for (const product of products) {
-    const status = product.stockStatus || 'HEALTHY';
+    const status = product.stockStatus || "HEALTHY";
     byStatus[status] = (byStatus[status] || 0) + 1;
 
     if (product.weeksRemaining !== null) {
@@ -206,9 +225,10 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
     };
 
     clientData.total++;
-    if (status === 'HEALTHY') clientData.healthy++;
-    if (status === 'CRITICAL' || status === 'STOCKOUT') clientData.critical++;
-    if (product.weeksRemaining !== null) clientData.weeksSum += product.weeksRemaining;
+    if (status === "HEALTHY") clientData.healthy++;
+    if (status === "CRITICAL" || status === "STOCKOUT") clientData.critical++;
+    if (product.weeksRemaining !== null)
+      clientData.weeksSum += product.weeksRemaining;
 
     clientMap.set(product.clientId, clientData);
   }
@@ -221,13 +241,17 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
     where: {
       snapshotDate: { gte: subDays(new Date(), 7) },
     },
-    orderBy: { snapshotDate: 'desc' },
+    orderBy: { snapshotDate: "desc" },
   });
 
-  const recentHealthy = lastWeekSnapshots.filter(s => s.stockStatus === 'HEALTHY').length;
+  const recentHealthy = lastWeekSnapshots.filter(
+    (s) => s.stockStatus === "HEALTHY",
+  ).length;
   const totalSnapshots = lastWeekSnapshots.length;
-  const recentHealthyPercent = totalSnapshots > 0 ? (recentHealthy / totalSnapshots) * 100 : 0;
-  const currentHealthyPercent = total > 0 ? (byStatus.HEALTHY / total) * 100 : 0;
+  const recentHealthyPercent =
+    totalSnapshots > 0 ? (recentHealthy / totalSnapshots) * 100 : 0;
+  const currentHealthyPercent =
+    total > 0 ? (byStatus.HEALTHY / total) * 100 : 0;
   const changePercent = currentHealthyPercent - recentHealthyPercent;
 
   const result: InventoryHealthMetrics = {
@@ -235,10 +259,11 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
       totalProducts: total,
       healthyPercent: total > 0 ? (byStatus.HEALTHY / total) * 100 : 0,
       atRiskPercent: total > 0 ? (atRisk / total) * 100 : 0,
-      avgWeeksRemaining: productsWithWeeks > 0 ? totalWeeksRemaining / productsWithWeeks : 0,
+      avgWeeksRemaining:
+        productsWithWeeks > 0 ? totalWeeksRemaining / productsWithWeeks : 0,
     },
     byStatus,
-    byClient: Array.from(clientMap.values()).map(c => ({
+    byClient: Array.from(clientMap.values()).map((c) => ({
       clientId: c.clientId,
       clientName: c.clientName,
       totalProducts: c.total,
@@ -246,7 +271,12 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
       criticalCount: c.critical,
     })),
     trend: {
-      direction: changePercent > 2 ? 'improving' : changePercent < -2 ? 'declining' : 'stable',
+      direction:
+        changePercent > 2
+          ? "improving"
+          : changePercent < -2
+            ? "declining"
+            : "stable",
       changePercent: Math.abs(changePercent),
     },
   };
@@ -261,7 +291,7 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
 
 export async function getAlertTrends(
   clientId: string,
-  days: number = 30
+  days: number = 30,
 ): Promise<AlertTrend[]> {
   const cacheKey = CacheKeys.alertTrends(clientId);
   const cached = cache.get<AlertTrend[]>(cacheKey);
@@ -274,11 +304,11 @@ export async function getAlertTrends(
       clientId,
       metricDate: { gte: startDate },
     },
-    orderBy: { metricDate: 'asc' },
+    orderBy: { metricDate: "asc" },
   });
 
-  const result = metrics.map(m => ({
-    date: format(m.metricDate, 'yyyy-MM-dd'),
+  const result = metrics.map((m) => ({
+    date: format(m.metricDate, "yyyy-MM-dd"),
     created: m.createdCount,
     resolved: m.resolvedCount,
     net: m.createdCount - m.resolvedCount,
@@ -303,19 +333,23 @@ export async function getPortfolioRisk(): Promise<PortfolioRisk[]> {
     },
   });
 
-  return clients.map(client => {
+  return clients.map((client) => {
     const riskScores = client.products
-      .filter(p => p.riskScoreCache)
-      .map(p => ({
+      .filter((p) => p.riskScoreCache)
+      .map((p) => ({
         score: p.riskScoreCache!.score,
-        factors: p.riskScoreCache!.factors as Array<{ factor: string; value: number }>,
+        factors: p.riskScoreCache!.factors as Array<{
+          factor: string;
+          value: number;
+        }>,
       }));
 
-    const avgScore = riskScores.length > 0
-      ? riskScores.reduce((sum, r) => sum + r.score, 0) / riskScores.length
-      : 0;
+    const avgScore =
+      riskScores.length > 0
+        ? riskScores.reduce((sum, r) => sum + r.score, 0) / riskScores.length
+        : 0;
 
-    const highRiskProducts = riskScores.filter(r => r.score >= 70).length;
+    const highRiskProducts = riskScores.filter((r) => r.score >= 70).length;
 
     // Aggregate risk factors
     const factorCounts = new Map<string, number>();
@@ -338,7 +372,14 @@ export async function getPortfolioRisk(): Promise<PortfolioRisk[]> {
       avgRiskScore: Math.round(avgScore),
       highRiskProducts,
       totalProducts: client.products.length,
-      riskLevel: avgScore >= 80 ? 'critical' : avgScore >= 60 ? 'high' : avgScore >= 40 ? 'medium' : 'low',
+      riskLevel:
+        avgScore >= 80
+          ? "critical"
+          : avgScore >= 60
+            ? "high"
+            : avgScore >= 40
+              ? "medium"
+              : "low",
       topRiskFactors,
     };
   });
@@ -350,7 +391,7 @@ export async function getPortfolioRisk(): Promise<PortfolioRisk[]> {
 
 export async function getInventoryTurnover(
   clientId: string,
-  months: number = 12
+  months: number = 12,
 ): Promise<InventoryTurnover[]> {
   const startDate = subDays(new Date(), months * 30);
 
@@ -362,43 +403,46 @@ export async function getInventoryTurnover(
       },
       stockHistory: {
         where: { recordedAt: { gte: startDate } },
-        orderBy: { recordedAt: 'asc' },
+        orderBy: { recordedAt: "asc" },
       },
     },
   });
 
-  return products.map(product => {
-    // Calculate total consumed
-    const totalConsumed = product.transactions.reduce(
-      (sum, t) => sum + t.quantityUnits, 0
-    );
+  return products
+    .map((product) => {
+      // Calculate total consumed
+      const totalConsumed = product.transactions.reduce(
+        (sum, t) => sum + t.quantityUnits,
+        0,
+      );
 
-    // Calculate average inventory from stock history
-    const stockLevels = product.stockHistory.map(s => s.totalUnits);
-    const avgInventory = stockLevels.length > 0
-      ? stockLevels.reduce((sum, s) => sum + s, 0) / stockLevels.length
-      : product.currentStockUnits;
+      // Calculate average inventory from stock history
+      const stockLevels = product.stockHistory.map((s) => s.totalUnits);
+      const avgInventory =
+        stockLevels.length > 0
+          ? stockLevels.reduce((sum, s) => sum + s, 0) / stockLevels.length
+          : product.currentStockUnits;
 
-    // Calculate turnover ratio (annual)
-    const turnoverRatio = avgInventory > 0
-      ? (totalConsumed / avgInventory) * (365 / (months * 30))
-      : 0;
+      // Calculate turnover ratio (annual)
+      const turnoverRatio =
+        avgInventory > 0
+          ? (totalConsumed / avgInventory) * (365 / (months * 30))
+          : 0;
 
-    // Calculate average days on hand
-    const avgDaysOnHand = turnoverRatio > 0
-      ? 365 / turnoverRatio
-      : 0;
+      // Calculate average days on hand
+      const avgDaysOnHand = turnoverRatio > 0 ? 365 / turnoverRatio : 0;
 
-    return {
-      clientId: product.clientId,
-      productId: product.id,
-      productName: product.name,
-      turnoverRatio: Math.round(turnoverRatio * 100) / 100,
-      avgDaysOnHand: Math.round(avgDaysOnHand),
-      totalConsumed,
-      avgInventory: Math.round(avgInventory),
-    };
-  }).sort((a, b) => b.turnoverRatio - a.turnoverRatio);
+      return {
+        clientId: product.clientId,
+        productId: product.id,
+        productName: product.name,
+        turnoverRatio: Math.round(turnoverRatio * 100) / 100,
+        avgDaysOnHand: Math.round(avgDaysOnHand),
+        totalConsumed,
+        avgInventory: Math.round(avgInventory),
+      };
+    })
+    .sort((a, b) => b.turnoverRatio - a.turnoverRatio);
 }
 
 // =============================================================================
@@ -407,7 +451,7 @@ export async function getInventoryTurnover(
 
 export async function getForecastAccuracy(
   clientId: string,
-  days: number = 30
+  days: number = 30,
 ): Promise<ForecastAccuracy[]> {
   const startDate = subDays(new Date(), days);
 
@@ -416,10 +460,10 @@ export async function getForecastAccuracy(
     include: {
       usageMetrics: {
         where: {
-          periodType: 'monthly',
+          periodType: "monthly",
           periodStart: { gte: subDays(new Date(), 90) },
         },
-        orderBy: { periodStart: 'desc' },
+        orderBy: { periodStart: "desc" },
         take: 3,
       },
       transactions: {
@@ -429,24 +473,28 @@ export async function getForecastAccuracy(
   });
 
   return products
-    .filter(p => p.usageMetrics.length >= 2)
-    .map(product => {
+    .filter((p) => p.usageMetrics.length >= 2)
+    .map((product) => {
       // Predicted usage (avg of last 3 months, adjusted for days)
-      const avgMonthlyUsage = product.usageMetrics.reduce(
-        (sum, m) => sum + m.totalConsumedUnits, 0
-      ) / product.usageMetrics.length;
+      const avgMonthlyUsage =
+        product.usageMetrics.reduce((sum, m) => sum + m.totalConsumedUnits, 0) /
+        product.usageMetrics.length;
       const predictedUsage = Math.round((avgMonthlyUsage / 30) * days);
 
       // Actual usage in period
       const actualUsage = product.transactions.reduce(
-        (sum, t) => sum + t.quantityUnits, 0
+        (sum, t) => sum + t.quantityUnits,
+        0,
       );
 
       // Calculate accuracy and MAPE
       const error = Math.abs(predictedUsage - actualUsage);
-      const accuracy = actualUsage > 0
-        ? Math.max(0, 100 - (error / actualUsage) * 100)
-        : predictedUsage === 0 ? 100 : 0;
+      const accuracy =
+        actualUsage > 0
+          ? Math.max(0, 100 - (error / actualUsage) * 100)
+          : predictedUsage === 0
+            ? 100
+            : 0;
       const mape = actualUsage > 0 ? (error / actualUsage) * 100 : 0;
 
       return {
@@ -466,7 +514,7 @@ export async function getForecastAccuracy(
 // =============================================================================
 
 export async function createDailySnapshot(): Promise<void> {
-  logger.info('Creating daily snapshots');
+  logger.info("Creating daily snapshots");
 
   const today = startOfDay(new Date());
   const products = await prisma.product.findMany({
@@ -481,7 +529,7 @@ export async function createDailySnapshot(): Promise<void> {
 
   // Get alerts created today per product
   const alertCounts = await prisma.alert.groupBy({
-    by: ['productId'],
+    by: ["productId"],
     where: {
       createdAt: {
         gte: today,
@@ -493,7 +541,7 @@ export async function createDailySnapshot(): Promise<void> {
   });
 
   const alertCountMap = new Map(
-    alertCounts.map(a => [a.productId, a._count.id])
+    alertCounts.map((a) => [a.productId, a._count.id]),
   );
 
   // Upsert snapshots
@@ -510,23 +558,23 @@ export async function createDailySnapshot(): Promise<void> {
         snapshotDate: today,
         packsAvailable: product.currentStockPacks,
         unitsAvailable: product.currentStockUnits,
-        stockStatus: product.stockStatus || 'HEALTHY',
+        stockStatus: product.stockStatus || "HEALTHY",
         alertsCreated: alertCountMap.get(product.id) || 0,
       },
       update: {
         packsAvailable: product.currentStockPacks,
         unitsAvailable: product.currentStockUnits,
-        stockStatus: product.stockStatus || 'HEALTHY',
+        stockStatus: product.stockStatus || "HEALTHY",
         alertsCreated: alertCountMap.get(product.id) || 0,
       },
     });
   }
 
-  logger.info('Created daily snapshots', { count: products.length });
+  logger.info("Created daily snapshots", { count: products.length });
 }
 
 export async function aggregateDailyAlertMetrics(): Promise<void> {
-  logger.info('Aggregating daily alert metrics');
+  logger.info("Aggregating daily alert metrics");
 
   const today = startOfDay(new Date());
   const clients = await prisma.client.findMany({
@@ -565,12 +613,16 @@ export async function aggregateDailyAlertMetrics(): Promise<void> {
     let totalResolutionHours = 0;
     for (const alert of resolvedAlerts) {
       if (alert.dismissedAt) {
-        totalResolutionHours += differenceInHours(alert.dismissedAt, alert.createdAt);
+        totalResolutionHours += differenceInHours(
+          alert.dismissedAt,
+          alert.createdAt,
+        );
       }
     }
-    const avgResolutionHours = resolvedAlerts.length > 0
-      ? totalResolutionHours / resolvedAlerts.length
-      : null;
+    const avgResolutionHours =
+      resolvedAlerts.length > 0
+        ? totalResolutionHours / resolvedAlerts.length
+        : null;
 
     await prisma.dailyAlertMetrics.upsert({
       where: {
@@ -598,14 +650,14 @@ export async function aggregateDailyAlertMetrics(): Promise<void> {
     });
   }
 
-  logger.info('Aggregated alert metrics', { clientCount: clients.length });
+  logger.info("Aggregated alert metrics", { clientCount: clients.length });
 }
 
 export async function refreshRiskScoreCache(): Promise<void> {
-  logger.info('Refreshing risk score cache');
+  logger.info("Refreshing risk score cache");
 
   // Import risk scoring service dynamically to avoid circular deps
-  const { calculateProductRisk } = await import('./ai/risk-scoring.service.js');
+  const { calculateProductRisk } = await import("./ai/risk-scoring.service.js");
 
   const products = await prisma.product.findMany({
     where: { isActive: true },
@@ -639,11 +691,16 @@ export async function refreshRiskScoreCache(): Promise<void> {
       });
       updated++;
     } catch (error) {
-      logger.error(`Failed to cache risk score`, error as Error, { productId: product.id });
+      logger.error(`Failed to cache risk score`, error as Error, {
+        productId: product.id,
+      });
     }
   }
 
-  logger.info('Refreshed risk score cache', { updatedCount: updated, totalProducts: products.length });
+  logger.info("Refreshed risk score cache", {
+    updatedCount: updated,
+    totalProducts: products.length,
+  });
 }
 
 // =============================================================================
@@ -658,16 +715,16 @@ export interface ProductAnalytics {
   totalUnits: number;
   avgOrderSize: number;
   orderFrequency: number;
-  velocity: 'fast' | 'medium' | 'slow' | 'dead';
-  abcClass: 'A' | 'B' | 'C';
-  trend: 'growing' | 'stable' | 'declining';
+  velocity: "fast" | "medium" | "slow" | "dead";
+  abcClass: "A" | "B" | "C";
+  trend: "growing" | "stable" | "declining";
   lastOrderDate: Date | null;
   daysSinceLastOrder: number | null;
   currentStock: number;
   monthlyUsage: number;
   weeksOfSupply: number | null;
   stockoutDate: Date | null;
-  reorderUrgency: 'critical' | 'soon' | 'ok' | 'overstock';
+  reorderUrgency: "critical" | "soon" | "ok" | "overstock";
 }
 
 export interface LocationAnalytics {
@@ -682,8 +739,13 @@ export interface LocationAnalytics {
 }
 
 export interface AnomalyAlert {
-  type: 'demand_spike' | 'demand_drop' | 'unusual_order' | 'dead_stock' | 'overstock';
-  severity: 'high' | 'medium' | 'low';
+  type:
+    | "demand_spike"
+    | "demand_drop"
+    | "unusual_order"
+    | "dead_stock"
+    | "overstock";
+  severity: "high" | "medium" | "low";
   productId?: string;
   productName?: string;
   locationId?: string;
@@ -701,7 +763,7 @@ export interface ReorderRecommendation {
   monthlyUsage: number;
   weeksOfSupply: number;
   suggestedOrderQty: number;
-  urgency: 'critical' | 'soon' | 'planned';
+  urgency: "critical" | "soon" | "planned";
   reason: string;
   estimatedStockoutDate: Date | null;
 }
@@ -725,15 +787,27 @@ export interface IntelligentDashboardSummary {
     warnings: number;
     info: number;
   };
-  topProducts: Array<{ id: string; name: string; units: number; trend: string }>;
-  upcomingStockouts: Array<{ id: string; name: string; daysUntil: number; currentStock: number }>;
+  topProducts: Array<{
+    id: string;
+    name: string;
+    units: number;
+    trend: string;
+  }>;
+  upcomingStockouts: Array<{
+    id: string;
+    name: string;
+    daysUntil: number;
+    currentStock: number;
+  }>;
   reorderQueue: ReorderRecommendation[];
 }
 
 /**
  * Get comprehensive product analytics with ABC classification, velocity, and trends
  */
-export async function getProductAnalytics(clientId: string): Promise<ProductAnalytics[]> {
+export async function getProductAnalytics(
+  clientId: string,
+): Promise<ProductAnalytics[]> {
   const now = new Date();
   const twelveMonthsAgo = subDays(now, 365);
   const threeMonthsAgo = subDays(now, 90);
@@ -745,87 +819,115 @@ export async function getProductAnalytics(clientId: string): Promise<ProductAnal
     include: {
       transactions: {
         where: {
-          orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+          orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
           dateSubmitted: { gte: twelveMonthsAgo },
         },
-        orderBy: { dateSubmitted: 'desc' },
+        orderBy: { dateSubmitted: "desc" },
       },
     },
   });
 
   // Calculate totals for ABC classification
-  const productTotals = products.map(p => ({
+  const productTotals = products.map((p) => ({
     id: p.id,
     totalUnits: p.transactions.reduce((sum, t) => sum + t.quantityUnits, 0),
   }));
 
-  const grandTotalUnits = productTotals.reduce((sum, p) => sum + p.totalUnits, 0);
+  const grandTotalUnits = productTotals.reduce(
+    (sum, p) => sum + p.totalUnits,
+    0,
+  );
   productTotals.sort((a, b) => b.totalUnits - a.totalUnits);
 
   // ABC classification (Pareto principle)
   let cumulative = 0;
-  const abcMap = new Map<string, 'A' | 'B' | 'C'>();
+  const abcMap = new Map<string, "A" | "B" | "C">();
   for (const p of productTotals) {
     cumulative += p.totalUnits;
-    const percentage = grandTotalUnits > 0 ? (cumulative / grandTotalUnits) * 100 : 0;
-    abcMap.set(p.id, percentage <= 80 ? 'A' : percentage <= 95 ? 'B' : 'C');
+    const percentage =
+      grandTotalUnits > 0 ? (cumulative / grandTotalUnits) * 100 : 0;
+    abcMap.set(p.id, percentage <= 80 ? "A" : percentage <= 95 ? "B" : "C");
   }
 
   const analytics: ProductAnalytics[] = [];
 
   for (const product of products) {
     const transactions = product.transactions;
-    const totalUnits = transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const totalUnits = transactions.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
     const totalOrders = transactions.length;
 
     // Calculate monthly usage from recent data
-    const recentTransactions = transactions.filter(t => t.dateSubmitted >= threeMonthsAgo);
+    const recentTransactions = transactions.filter(
+      (t) => t.dateSubmitted >= threeMonthsAgo,
+    );
     const monthsOfData = 3;
-    const monthlyUsage = recentTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) / monthsOfData;
+    const monthlyUsage =
+      recentTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) /
+      monthsOfData;
 
     // Velocity classification
-    let velocity: 'fast' | 'medium' | 'slow' | 'dead';
-    if (monthlyUsage >= 100) velocity = 'fast';
-    else if (monthlyUsage >= 20) velocity = 'medium';
-    else if (monthlyUsage > 0) velocity = 'slow';
-    else velocity = 'dead';
+    let velocity: "fast" | "medium" | "slow" | "dead";
+    if (monthlyUsage >= 100) velocity = "fast";
+    else if (monthlyUsage >= 20) velocity = "medium";
+    else if (monthlyUsage > 0) velocity = "slow";
+    else velocity = "dead";
 
     // Trend (compare last month vs previous month)
-    const lastMonthTxns = transactions.filter(t => t.dateSubmitted >= oneMonthAgo);
-    const prevMonthTxns = transactions.filter(t => t.dateSubmitted >= twoMonthsAgo && t.dateSubmitted < oneMonthAgo);
-    const lastMonthUnits = lastMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
-    const prevMonthUnits = prevMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const lastMonthTxns = transactions.filter(
+      (t) => t.dateSubmitted >= oneMonthAgo,
+    );
+    const prevMonthTxns = transactions.filter(
+      (t) => t.dateSubmitted >= twoMonthsAgo && t.dateSubmitted < oneMonthAgo,
+    );
+    const lastMonthUnits = lastMonthTxns.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
+    const prevMonthUnits = prevMonthTxns.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
 
-    let trend: 'growing' | 'stable' | 'declining';
+    let trend: "growing" | "stable" | "declining";
     if (prevMonthUnits === 0) {
-      trend = lastMonthUnits > 0 ? 'growing' : 'stable';
+      trend = lastMonthUnits > 0 ? "growing" : "stable";
     } else {
       const change = ((lastMonthUnits - prevMonthUnits) / prevMonthUnits) * 100;
-      trend = change > 15 ? 'growing' : change < -15 ? 'declining' : 'stable';
+      trend = change > 15 ? "growing" : change < -15 ? "declining" : "stable";
     }
 
     const lastOrderDate = transactions[0]?.dateSubmitted || null;
     const daysSinceLastOrder = lastOrderDate
-      ? Math.floor((now.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24))
+      ? Math.floor(
+          (now.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24),
+        )
       : null;
 
-    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const currentStock =
+      product.currentStockUnits || product.currentStockPacks * product.packSize;
     const weeklyUsage = monthlyUsage / 4.33;
     const weeksOfSupply = weeklyUsage > 0 ? currentStock / weeklyUsage : null;
 
-    const stockoutDate = weeklyUsage > 0 && currentStock > 0
-      ? new Date(now.getTime() + (currentStock / (monthlyUsage / 30)) * 24 * 60 * 60 * 1000)
-      : null;
+    const stockoutDate =
+      weeklyUsage > 0 && currentStock > 0
+        ? new Date(
+            now.getTime() +
+              (currentStock / (monthlyUsage / 30)) * 24 * 60 * 60 * 1000,
+          )
+        : null;
 
-    let reorderUrgency: 'critical' | 'soon' | 'ok' | 'overstock';
+    let reorderUrgency: "critical" | "soon" | "ok" | "overstock";
     if (weeksOfSupply === null || weeksOfSupply > 16) {
-      reorderUrgency = monthlyUsage === 0 ? 'ok' : 'overstock';
+      reorderUrgency = monthlyUsage === 0 ? "ok" : "overstock";
     } else if (weeksOfSupply <= 2) {
-      reorderUrgency = 'critical';
+      reorderUrgency = "critical";
     } else if (weeksOfSupply <= 4) {
-      reorderUrgency = 'soon';
+      reorderUrgency = "soon";
     } else {
-      reorderUrgency = 'ok';
+      reorderUrgency = "ok";
     }
 
     analytics.push({
@@ -837,7 +939,7 @@ export async function getProductAnalytics(clientId: string): Promise<ProductAnal
       avgOrderSize: totalOrders > 0 ? Math.round(totalUnits / totalOrders) : 0,
       orderFrequency: Math.round((totalOrders / 12) * 10) / 10,
       velocity,
-      abcClass: abcMap.get(product.id) || 'C',
+      abcClass: abcMap.get(product.id) || "C",
       trend,
       lastOrderDate,
       daysSinceLastOrder,
@@ -855,13 +957,15 @@ export async function getProductAnalytics(clientId: string): Promise<ProductAnal
 /**
  * Get analytics by shipping location
  */
-export async function getLocationAnalytics(clientId: string): Promise<LocationAnalytics[]> {
+export async function getLocationAnalytics(
+  clientId: string,
+): Promise<LocationAnalytics[]> {
   const twelveMonthsAgo = subDays(new Date(), 365);
 
   const transactions = await prisma.transaction.findMany({
     where: {
       product: { clientId },
-      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
       dateSubmitted: { gte: twelveMonthsAgo },
     },
     include: {
@@ -870,15 +974,21 @@ export async function getLocationAnalytics(clientId: string): Promise<LocationAn
   });
 
   // Group by location
-  const locationMap = new Map<string, {
-    transactions: typeof transactions;
-    company: string;
-  }>();
+  const locationMap = new Map<
+    string,
+    {
+      transactions: typeof transactions;
+      company: string;
+    }
+  >();
 
   for (const txn of transactions) {
-    const key = txn.shipToLocation || txn.shipToCompany || 'Unknown';
+    const key = txn.shipToLocation || txn.shipToCompany || "Unknown";
     if (!locationMap.has(key)) {
-      locationMap.set(key, { transactions: [], company: txn.shipToCompany || 'Unknown' });
+      locationMap.set(key, {
+        transactions: [],
+        company: txn.shipToCompany || "Unknown",
+      });
     }
     locationMap.get(key)!.transactions.push(txn);
   }
@@ -888,13 +998,16 @@ export async function getLocationAnalytics(clientId: string): Promise<LocationAn
   for (const [locationId, data] of locationMap.entries()) {
     const txns = data.transactions;
     const totalUnits = txns.reduce((sum, t) => sum + t.quantityUnits, 0);
-    const orderIds = new Set(txns.map(t => t.orderId));
+    const orderIds = new Set(txns.map((t) => t.orderId));
 
     // Top products
     const productCounts = new Map<string, { name: string; units: number }>();
     for (const txn of txns) {
       const key = txn.product.productId;
-      const existing = productCounts.get(key) || { name: txn.product.name, units: 0 };
+      const existing = productCounts.get(key) || {
+        name: txn.product.name,
+        units: 0,
+      };
       existing.units += txn.quantityUnits;
       productCounts.set(key, existing);
     }
@@ -904,9 +1017,10 @@ export async function getLocationAnalytics(clientId: string): Promise<LocationAn
       .sort((a, b) => b.units - a.units)
       .slice(0, 5);
 
-    const lastOrderDate = txns.length > 0
-      ? new Date(Math.max(...txns.map(t => t.dateSubmitted.getTime())))
-      : null;
+    const lastOrderDate =
+      txns.length > 0
+        ? new Date(Math.max(...txns.map((t) => t.dateSubmitted.getTime())))
+        : null;
 
     analytics.push({
       locationId,
@@ -926,7 +1040,9 @@ export async function getLocationAnalytics(clientId: string): Promise<LocationAn
 /**
  * Detect anomalies in ordering patterns
  */
-export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]> {
+export async function detectAnomalies(
+  clientId: string,
+): Promise<AnomalyAlert[]> {
   const now = new Date();
   const alerts: AnomalyAlert[] = [];
   const oneWeekAgo = subDays(now, 7);
@@ -938,32 +1054,45 @@ export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]>
     where: { clientId, isActive: true },
     include: {
       transactions: {
-        where: { orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] } },
-        orderBy: { dateSubmitted: 'desc' },
+        where: { orderStatus: { in: ["completed", "Completed", "COMPLETED"] } },
+        orderBy: { dateSubmitted: "desc" },
       },
     },
   });
 
   for (const product of products) {
     const transactions = product.transactions;
-    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const currentStock =
+      product.currentStockUnits || product.currentStockPacks * product.packSize;
 
     // Baseline (average weekly units over 3 months, excluding last week)
-    const baselineTransactions = transactions.filter(t =>
-      t.dateSubmitted >= threeMonthsAgo && t.dateSubmitted < oneWeekAgo
+    const baselineTransactions = transactions.filter(
+      (t) => t.dateSubmitted >= threeMonthsAgo && t.dateSubmitted < oneWeekAgo,
     );
-    const baselineWeeks = Math.max(1, Math.floor((now.getTime() - threeMonthsAgo.getTime()) / (7 * 24 * 60 * 60 * 1000)) - 1);
-    const avgWeeklyUnits = baselineTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) / baselineWeeks;
+    const baselineWeeks = Math.max(
+      1,
+      Math.floor(
+        (now.getTime() - threeMonthsAgo.getTime()) / (7 * 24 * 60 * 60 * 1000),
+      ) - 1,
+    );
+    const avgWeeklyUnits =
+      baselineTransactions.reduce((sum, t) => sum + t.quantityUnits, 0) /
+      baselineWeeks;
 
     // Recent week
-    const recentTransactions = transactions.filter(t => t.dateSubmitted >= oneWeekAgo);
-    const recentUnits = recentTransactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const recentTransactions = transactions.filter(
+      (t) => t.dateSubmitted >= oneWeekAgo,
+    );
+    const recentUnits = recentTransactions.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
 
     // Demand spike (2x+ normal)
     if (avgWeeklyUnits > 5 && recentUnits > avgWeeklyUnits * 2) {
       alerts.push({
-        type: 'demand_spike',
-        severity: recentUnits > avgWeeklyUnits * 3 ? 'high' : 'medium',
+        type: "demand_spike",
+        severity: recentUnits > avgWeeklyUnits * 3 ? "high" : "medium",
         productId: product.productId,
         productName: product.name,
         message: `Demand spike: ${product.name}`,
@@ -975,12 +1104,17 @@ export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]>
     }
 
     // Demand drop (< 25% of normal for 2 weeks)
-    const twoWeekTxns = transactions.filter(t => t.dateSubmitted >= twoWeeksAgo);
-    const twoWeekUnits = twoWeekTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const twoWeekTxns = transactions.filter(
+      (t) => t.dateSubmitted >= twoWeeksAgo,
+    );
+    const twoWeekUnits = twoWeekTxns.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
     if (avgWeeklyUnits > 10 && twoWeekUnits < avgWeeklyUnits * 0.5) {
       alerts.push({
-        type: 'demand_drop',
-        severity: 'medium',
+        type: "demand_drop",
+        severity: "medium",
         productId: product.productId,
         productName: product.name,
         message: `Demand drop: ${product.name}`,
@@ -995,8 +1129,8 @@ export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]>
     const lastOrder = transactions[0]?.dateSubmitted;
     if ((!lastOrder || lastOrder < ninetyDaysAgo) && currentStock > 0) {
       alerts.push({
-        type: 'dead_stock',
-        severity: currentStock > 100 ? 'high' : 'low',
+        type: "dead_stock",
+        severity: currentStock > 100 ? "high" : "low",
         productId: product.productId,
         productName: product.name,
         message: `Dead stock: ${product.name}`,
@@ -1011,8 +1145,8 @@ export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]>
     if (monthlyUsage > 0 && currentStock > monthlyUsage * 6) {
       const monthsOfStock = Math.round(currentStock / monthlyUsage);
       alerts.push({
-        type: 'overstock',
-        severity: monthsOfStock > 12 ? 'high' : 'medium',
+        type: "overstock",
+        severity: monthsOfStock > 12 ? "high" : "medium",
         productId: product.productId,
         productName: product.name,
         message: `Overstock: ${product.name}`,
@@ -1034,7 +1168,9 @@ export async function detectAnomalies(clientId: string): Promise<AnomalyAlert[]>
 /**
  * Generate smart reorder recommendations
  */
-export async function getReorderRecommendations(clientId: string): Promise<ReorderRecommendation[]> {
+export async function getReorderRecommendations(
+  clientId: string,
+): Promise<ReorderRecommendation[]> {
   const now = new Date();
   const threeMonthsAgo = subDays(now, 90);
 
@@ -1043,7 +1179,7 @@ export async function getReorderRecommendations(clientId: string): Promise<Reord
     include: {
       transactions: {
         where: {
-          orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+          orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
           dateSubmitted: { gte: threeMonthsAgo },
         },
       },
@@ -1053,29 +1189,33 @@ export async function getReorderRecommendations(clientId: string): Promise<Reord
   const recommendations: ReorderRecommendation[] = [];
 
   for (const product of products) {
-    const totalUnits = product.transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+    const totalUnits = product.transactions.reduce(
+      (sum, t) => sum + t.quantityUnits,
+      0,
+    );
     const monthlyUsage = totalUnits / 3;
 
     if (monthlyUsage < 1) continue;
 
-    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const currentStock =
+      product.currentStockUnits || product.currentStockPacks * product.packSize;
     const weeklyUsage = monthlyUsage / 4.33;
     const weeksOfSupply = currentStock / weeklyUsage;
 
     if (weeksOfSupply > 6) continue; // Sufficient stock
 
-    let urgency: 'critical' | 'soon' | 'planned';
+    let urgency: "critical" | "soon" | "planned";
     let reason: string;
 
     if (weeksOfSupply <= 2) {
-      urgency = 'critical';
+      urgency = "critical";
       reason = `Only ${Math.round(weeksOfSupply * 10) / 10} weeks remaining`;
     } else if (weeksOfSupply <= 4) {
-      urgency = 'soon';
+      urgency = "soon";
       reason = `${Math.round(weeksOfSupply)} weeks remaining`;
     } else {
-      urgency = 'planned';
-      reason = 'Approaching reorder point';
+      urgency = "planned";
+      reason = "Approaching reorder point";
     }
 
     // Suggest 8 weeks of supply
@@ -1083,7 +1223,9 @@ export async function getReorderRecommendations(clientId: string): Promise<Reord
     const suggestedQty = Math.ceil(targetStock - currentStock);
 
     const daysOfSupply = currentStock / (monthlyUsage / 30);
-    const stockoutDate = new Date(now.getTime() + daysOfSupply * 24 * 60 * 60 * 1000);
+    const stockoutDate = new Date(
+      now.getTime() + daysOfSupply * 24 * 60 * 60 * 1000,
+    );
 
     recommendations.push({
       productId: product.productId,
@@ -1099,13 +1241,17 @@ export async function getReorderRecommendations(clientId: string): Promise<Reord
   }
 
   const urgencyOrder = { critical: 0, soon: 1, planned: 2 };
-  return recommendations.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+  return recommendations.sort(
+    (a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency],
+  );
 }
 
 /**
  * Get comprehensive intelligent dashboard summary
  */
-export async function getIntelligentDashboardSummary(clientId: string): Promise<IntelligentDashboardSummary> {
+export async function getIntelligentDashboardSummary(
+  clientId: string,
+): Promise<IntelligentDashboardSummary> {
   const now = new Date();
   const oneWeekAgo = subDays(now, 7);
   const twoWeeksAgo = subDays(now, 14);
@@ -1126,12 +1272,24 @@ export async function getIntelligentDashboardSummary(clientId: string): Promise<
   });
 
   // Stock health
-  const stockHealth = { critical: 0, low: 0, watch: 0, healthy: 0, overstock: 0 };
-  const upcomingStockouts: Array<{ id: string; name: string; daysUntil: number; currentStock: number }> = [];
+  const stockHealth = {
+    critical: 0,
+    low: 0,
+    watch: 0,
+    healthy: 0,
+    overstock: 0,
+  };
+  const upcomingStockouts: Array<{
+    id: string;
+    name: string;
+    daysUntil: number;
+    currentStock: number;
+  }> = [];
 
   for (const product of products) {
     const monthlyUsage = product.monthlyUsageUnits || 0;
-    const currentStock = product.currentStockUnits || (product.currentStockPacks * product.packSize);
+    const currentStock =
+      product.currentStockUnits || product.currentStockPacks * product.packSize;
     const weeklyUsage = monthlyUsage / 4.33;
     const weeksRemaining = weeklyUsage > 0 ? currentStock / weeklyUsage : 999;
 
@@ -1168,42 +1326,56 @@ export async function getIntelligentDashboardSummary(clientId: string): Promise<
   const transactions = await prisma.transaction.findMany({
     where: {
       product: { clientId },
-      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
       dateSubmitted: { gte: twoWeeksAgo },
     },
   });
 
   const thisWeekOrders = new Set(
-    transactions.filter(t => t.dateSubmitted >= oneWeekAgo).map(t => t.orderId)
+    transactions
+      .filter((t) => t.dateSubmitted >= oneWeekAgo)
+      .map((t) => t.orderId),
   ).size;
   const lastWeekOrders = new Set(
-    transactions.filter(t => t.dateSubmitted >= twoWeeksAgo && t.dateSubmitted < oneWeekAgo).map(t => t.orderId)
+    transactions
+      .filter(
+        (t) => t.dateSubmitted >= twoWeeksAgo && t.dateSubmitted < oneWeekAgo,
+      )
+      .map((t) => t.orderId),
   ).size;
 
   const thisMonthTxns = await prisma.transaction.findMany({
     where: {
       product: { clientId },
-      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
+      orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
       dateSubmitted: { gte: startOfMonth },
     },
   });
-  const unitsThisMonth = thisMonthTxns.reduce((sum, t) => sum + t.quantityUnits, 0);
+  const unitsThisMonth = thisMonthTxns.reduce(
+    (sum, t) => sum + t.quantityUnits,
+    0,
+  );
 
   // Alerts
   const anomalies = await detectAnomalies(clientId);
   const alertCounts = {
-    critical: anomalies.filter(a => a.severity === 'high').length,
-    warnings: anomalies.filter(a => a.severity === 'medium').length,
-    info: anomalies.filter(a => a.severity === 'low').length,
+    critical: anomalies.filter((a) => a.severity === "high").length,
+    warnings: anomalies.filter((a) => a.severity === "medium").length,
+    info: anomalies.filter((a) => a.severity === "low").length,
   };
 
   // Top products
   const productAnalytics = await getProductAnalytics(clientId);
   const topProducts = productAnalytics
-    .filter(p => p.totalUnits > 0)
+    .filter((p) => p.totalUnits > 0)
     .sort((a, b) => b.totalUnits - a.totalUnits)
     .slice(0, 5)
-    .map(p => ({ id: p.id, name: p.name, units: p.totalUnits, trend: p.trend }));
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      units: p.totalUnits,
+      trend: p.trend,
+    }));
 
   // Reorder queue
   const reorderQueue = await getReorderRecommendations(clientId);
@@ -1214,7 +1386,8 @@ export async function getIntelligentDashboardSummary(clientId: string): Promise<
       ordersThisWeek: thisWeekOrders,
       ordersLastWeek: lastWeekOrders,
       unitsThisMonth,
-      avgDailyOrders: Math.round(((thisWeekOrders + lastWeekOrders) / 14) * 10) / 10,
+      avgDailyOrders:
+        Math.round(((thisWeekOrders + lastWeekOrders) / 14) * 10) / 10,
     },
     alerts: alertCounts,
     topProducts,
@@ -1226,7 +1399,10 @@ export async function getIntelligentDashboardSummary(clientId: string): Promise<
 /**
  * Get monthly trend data for charts
  */
-export async function getMonthlyTrends(clientId: string, months: number = 12): Promise<{
+export async function getMonthlyTrends(
+  clientId: string,
+  months: number = 12,
+): Promise<{
   labels: string[];
   orders: number[];
   units: number[];
@@ -1235,25 +1411,57 @@ export async function getMonthlyTrends(clientId: string, months: number = 12): P
   const now = new Date();
   const startDate = subDays(now, months * 30);
 
+  // First, check if there are ANY transactions for this client to determine date range
+  const oldestTransaction = await prisma.transaction.findFirst({
+    where: { product: { clientId } },
+    orderBy: { dateSubmitted: "asc" },
+    select: { dateSubmitted: true },
+  });
+
+  // Use the older of: startDate or oldest transaction date (to capture imported historical data)
+  const effectiveStartDate =
+    oldestTransaction?.dateSubmitted &&
+    oldestTransaction.dateSubmitted < startDate
+      ? oldestTransaction.dateSubmitted
+      : startDate;
+
   const transactions = await prisma.transaction.findMany({
     where: {
       product: { clientId },
-      orderStatus: { in: ['completed', 'Completed', 'COMPLETED'] },
-      dateSubmitted: { gte: startDate },
+      // Include ALL non-cancelled transactions (not just 'completed')
+      // This captures imported data with various statuses
+      NOT: {
+        orderStatus: {
+          in: ["cancelled", "Cancelled", "CANCELLED", "void", "Void", "VOID"],
+        },
+      },
+      dateSubmitted: { gte: effectiveStartDate },
     },
-    select: { orderId: true, quantityUnits: true, dateSubmitted: true, productId: true },
+    select: {
+      orderId: true,
+      quantityUnits: true,
+      dateSubmitted: true,
+      productId: true,
+    },
   });
 
   // Initialize monthly buckets
-  const monthlyData = new Map<string, { orders: Set<string>; units: number; products: Set<string> }>();
+  const monthlyData = new Map<
+    string,
+    { orders: Set<string>; units: number; products: Set<string> }
+  >();
   for (let i = 0; i < months; i++) {
     const monthDate = subDays(now, (months - 1 - i) * 30);
-    const monthKey = format(monthDate, 'MMM yyyy');
-    monthlyData.set(monthKey, { orders: new Set(), units: 0, products: new Set() });
+    const monthKey = format(monthDate, "MMM yyyy");
+    monthlyData.set(monthKey, {
+      orders: new Set(),
+      units: 0,
+      products: new Set(),
+    });
   }
 
   for (const txn of transactions) {
-    const monthKey = format(txn.dateSubmitted, 'MMM yyyy');
+    const monthKey = format(txn.dateSubmitted, "MMM yyyy");
     const data = monthlyData.get(monthKey);
     if (data) {
       data.orders.add(txn.orderId);
@@ -1275,4 +1483,82 @@ export async function getMonthlyTrends(clientId: string, months: number = 12): P
   }
 
   return { labels, orders, units, products };
+}
+
+/**
+ * Stock Health Summary - Aggregate product stock health categories
+ */
+export interface StockHealthSummary {
+  critical: number;
+  low: number;
+  watch: number;
+  healthy: number;
+  overstock: number;
+  stockout: number;
+  total: number;
+  lowestWeeksRemaining: number;
+}
+
+export async function getStockHealthSummary(
+  clientId: string,
+): Promise<StockHealthSummary> {
+  const products = await prisma.product.findMany({
+    where: { clientId, isActive: true },
+    select: {
+      id: true,
+      currentStockPacks: true,
+      packSize: true,
+      notificationPoint: true,
+      monthlyUsageUnits: true,
+      monthlyUsagePacks: true,
+    },
+  });
+
+  const summary: StockHealthSummary = {
+    critical: 0,
+    low: 0,
+    watch: 0,
+    healthy: 0,
+    overstock: 0,
+    stockout: 0,
+    total: products.length,
+    lowestWeeksRemaining: 999,
+  };
+
+  for (const product of products) {
+    const currentUnits = product.currentStockPacks * product.packSize;
+    const monthlyUsage = product.monthlyUsageUnits || 0;
+
+    // Calculate weeks remaining
+    const weeksRemaining =
+      monthlyUsage > 0
+        ? (currentUnits / monthlyUsage) * 4.33 // ~4.33 weeks per month
+        : 999;
+
+    // Track lowest weeks remaining
+    if (weeksRemaining < summary.lowestWeeksRemaining && weeksRemaining < 999) {
+      summary.lowestWeeksRemaining = Math.round(weeksRemaining * 10) / 10;
+    }
+
+    // Categorize based on stock health thresholds
+    if (currentUnits === 0) {
+      summary.stockout++;
+    } else if (weeksRemaining < 2) {
+      summary.critical++;
+    } else if (
+      weeksRemaining < 4 ||
+      currentUnits <= (product.notificationPoint || 0)
+    ) {
+      summary.low++;
+    } else if (weeksRemaining < 8) {
+      summary.watch++;
+    } else if (monthlyUsage > 0 && currentUnits > monthlyUsage * 6) {
+      // More than 6 months of supply = overstock
+      summary.overstock++;
+    } else {
+      summary.healthy++;
+    }
+  }
+
+  return summary;
 }

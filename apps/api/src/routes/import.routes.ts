@@ -1,33 +1,39 @@
-import { Router } from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { prisma } from '../lib/prisma.js';
-import { authenticate, requireClientAccess } from '../middleware/auth.js';
-import { NotFoundError, ValidationError } from '../middleware/error-handler.js';
+import { Router } from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { spawn, execSync } from "child_process";
+import { prisma } from "../lib/prisma.js";
+import { authenticate, requireClientAccess } from "../middleware/auth.js";
+import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
-  parseFile,
+  parseFilePreview,
   detectFileType,
   generateColumnMapping,
   generateColumnMappingWithLearning,
-  processImport,
   validateImportData,
-} from '../services/import.service.js';
-import { recalculateClientUsage, recalculateClientMonthlyUsage } from '../services/usage.service.js';
-import { runAlertGeneration } from '../services/alert.service.js';
-import { analyzeImportImpact, generateImportDiff } from '../services/import-analysis.service.js';
-import { storeMappingCorrections } from '../services/mapping-learning.service.js';
+} from "../services/import.service.js";
+import {
+  recalculateClientUsage,
+  recalculateClientMonthlyUsage,
+} from "../services/usage.service.js";
+import { runAlertGeneration } from "../services/alert.service.js";
+import {
+  analyzeImportImpact,
+  generateImportDiff,
+} from "../services/import-analysis.service.js";
+import { storeMappingCorrections } from "../services/mapping-learning.service.js";
 import {
   getClientCustomFields,
   discoverCustomFields,
   updateCustomFieldDefinition,
   getCustomFieldStats,
-} from '../services/custom-field.service.js';
+} from "../services/custom-field.service.js";
 
 const router = Router();
 
 // Ensure uploads directory exists
-const uploadsDir = './uploads';
+const uploadsDir = "./uploads";
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -36,8 +42,11 @@ if (!fs.existsSync(uploadsDir)) {
 const storage = multer.diskStorage({
   destination: uploadsDir,
   filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
+    );
   },
 });
 
@@ -49,19 +58,26 @@ const upload = multer({
   },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = [
-      'text/csv',
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'text/tab-separated-values',
-      'application/octet-stream', // Some systems send files with generic type
+      "text/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/tab-separated-values",
+      "application/octet-stream", // Some systems send files with generic type
     ];
-    const allowedExtensions = ['.csv', '.xlsx', '.xls', '.tsv'];
+    const allowedExtensions = [".csv", ".xlsx", ".xls", ".tsv"];
 
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
+    if (
+      allowedTypes.includes(file.mimetype) ||
+      allowedExtensions.includes(ext)
+    ) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only CSV, XLSX, XLS, and TSV files are allowed.'));
+      cb(
+        new Error(
+          "Invalid file type. Only CSV, XLSX, XLS, and TSV files are allowed.",
+        ),
+      );
     }
   },
 });
@@ -69,21 +85,22 @@ const upload = multer({
 // Multer error handler middleware
 const handleMulterError = (err: any, req: any, res: any, next: any) => {
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
+    if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
-        error: 'File too large',
-        message: 'File size exceeds the 50MB limit. Please upload a smaller file.',
-        maxSize: '50MB',
+        error: "File too large",
+        message:
+          "File size exceeds the 50MB limit. Please upload a smaller file.",
+        maxSize: "50MB",
       });
     }
     return res.status(400).json({
-      error: 'Upload error',
+      error: "Upload error",
       message: err.message,
     });
   } else if (err) {
     return res.status(400).json({
-      error: 'Upload error',
-      message: err.message || 'An error occurred during file upload',
+      error: "Upload error",
+      message: err.message || "An error occurred during file upload",
     });
   }
   next();
@@ -100,176 +117,207 @@ router.use(authenticate);
  * POST /api/imports/upload
  * Upload a single file for import
  */
-router.post('/upload', upload.single('file'), handleMulterError, async (req, res, next) => {
-  try {
-    if (!req.file) {
-      throw new ValidationError('No file uploaded');
-    }
+router.post(
+  "/upload",
+  upload.single("file"),
+  handleMulterError,
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        throw new ValidationError("No file uploaded");
+      }
 
-    const { clientId } = req.body;
-    if (!clientId) {
-      throw new ValidationError('Client ID is required');
-    }
+      const { clientId } = req.body;
+      if (!clientId) {
+        throw new ValidationError("Client ID is required");
+      }
 
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
+      // Verify client exists
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+      });
 
-    if (!client) {
-      throw new NotFoundError('Client');
-    }
+      if (!client) {
+        throw new NotFoundError("Client");
+      }
 
-    // Parse file and detect type
-    const { headers, rows } = await parseFile(req.file.path);
-    const detectedType = detectFileType(headers);
-    // Pass sample rows for better data type detection
-    // Use learning-enabled mapping to incorporate past user corrections
-    const columnMapping = await generateColumnMappingWithLearning(headers, detectedType, clientId, rows.slice(0, 20));
-
-    // Create import batch
-    const importBatch = await prisma.importBatch.create({
-      data: {
-        clientId,
-        importType: detectedType,
-        filename: req.file.originalname,
-        filePath: req.file.path,
-        status: 'pending',
-        rowCount: rows.length,
-        importedBy: req.user!.userId,
-      },
-    });
-
-    // Generate preview warnings (legacy)
-    const warnings = generateWarnings(headers, rows);
-
-    // Run validation on sample data
-    const validationResult = validateImportData(rows.slice(0, 100), columnMapping, detectedType);
-
-    const preview = {
-      importId: importBatch.id,
-      detectedType,
-      rowCount: rows.length,
-      columns: columnMapping,
-      sampleRows: rows.slice(0, 5),
-      warnings,
-      validation: {
-        isValid: validationResult.isValid,
-        totalErrors: validationResult.totalErrors,
-        totalWarnings: validationResult.totalWarnings,
-        summary: validationResult.summary,
-        // Only include first 10 detailed results to keep response size manageable
-        sampleIssues: validationResult.rowResults
-          .filter(r => r.errors.length > 0 || r.warnings.length > 0)
-          .slice(0, 10)
-          .flatMap(r => [...r.errors, ...r.warnings]),
-      },
-    };
-
-    res.json(preview);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/imports/upload-multiple
- * Upload multiple files for import (processes sequentially)
- */
-router.post('/upload-multiple', upload.array('files', 10), handleMulterError, async (req, res, next) => {
-  try {
-    const files = req.files as Express.Multer.File[];
-    if (!files || files.length === 0) {
-      throw new ValidationError('No files uploaded');
-    }
-
-    const { clientId } = req.body;
-    if (!clientId) {
-      throw new ValidationError('Client ID is required');
-    }
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError('Client');
-    }
-
-    const previews: Array<{
-      importId: string;
-      filename: string;
-      detectedType: string;
-      rowCount: number;
-      columns: ReturnType<typeof generateColumnMapping>;
-      sampleRows: Record<string, string | number | undefined>[];
-      warnings: ReturnType<typeof generateWarnings>;
-      validation: {
-        isValid: boolean;
-        totalErrors: number;
-        totalWarnings: number;
-        summary: { errorsByField: Record<string, number>; warningsByField: Record<string, number> };
-      };
-    }> = [];
-
-    for (const file of files) {
-      // Parse file and detect type
-      const { headers, rows } = await parseFile(file.path);
+      // Parse file preview for header detection and column mapping
+      const { headers, rows } = await parseFilePreview(req.file.path);
       const detectedType = detectFileType(headers);
+      // Pass sample rows for better data type detection
       // Use learning-enabled mapping to incorporate past user corrections
-      const columnMapping = await generateColumnMappingWithLearning(headers, detectedType, clientId, rows.slice(0, 20));
+      const columnMapping = await generateColumnMappingWithLearning(
+        headers,
+        detectedType,
+        clientId,
+        rows.slice(0, 20),
+      );
 
       // Create import batch
       const importBatch = await prisma.importBatch.create({
         data: {
           clientId,
           importType: detectedType,
-          filename: file.originalname,
-          filePath: file.path,
-          status: 'pending',
+          filename: req.file.originalname,
+          filePath: req.file.path,
+          status: "pending",
           rowCount: rows.length,
           importedBy: req.user!.userId,
         },
       });
 
-      // Generate warnings
+      // Generate preview warnings (legacy)
       const warnings = generateWarnings(headers, rows);
 
       // Run validation on sample data
-      const validationResult = validateImportData(rows.slice(0, 100), columnMapping, detectedType);
+      const validationResult = validateImportData(
+        rows.slice(0, 100),
+        columnMapping,
+        detectedType,
+      );
 
-      previews.push({
+      const preview = {
         importId: importBatch.id,
-        filename: file.originalname,
         detectedType,
         rowCount: rows.length,
         columns: columnMapping,
-        sampleRows: rows.slice(0, 3),
+        sampleRows: rows.slice(0, 5),
         warnings,
         validation: {
           isValid: validationResult.isValid,
           totalErrors: validationResult.totalErrors,
           totalWarnings: validationResult.totalWarnings,
           summary: validationResult.summary,
+          // Only include first 10 detailed results to keep response size manageable
+          sampleIssues: validationResult.rowResults
+            .filter((r) => r.errors.length > 0 || r.warnings.length > 0)
+            .slice(0, 10)
+            .flatMap((r) => [...r.errors, ...r.warnings]),
         },
-      });
-    }
+      };
 
-    res.json({
-      count: previews.length,
-      previews,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
+      res.json(preview);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * POST /api/imports/upload-multiple
+ * Upload multiple files for import (processes sequentially)
+ */
+router.post(
+  "/upload-multiple",
+  upload.array("files", 10),
+  handleMulterError,
+  async (req, res, next) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        throw new ValidationError("No files uploaded");
+      }
+
+      const { clientId } = req.body;
+      if (!clientId) {
+        throw new ValidationError("Client ID is required");
+      }
+
+      // Verify client exists
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+      });
+
+      if (!client) {
+        throw new NotFoundError("Client");
+      }
+
+      const previews: Array<{
+        importId: string;
+        filename: string;
+        detectedType: string;
+        rowCount: number;
+        columns: ReturnType<typeof generateColumnMapping>;
+        sampleRows: Record<string, string | number | undefined>[];
+        warnings: ReturnType<typeof generateWarnings>;
+        validation: {
+          isValid: boolean;
+          totalErrors: number;
+          totalWarnings: number;
+          summary: {
+            errorsByField: Record<string, number>;
+            warningsByField: Record<string, number>;
+          };
+        };
+      }> = [];
+
+      for (const file of files) {
+        // Parse file preview for header detection and column mapping
+        const { headers, rows } = await parseFilePreview(file.path);
+        const detectedType = detectFileType(headers);
+        // Use learning-enabled mapping to incorporate past user corrections
+        const columnMapping = await generateColumnMappingWithLearning(
+          headers,
+          detectedType,
+          clientId,
+          rows.slice(0, 20),
+        );
+
+        // Create import batch
+        const importBatch = await prisma.importBatch.create({
+          data: {
+            clientId,
+            importType: detectedType,
+            filename: file.originalname,
+            filePath: file.path,
+            status: "pending",
+            rowCount: rows.length,
+            importedBy: req.user!.userId,
+          },
+        });
+
+        // Generate warnings
+        const warnings = generateWarnings(headers, rows);
+
+        // Run validation on sample data
+        const validationResult = validateImportData(
+          rows.slice(0, 100),
+          columnMapping,
+          detectedType,
+        );
+
+        previews.push({
+          importId: importBatch.id,
+          filename: file.originalname,
+          detectedType,
+          rowCount: rows.length,
+          columns: columnMapping,
+          sampleRows: rows.slice(0, 3),
+          warnings,
+          validation: {
+            isValid: validationResult.isValid,
+            totalErrors: validationResult.totalErrors,
+            totalWarnings: validationResult.totalWarnings,
+            summary: validationResult.summary,
+          },
+        });
+      }
+
+      res.json({
+        count: previews.length,
+        previews,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /api/imports/history
  * List past imports (must be before /:importId to avoid route conflict)
  */
-router.get('/history', async (req, res, next) => {
+router.get("/history", async (req, res, next) => {
   try {
     const userId = req.user!.userId;
     const role = req.user!.role;
@@ -277,7 +325,7 @@ router.get('/history', async (req, res, next) => {
     // Get client IDs user has access to
     let clientIds: string[] = [];
 
-    if (role === 'admin' || role === 'operations_manager') {
+    if (role === "admin" || role === "operations_manager") {
       const clients = await prisma.client.findMany({
         where: { isActive: true },
         select: { id: true },
@@ -303,7 +351,7 @@ router.get('/history', async (req, res, next) => {
           select: { name: true },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 50,
     });
 
@@ -317,7 +365,7 @@ router.get('/history', async (req, res, next) => {
  * GET /api/imports/:importId
  * Get import status
  */
-router.get('/:importId', async (req, res, next) => {
+router.get("/:importId", async (req, res, next) => {
   try {
     const { importId } = req.params;
 
@@ -334,7 +382,7 @@ router.get('/:importId', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
     res.json(importBatch);
@@ -348,7 +396,7 @@ router.get('/:importId', async (req, res, next) => {
  * Analyze import impact before confirming
  * Returns projections of status changes, anomalies, and alert impact
  */
-router.post('/:importId/analyze', async (req, res, next) => {
+router.post("/:importId/analyze", async (req, res, next) => {
   try {
     const { importId } = req.params;
     const { columnMapping } = req.body;
@@ -358,18 +406,22 @@ router.post('/:importId/analyze', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
-    if (importBatch.status !== 'pending') {
-      throw new ValidationError('Can only analyze pending imports');
+    if (importBatch.status !== "pending") {
+      throw new ValidationError("Can only analyze pending imports");
     }
 
     // If no column mapping provided, generate one
     let mapping = columnMapping;
     if (!mapping || mapping.length === 0) {
-      const { headers, rows } = await parseFile(importBatch.filePath!);
-      mapping = generateColumnMapping(headers, importBatch.importType as 'inventory' | 'orders' | 'both', rows.slice(0, 20));
+      const { headers, rows } = await parseFilePreview(importBatch.filePath!);
+      mapping = generateColumnMapping(
+        headers,
+        importBatch.importType as "inventory" | "orders" | "both",
+        rows.slice(0, 20),
+      );
     }
 
     const analysis = await analyzeImportImpact(importId, mapping);
@@ -384,7 +436,7 @@ router.post('/:importId/analyze', async (req, res, next) => {
  * GET /api/imports/:importId/diff
  * Get side-by-side comparison of existing vs import data
  */
-router.get('/:importId/diff', async (req, res, next) => {
+router.get("/:importId/diff", async (req, res, next) => {
   try {
     const { importId } = req.params;
 
@@ -393,15 +445,15 @@ router.get('/:importId/diff', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
-    // Generate column mapping
-    const { headers, rows } = await parseFile(importBatch.filePath!);
+    // Generate column mapping using preview parser
+    const { headers, rows } = await parseFilePreview(importBatch.filePath!);
     const mapping = generateColumnMapping(
       headers,
-      importBatch.importType as 'inventory' | 'orders' | 'both',
-      rows.slice(0, 20)
+      importBatch.importType as "inventory" | "orders" | "both",
+      rows.slice(0, 20),
     );
 
     const diff = await generateImportDiff(importId, mapping);
@@ -416,7 +468,7 @@ router.get('/:importId/diff', async (req, res, next) => {
  * POST /api/imports/:importId/confirm
  * Confirm and process an import
  */
-router.post('/:importId/confirm', async (req, res, next) => {
+router.post("/:importId/confirm", async (req, res, next) => {
   try {
     const { importId } = req.params;
     const { columnMapping, originalMapping } = req.body;
@@ -426,15 +478,20 @@ router.post('/:importId/confirm', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
-    if (importBatch.status !== 'pending') {
-      throw new ValidationError('Import has already been processed');
+    if (importBatch.status !== "pending") {
+      throw new ValidationError("Import has already been processed");
     }
 
     // Store mapping corrections for learning (if user modified mappings)
-    if (originalMapping && columnMapping && Array.isArray(originalMapping) && Array.isArray(columnMapping)) {
+    if (
+      originalMapping &&
+      columnMapping &&
+      Array.isArray(originalMapping) &&
+      Array.isArray(columnMapping)
+    ) {
       const corrections: Array<{
         header: string;
         suggestedField: string;
@@ -459,16 +516,137 @@ router.post('/:importId/confirm', async (req, res, next) => {
       }
     }
 
-    // Process import using the service
-    const result = await processImport(importId, columnMapping || []);
+    // Write column mappings to JSON sidecar file for Python importer
+    const mappingFilePath = `${importBatch.filePath}.mapping.json`;
+    const mappingData = {
+      importId,
+      clientId: importBatch.clientId,
+      importType: importBatch.importType,
+      columnMappings: columnMapping || [],
+      customFields: (columnMapping || []).filter(
+        (m: { isCustomField?: boolean }) => m.isCustomField,
+      ),
+      createdAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(mappingFilePath, JSON.stringify(mappingData, null, 2));
+    console.log(`Wrote mapping file to ${mappingFilePath}`);
 
-    const updatedBatch = await prisma.importBatch.findUnique({
+    // Detect Python command (python3 or python)
+    let pythonCmd: string;
+    try {
+      pythonCmd = getPythonCommand();
+    } catch (err) {
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [{ message: "Python not found on system" }],
+        },
+      });
+      throw new ValidationError("Python is not installed on the server");
+    }
+
+    // Spawn the Python process with mapping file as 4th argument
+    const pythonProcess = spawn(
+      pythonCmd,
+      [
+        path.join(process.cwd(), "apps", "python-importer", "main.py"),
+        importId,
+        importBatch.filePath!,
+        importBatch.importType!,
+        mappingFilePath,
+      ],
+      {
+        cwd: process.cwd(),
+      },
+    );
+
+    // Set up timeout to kill process if it runs too long
+    const timeout = setTimeout(async () => {
+      pythonProcess.kill("SIGTERM");
+      console.error(
+        `Python Importer timed out after ${IMPORT_TIMEOUT_MS / 1000}s`,
+      );
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [{ message: "Import timed out after 30 minutes" }],
+        },
+      });
+    }, IMPORT_TIMEOUT_MS);
+
+    pythonProcess.stdout.on("data", (data) => {
+      console.log(`Python Importer stdout: ${data}`);
+    });
+
+    pythonProcess.stderr.on("data", async (data) => {
+      console.error(`Python Importer stderr: ${data}`);
+      // Only update status for actual errors, not warnings
+      const output = data.toString();
+      if (
+        output.toLowerCase().includes("error:") ||
+        output.toLowerCase().includes("fatal")
+      ) {
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            status: "failed",
+            errors: [{ message: `Python process error: ${output}` }],
+          },
+        });
+      }
+    });
+
+    pythonProcess.on("close", async (code) => {
+      clearTimeout(timeout);
+      console.log(`Python Importer process exited with code ${code}`);
+
+      // Clean up mapping file after processing
+      try {
+        if (fs.existsSync(mappingFilePath)) {
+          fs.unlinkSync(mappingFilePath);
+        }
+      } catch (cleanupError) {
+        console.warn("Failed to clean up mapping file:", cleanupError);
+      }
+
+      if (code === 0) {
+        // Trigger post-import calculations
+        try {
+          await recalculateClientUsage(importBatch.clientId);
+          await recalculateClientMonthlyUsage(importBatch.clientId);
+          await runAlertGeneration(importBatch.clientId);
+        } catch (calcError) {
+          console.error("Post-import calculation error:", calcError);
+        }
+      }
+    });
+
+    pythonProcess.on("error", async (err) => {
+      clearTimeout(timeout);
+      console.error("Failed to start Python Importer process:", err);
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [
+            { message: `Failed to start Python process: ${err.message}` },
+          ],
+        },
+      });
+    });
+
+    // Update the status to 'processing' to give immediate feedback to the user
+    const updatedBatch = await prisma.importBatch.update({
       where: { id: importId },
+      data: { status: "processing", startedAt: new Date() },
     });
 
     res.json({
       ...updatedBatch,
-      result,
+      message:
+        "Import process started. You can monitor the progress on the import status page.",
     });
   } catch (error) {
     next(error);
@@ -480,7 +658,7 @@ router.post('/:importId/confirm', async (req, res, next) => {
  * Delete all data (products and transactions) created by a completed import
  * This allows users to undo an import and remove all associated data
  */
-router.delete('/:importId/data', async (req, res, next) => {
+router.delete("/:importId/data", async (req, res, next) => {
   try {
     const { importId } = req.params;
     const { deleteProducts = true, deleteTransactions = true } = req.query;
@@ -490,14 +668,14 @@ router.delete('/:importId/data', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
     let deletedProducts = 0;
     let deletedTransactions = 0;
 
     // Delete transactions created by this import
-    if (deleteTransactions !== 'false') {
+    if (deleteTransactions !== "false") {
       const transactionResult = await prisma.transaction.deleteMany({
         where: { importBatchId: importId },
       });
@@ -505,7 +683,7 @@ router.delete('/:importId/data', async (req, res, next) => {
     }
 
     // Delete products created by this import (if they have no other transactions)
-    if (deleteProducts !== 'false') {
+    if (deleteProducts !== "false") {
       // Find products that were only created for this import (orphan products from order imports)
       // and have no transactions from other imports
       const orphanProducts = await prisma.product.findMany({
@@ -526,7 +704,7 @@ router.delete('/:importId/data', async (req, res, next) => {
         // Then delete the products
         const productResult = await prisma.product.deleteMany({
           where: {
-            id: { in: orphanProducts.map(p => p.id) },
+            id: { in: orphanProducts.map((p) => p.id) },
           },
         });
         deletedProducts = productResult.count;
@@ -542,7 +720,7 @@ router.delete('/:importId/data', async (req, res, next) => {
     await prisma.importBatch.update({
       where: { id: importId },
       data: {
-        status: 'rolled_back',
+        status: "rolled_back",
         completedAt: new Date(),
       },
     });
@@ -552,7 +730,7 @@ router.delete('/:importId/data', async (req, res, next) => {
     await recalculateClientMonthlyUsage(importBatch.clientId);
 
     res.json({
-      message: 'Import data deleted successfully',
+      message: "Import data deleted successfully",
       deletedProducts,
       deletedTransactions,
     });
@@ -565,7 +743,7 @@ router.delete('/:importId/data', async (req, res, next) => {
  * DELETE /api/imports/:importId
  * Cancel a pending import
  */
-router.delete('/:importId', async (req, res, next) => {
+router.delete("/:importId", async (req, res, next) => {
   try {
     const { importId } = req.params;
 
@@ -574,11 +752,11 @@ router.delete('/:importId', async (req, res, next) => {
     });
 
     if (!importBatch) {
-      throw new NotFoundError('Import');
+      throw new NotFoundError("Import");
     }
 
-    if (importBatch.status !== 'pending') {
-      throw new ValidationError('Can only cancel pending imports');
+    if (importBatch.status !== "pending") {
+      throw new ValidationError("Can only cancel pending imports");
     }
 
     // Delete file if exists
@@ -590,7 +768,7 @@ router.delete('/:importId', async (req, res, next) => {
       where: { id: importId },
     });
 
-    res.json({ message: 'Import cancelled' });
+    res.json({ message: "Import cancelled" });
   } catch (error) {
     next(error);
   }
@@ -601,14 +779,16 @@ router.delete('/:importId', async (req, res, next) => {
  * Delete ALL products and transactions for a client (fresh start)
  * Use with caution - this removes all inventory data
  */
-router.delete('/client/:clientId/data', async (req, res, next) => {
+router.delete("/client/:clientId/data", async (req, res, next) => {
   try {
     const { clientId } = req.params;
     const { confirm } = req.query;
 
     // Require explicit confirmation
-    if (confirm !== 'true') {
-      throw new ValidationError('Must confirm deletion by adding ?confirm=true to the request');
+    if (confirm !== "true") {
+      throw new ValidationError(
+        "Must confirm deletion by adding ?confirm=true to the request",
+      );
     }
 
     // Verify client exists
@@ -617,7 +797,7 @@ router.delete('/client/:clientId/data', async (req, res, next) => {
     });
 
     if (!client) {
-      throw new NotFoundError('Client');
+      throw new NotFoundError("Client");
     }
 
     // Delete in order: transactions first, then usage metrics, then products, then import batches
@@ -649,7 +829,7 @@ router.delete('/client/:clientId/data', async (req, res, next) => {
     });
 
     res.json({
-      message: 'All client data deleted successfully',
+      message: "All client data deleted successfully",
       deleted: {
         transactions: deletedTransactions.count,
         usageMetrics: deletedUsageMetrics.count,
@@ -667,7 +847,7 @@ router.delete('/client/:clientId/data', async (req, res, next) => {
  * POST /api/imports/recalculate/:clientId
  * Trigger manual recalculation for a client
  */
-router.post('/recalculate/:clientId', async (req, res, next) => {
+router.post("/recalculate/:clientId", async (req, res, next) => {
   try {
     const { clientId } = req.params;
 
@@ -677,7 +857,7 @@ router.post('/recalculate/:clientId', async (req, res, next) => {
     });
 
     if (!client) {
-      throw new NotFoundError('Client');
+      throw new NotFoundError("Client");
     }
 
     // Fix any products that have isActive = false (shouldn't happen but fix legacy data)
@@ -700,7 +880,7 @@ router.post('/recalculate/:clientId', async (req, res, next) => {
     const alertResult = await runAlertGeneration(clientId);
 
     res.json({
-      message: 'Recalculation completed',
+      message: "Recalculation completed",
       alerts: alertResult,
       fixedProducts: fixedProducts.count,
     });
@@ -718,7 +898,7 @@ router.post('/recalculate/:clientId', async (req, res, next) => {
  * Get all custom field definitions for a client
  * Used by MappingComboBox to show existing custom fields
  */
-router.get('/custom-fields/:clientId', async (req, res, next) => {
+router.get("/custom-fields/:clientId", async (req, res, next) => {
   try {
     const { clientId } = req.params;
 
@@ -728,7 +908,7 @@ router.get('/custom-fields/:clientId', async (req, res, next) => {
     });
 
     if (!client) {
-      throw new NotFoundError('Client');
+      throw new NotFoundError("Client");
     }
 
     const customFields = await getClientCustomFields(clientId);
@@ -747,13 +927,13 @@ router.get('/custom-fields/:clientId', async (req, res, next) => {
  * Create a new custom field definition on-the-fly
  * Used when user types a new field name in the MappingComboBox
  */
-router.post('/custom-fields/:clientId', async (req, res, next) => {
+router.post("/custom-fields/:clientId", async (req, res, next) => {
   try {
     const { clientId } = req.params;
-    const { fieldName, sourceColumnName, dataType = 'text' } = req.body;
+    const { fieldName, sourceColumnName, dataType = "text" } = req.body;
 
     if (!fieldName) {
-      throw new ValidationError('Field name is required');
+      throw new ValidationError("Field name is required");
     }
 
     // Verify client exists
@@ -762,27 +942,31 @@ router.post('/custom-fields/:clientId', async (req, res, next) => {
     });
 
     if (!client) {
-      throw new NotFoundError('Client');
+      throw new NotFoundError("Client");
     }
 
     // Normalize field name to camelCase
     const normalizedName = fieldName
       .toLowerCase()
       .trim()
-      .replace(/[()[\]{}]/g, '')
-      .replace(/[-_\s]+(.)?/g, (_: string, c: string) => c ? c.toUpperCase() : '')
+      .replace(/[()[\]{}]/g, "")
+      .replace(/[-_\s]+(.)?/g, (_: string, c: string) =>
+        c ? c.toUpperCase() : "",
+      )
       .replace(/^./, (c: string) => c.toLowerCase());
 
     // Create custom field using the discovery service
-    const [customField] = await discoverCustomFields(clientId, [{
-      source: sourceColumnName || fieldName,
-      mapsTo: normalizedName,
-      dataType,
-    }]);
+    const [customField] = await discoverCustomFields(clientId, [
+      {
+        source: sourceColumnName || fieldName,
+        mapsTo: normalizedName,
+        dataType,
+      },
+    ]);
 
     res.json({
       data: customField,
-      message: 'Custom field created successfully',
+      message: "Custom field created successfully",
     });
   } catch (error) {
     next(error);
@@ -793,10 +977,17 @@ router.post('/custom-fields/:clientId', async (req, res, next) => {
  * PATCH /api/imports/custom-fields/:fieldId
  * Update a custom field definition
  */
-router.patch('/custom-fields/:fieldId', async (req, res, next) => {
+router.patch("/custom-fields/:fieldId", async (req, res, next) => {
   try {
     const { fieldId } = req.params;
-    const { displayName, isDisplayed, isPinned, displayOrder, aggregationType, formatPattern } = req.body;
+    const {
+      displayName,
+      isDisplayed,
+      isPinned,
+      displayOrder,
+      aggregationType,
+      formatPattern,
+    } = req.body;
 
     const updated = await updateCustomFieldDefinition(fieldId, {
       displayName,
@@ -809,7 +1000,7 @@ router.patch('/custom-fields/:fieldId', async (req, res, next) => {
 
     res.json({
       data: updated,
-      message: 'Custom field updated successfully',
+      message: "Custom field updated successfully",
     });
   } catch (error) {
     next(error);
@@ -820,7 +1011,7 @@ router.patch('/custom-fields/:fieldId', async (req, res, next) => {
  * GET /api/imports/custom-fields/:clientId/stats
  * Get statistics for all custom fields
  */
-router.get('/custom-fields/:clientId/stats', async (req, res, next) => {
+router.get("/custom-fields/:clientId/stats", async (req, res, next) => {
   try {
     const { clientId } = req.params;
 
@@ -830,7 +1021,7 @@ router.get('/custom-fields/:clientId/stats', async (req, res, next) => {
     });
 
     if (!client) {
-      throw new NotFoundError('Client');
+      throw new NotFoundError("Client");
     }
 
     const stats = await getCustomFieldStats(clientId);
@@ -848,12 +1039,33 @@ router.get('/custom-fields/:clientId/stats', async (req, res, next) => {
 // HELPER FUNCTIONS
 // =============================================================================
 
+/**
+ * Detect the Python command available on the system.
+ * Tries 'python3' first, then falls back to 'python'.
+ */
+function getPythonCommand(): string {
+  const commands = ["python3", "python"];
+  for (const cmd of commands) {
+    try {
+      execSync(`${cmd} --version`, { stdio: "ignore" });
+      return cmd;
+    } catch {
+      // Command not found, try next
+    }
+  }
+  throw new Error("Python not found. Please install Python 3.");
+}
+
+/** Import timeout in milliseconds (30 minutes) */
+const IMPORT_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface ParsedRow {
   [key: string]: string | number | undefined;
 }
 
 function generateWarnings(headers: string[], rows: ParsedRow[]) {
-  const warnings: { type: string; message: string; affectedRows: number }[] = [];
+  const warnings: { type: string; message: string; affectedRows: number }[] =
+    [];
 
   // Check for whitespace issues
   let whitespaceCount = 0;
@@ -864,7 +1076,7 @@ function generateWarnings(headers: string[], rows: ParsedRow[]) {
   }
   if (whitespaceCount > 0) {
     warnings.push({
-      type: 'whitespace',
+      type: "whitespace",
       message: `${whitespaceCount} column headers contain leading/trailing whitespace`,
       affectedRows: rows.length,
     });
@@ -873,28 +1085,30 @@ function generateWarnings(headers: string[], rows: ParsedRow[]) {
   // Check for empty rows
   let emptyRowCount = 0;
   for (const row of rows) {
-    const values = Object.values(row).filter((v) => v !== undefined && v !== '');
+    const values = Object.values(row).filter(
+      (v) => v !== undefined && v !== "",
+    );
     if (values.length === 0) {
       emptyRowCount++;
     }
   }
   if (emptyRowCount > 0) {
     warnings.push({
-      type: 'empty_rows',
+      type: "empty_rows",
       message: `${emptyRowCount} empty rows detected`,
       affectedRows: emptyRowCount,
     });
   }
 
   // Check for missing required fields
-  const requiredFields = ['product id', 'sku', 'item id'];
+  const requiredFields = ["product id", "sku", "item id"];
   const hasProductId = headers.some((h) =>
-    requiredFields.some((f) => h.toLowerCase().includes(f))
+    requiredFields.some((f) => h.toLowerCase().includes(f)),
   );
   if (!hasProductId) {
     warnings.push({
-      type: 'missing_field',
-      message: 'No product identifier column detected',
+      type: "missing_field",
+      message: "No product identifier column detected",
       affectedRows: rows.length,
     });
   }

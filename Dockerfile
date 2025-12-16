@@ -27,19 +27,31 @@ COPY packages/shared/package*.json ./packages/shared/
 RUN npm ci
 
 # -----------------------------------------------------------------------------
+# Stage X: Build Shared package
+# -----------------------------------------------------------------------------
+FROM base AS shared-builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY packages/shared ./packages/shared
+
+WORKDIR /app/packages/shared
+RUN npm run build
+
+# -----------------------------------------------------------------------------
 # Stage 3: Build API
 # -----------------------------------------------------------------------------
 FROM base AS api-builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 
 COPY package*.json ./
-COPY tsconfig.json ./
 COPY apps/api ./apps/api
-COPY packages/shared ./packages/shared
+COPY --from=shared-builder /app/packages/shared ./packages/shared
+
+# Clear Prisma cache to prevent engine issues
+RUN rm -rf /root/.cache/prisma
 
 # Generate Prisma client
 WORKDIR /app/apps/api
@@ -55,13 +67,10 @@ FROM base AS web-builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 
 COPY package*.json ./
-COPY tsconfig.json ./
 COPY apps/web ./apps/web
-COPY packages/shared ./packages/shared
+COPY --from=shared-builder /app/packages/shared ./packages/shared
 
 WORKDIR /app/apps/web
 RUN npm run build
@@ -73,13 +82,10 @@ FROM base AS portal-builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/portal/node_modules ./apps/portal/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 
 COPY package*.json ./
-COPY tsconfig.json ./
 COPY apps/portal ./apps/portal
-COPY packages/shared ./packages/shared
+COPY --from=shared-builder /app/packages/shared ./packages/shared
 
 WORKDIR /app/apps/portal
 RUN npm run build
@@ -87,25 +93,57 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 6: Production API image
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS api-production
+FROM node:20-slim AS api-production
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 api
+# Install Python 3, pip, build tools, PostgreSQL client, AND OpenSSL/SSL libraries for Prisma
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    build-essential \
+    postgresql-client \
+    openssl \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy built API
+# Copy python-importer code
+COPY apps/python-importer /app/apps/python-importer
+
+# Install Python dependencies
+RUN python3 -m pip install --no-cache-dir -r apps/python-importer/requirements.txt --user --break-system-packages
+
+# Create non-root user BEFORE copying files with ownership
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 api
+
+# Create Prisma cache and uploads directories with correct permissions for non-root user
+RUN mkdir -p /home/api/.cache/prisma && \
+    chown -R api:nodejs /home/api/.cache && \
+    mkdir -p /app/uploads && \
+    chown -R api:nodejs /app/uploads
+
+# Copy built API with correct ownership
 COPY --from=api-builder --chown=api:nodejs /app/apps/api/dist ./dist
-COPY --from=api-builder --chown=api:nodejs /app/apps/api/node_modules ./node_modules
+COPY --from=api-builder --chown=api:nodejs /app/node_modules ./node_modules
+COPY --from=shared-builder --chown=api:nodejs /app/packages ./packages
 COPY --from=api-builder --chown=api:nodejs /app/apps/api/prisma ./prisma
 COPY --from=api-builder --chown=api:nodejs /app/apps/api/package.json ./
+
+# Add entrypoint with correct ownership
+COPY --chown=api:nodejs entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Set HOME environment variable for non-root user (Prisma cache location)
+ENV HOME=/home/api
 
 USER api
 
 EXPOSE 3001
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["node", "dist/index.js"]
 
 # -----------------------------------------------------------------------------

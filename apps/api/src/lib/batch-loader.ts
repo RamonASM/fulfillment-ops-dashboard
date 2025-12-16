@@ -1,5 +1,5 @@
-import { prisma } from './prisma.js';
-import { cache, CacheTTL, CacheKeys } from './cache.js';
+import { prisma } from "./prisma.js";
+import { cache, CacheTTL, CacheKeys } from "./cache.js";
 
 // =============================================================================
 // TYPES
@@ -12,20 +12,22 @@ export interface ClientStats {
   lowCount: number;
   criticalCount: number;
   stockoutCount: number;
-  activeAlertCount: number;
+  overstockCount: number;
+  alertCount: number;
+  lowestWeeksRemaining: number | null;
 }
 
 export interface UsageMetrics {
-  calculationBasis: '12-mo' | '3-mo' | 'weekly' | 'none';
+  calculationBasis: "12-mo" | "3-mo" | "weekly" | "none";
   avgMonthlyUnits: number;
   avgDailyUnits: number;
   avgWeeklyUnits: number;
-  confidence: 'high' | 'medium' | 'low';
+  confidence: "high" | "medium" | "low";
   dataPointCount: number;
   calculatedAt: Date | null;
 }
 
-type StockStatus = 'HEALTHY' | 'WATCH' | 'LOW' | 'CRITICAL' | 'STOCKOUT';
+type StockStatus = "HEALTHY" | "WATCH" | "LOW" | "CRITICAL" | "STOCKOUT";
 
 // =============================================================================
 // CLIENT STATS BATCH LOADER
@@ -35,7 +37,7 @@ type StockStatus = 'HEALTHY' | 'WATCH' | 'LOW' | 'CRITICAL' | 'STOCKOUT';
  * Batch load stats for multiple clients in 3 queries instead of N*3
  */
 export async function getBatchClientStats(
-  clientIds: string[]
+  clientIds: string[],
 ): Promise<Map<string, ClientStats>> {
   const statsMap = new Map<string, ClientStats>();
 
@@ -52,13 +54,15 @@ export async function getBatchClientStats(
       lowCount: 0,
       criticalCount: 0,
       stockoutCount: 0,
-      activeAlertCount: 0,
+      overstockCount: 0,
+      alertCount: 0,
+      lowestWeeksRemaining: null,
     });
   }
 
   // Query 1: Get product counts by status per client
   const productStats = await prisma.product.groupBy({
-    by: ['clientId', 'stockStatus'],
+    by: ["clientId", "stockStatus"],
     where: {
       clientId: { in: clientIds },
       isActive: true,
@@ -70,7 +74,7 @@ export async function getBatchClientStats(
 
   // Query 2: Get total products per client
   const productCounts = await prisma.product.groupBy({
-    by: ['clientId'],
+    by: ["clientId"],
     where: {
       clientId: { in: clientIds },
       isActive: true,
@@ -82,7 +86,7 @@ export async function getBatchClientStats(
 
   // Query 3: Get active alert counts per client
   const alertCounts = await prisma.alert.groupBy({
-    by: ['clientId'],
+    by: ["clientId"],
     where: {
       clientId: { in: clientIds },
       isDismissed: false,
@@ -92,25 +96,42 @@ export async function getBatchClientStats(
     },
   });
 
+  // Query 4: Get products with usage data to calculate weeks remaining
+  const productsWithUsage = await prisma.product.findMany({
+    where: {
+      clientId: { in: clientIds },
+      isActive: true,
+    },
+    select: {
+      clientId: true,
+      currentStockPacks: true,
+      packSize: true,
+      monthlyUsageUnits: true,
+      stockStatus: true,
+    },
+  });
+
   // Process product status counts
   for (const stat of productStats) {
     const clientStats = statsMap.get(stat.clientId);
     if (clientStats) {
-      const status = (stat.stockStatus || 'HEALTHY').toUpperCase() as StockStatus;
+      const status = (
+        stat.stockStatus || "HEALTHY"
+      ).toUpperCase() as StockStatus;
       switch (status) {
-        case 'HEALTHY':
+        case "HEALTHY":
           clientStats.healthyCount = stat._count.id;
           break;
-        case 'WATCH':
+        case "WATCH":
           clientStats.watchCount = stat._count.id;
           break;
-        case 'LOW':
+        case "LOW":
           clientStats.lowCount = stat._count.id;
           break;
-        case 'CRITICAL':
+        case "CRITICAL":
           clientStats.criticalCount = stat._count.id;
           break;
-        case 'STOCKOUT':
+        case "STOCKOUT":
           clientStats.stockoutCount = stat._count.id;
           break;
       }
@@ -129,7 +150,34 @@ export async function getBatchClientStats(
   for (const count of alertCounts) {
     const clientStats = statsMap.get(count.clientId);
     if (clientStats) {
-      clientStats.activeAlertCount = count._count.id;
+      clientStats.alertCount = count._count.id;
+    }
+  }
+
+  // Process products to calculate weeks remaining and overstock per client
+  for (const product of productsWithUsage) {
+    const clientStats = statsMap.get(product.clientId);
+    if (clientStats) {
+      const currentUnits = product.currentStockPacks * product.packSize;
+      const monthlyUsage = product.monthlyUsageUnits || 0;
+
+      // Count overstock products (more than 6 months supply)
+      if (monthlyUsage > 0 && currentUnits > monthlyUsage * 6) {
+        clientStats.overstockCount++;
+      }
+
+      // Calculate weeks remaining
+      if (monthlyUsage > 0 && currentUnits > 0) {
+        const weeksRemaining = (currentUnits / monthlyUsage) * 4.33;
+        // Track the lowest weeks remaining
+        if (
+          clientStats.lowestWeeksRemaining === null ||
+          weeksRemaining < clientStats.lowestWeeksRemaining
+        ) {
+          clientStats.lowestWeeksRemaining =
+            Math.round(weeksRemaining * 10) / 10;
+        }
+      }
     }
   }
 
@@ -144,7 +192,7 @@ export async function getBatchClientStats(
  * Batch load usage metrics for multiple products
  */
 export async function getBatchUsageMetrics(
-  productIds: string[]
+  productIds: string[],
 ): Promise<Map<string, UsageMetrics | null>> {
   const metricsMap = new Map<string, UsageMetrics | null>();
   const uncachedIds: string[] = [];
@@ -155,7 +203,7 @@ export async function getBatchUsageMetrics(
 
   // Check cache first
   for (const productId of productIds) {
-    const cacheKey = CacheKeys.usageMetrics(productId, 'latest');
+    const cacheKey = CacheKeys.usageMetrics(productId, "latest");
     const cached = cache.get<UsageMetrics>(cacheKey);
     if (cached !== null) {
       metricsMap.set(productId, cached);
@@ -173,14 +221,14 @@ export async function getBatchUsageMetrics(
         productId: { in: uncachedIds },
       },
       orderBy: {
-        calculatedAt: 'desc',
+        calculatedAt: "desc",
       },
-      distinct: ['productId'],
+      distinct: ["productId"],
     });
 
     for (const metric of latestMetrics) {
       const usage: UsageMetrics = {
-        calculationBasis: metric.periodType as UsageMetrics['calculationBasis'],
+        calculationBasis: metric.periodType as UsageMetrics["calculationBasis"],
         avgMonthlyUnits: Number(metric.avgDailyUnits || 0) * 30.44,
         avgDailyUnits: Number(metric.avgDailyUnits || 0),
         avgWeeklyUnits: Number(metric.avgDailyUnits || 0) * 7,
@@ -192,7 +240,7 @@ export async function getBatchUsageMetrics(
       metricsMap.set(metric.productId, usage);
 
       // Cache the result
-      const cacheKey = CacheKeys.usageMetrics(metric.productId, 'latest');
+      const cacheKey = CacheKeys.usageMetrics(metric.productId, "latest");
       cache.set(cacheKey, usage, CacheTTL.USAGE_METRICS);
     }
   }
@@ -204,7 +252,7 @@ export async function getBatchUsageMetrics(
  * Batch load product names for order items
  */
 export async function getBatchProductNames(
-  productIds: string[]
+  productIds: string[],
 ): Promise<Map<string, string>> {
   const namesMap = new Map<string, string>();
 
@@ -233,10 +281,10 @@ export async function getBatchProductNames(
 // HELPERS
 // =============================================================================
 
-function getConfidenceLevel(dataPointCount: number): 'high' | 'medium' | 'low' {
-  if (dataPointCount >= 12) return 'high';
-  if (dataPointCount >= 6) return 'medium';
-  return 'low';
+function getConfidenceLevel(dataPointCount: number): "high" | "medium" | "low" {
+  if (dataPointCount >= 12) return "high";
+  if (dataPointCount >= 6) return "medium";
+  return "low";
 }
 
 /**
@@ -250,7 +298,9 @@ export function getDefaultClientStats(): ClientStats {
     lowCount: 0,
     criticalCount: 0,
     stockoutCount: 0,
-    activeAlertCount: 0,
+    overstockCount: 0,
+    alertCount: 0,
+    lowestWeeksRemaining: null,
   };
 }
 
@@ -259,11 +309,11 @@ export function getDefaultClientStats(): ClientStats {
  */
 export function getDefaultUsageMetrics(): UsageMetrics {
   return {
-    calculationBasis: 'none',
+    calculationBasis: "none",
     avgMonthlyUnits: 0,
     avgDailyUnits: 0,
     avgWeeklyUnits: 0,
-    confidence: 'low',
+    confidence: "low",
     dataPointCount: 0,
     calculatedAt: null,
   };
@@ -294,7 +344,7 @@ export interface OnOrderInfo {
  */
 export async function getBatchOnOrderQuantities(
   productIds: string[],
-  clientId?: string
+  clientId?: string,
 ): Promise<Map<string, OnOrderInfo>> {
   const onOrderMap = new Map<string, OnOrderInfo>();
 
@@ -312,7 +362,13 @@ export async function getBatchOnOrderQuantities(
   }
 
   // Statuses that count as "on order" (not fulfilled, not rejected, not draft)
-  const pendingStatuses = ['pending', 'approved', 'submitted', 'acknowledged', 'on_hold'];
+  const pendingStatuses = [
+    "pending",
+    "approved",
+    "submitted",
+    "acknowledged",
+    "on_hold",
+  ];
 
   // Query OrderRequestItems for products that are in pending orders
   const orderItems = await prisma.orderRequestItem.findMany({
@@ -343,7 +399,7 @@ export async function getBatchOnOrderQuantities(
       },
     },
     orderBy: {
-      createdAt: 'desc',
+      createdAt: "desc",
     },
   });
 
@@ -353,13 +409,14 @@ export async function getBatchOnOrderQuantities(
     if (info) {
       const packSize = item.product?.packSize || 1;
       info.totalOnOrderPacks += item.quantityPacks;
-      info.totalOnOrderUnits += item.quantityUnits || (item.quantityPacks * packSize);
+      info.totalOnOrderUnits +=
+        item.quantityUnits || item.quantityPacks * packSize;
       info.orders.push({
         orderId: item.id,
         orderRequestId: item.orderRequest.id,
         status: item.orderRequest.status,
         quantityPacks: item.quantityPacks,
-        quantityUnits: item.quantityUnits || (item.quantityPacks * packSize),
+        quantityUnits: item.quantityUnits || item.quantityPacks * packSize,
         createdAt: item.createdAt,
         requestedBy: item.orderRequest.requestedBy?.name,
       });

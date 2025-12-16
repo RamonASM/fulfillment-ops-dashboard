@@ -3,8 +3,8 @@
 // Shows analytics by shipping location
 // =============================================================================
 
-import { MapPin, Building, TrendingUp, Package } from 'lucide-react';
-import { format } from 'date-fns';
+import { MapPin, Building, TrendingUp, Package } from "lucide-react";
+import { format } from "date-fns";
 
 interface TopProduct {
   productId: string;
@@ -27,12 +27,14 @@ interface LocationAnalyticsWidgetProps {
   locations: LocationData[];
   title?: string;
   limit?: number;
+  onViewMore?: () => void;
 }
 
 export function LocationAnalyticsWidget({
   locations,
-  title = 'Top Locations',
+  title = "Top Locations",
   limit = 5,
+  onViewMore,
 }: LocationAnalyticsWidgetProps) {
   const displayLocations = locations.slice(0, limit);
   const totalUnits = locations.reduce((sum, l) => sum + l.totalUnits, 0);
@@ -49,7 +51,9 @@ export function LocationAnalyticsWidget({
             <Building className="w-6 h-6 text-gray-400" />
           </div>
           <p className="text-gray-500">No location data available</p>
-          <p className="text-sm text-gray-400">Import order history to see analytics</p>
+          <p className="text-sm text-gray-400">
+            Import order history to see analytics
+          </p>
         </div>
       </div>
     );
@@ -63,13 +67,14 @@ export function LocationAnalyticsWidget({
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
         </div>
         <span className="text-sm text-gray-500">
-          {locations.length} location{locations.length !== 1 ? 's' : ''}
+          {locations.length} location{locations.length !== 1 ? "s" : ""}
         </span>
       </div>
 
       <div className="space-y-4">
         {displayLocations.map((location, index) => {
-          const percentOfTotal = totalUnits > 0 ? (location.totalUnits / totalUnits) * 100 : 0;
+          const percentOfTotal =
+            totalUnits > 0 ? (location.totalUnits / totalUnits) * 100 : 0;
 
           return (
             <div
@@ -95,7 +100,9 @@ export function LocationAnalyticsWidget({
                   <p className="text-lg font-bold text-gray-900">
                     {location.totalUnits.toLocaleString()}
                   </p>
-                  <p className="text-xs text-gray-500">units ({percentOfTotal.toFixed(1)}%)</p>
+                  <p className="text-xs text-gray-500">
+                    units ({percentOfTotal.toFixed(1)}%)
+                  </p>
                 </div>
               </div>
 
@@ -121,7 +128,8 @@ export function LocationAnalyticsWidget({
                 </div>
                 {location.lastOrderDate && (
                   <span>
-                    Last: {format(new Date(location.lastOrderDate), 'MMM d, yyyy')}
+                    Last:{" "}
+                    {format(new Date(location.lastOrderDate), "MMM d, yyyy")}
                   </span>
                 )}
               </div>
@@ -129,7 +137,9 @@ export function LocationAnalyticsWidget({
               {/* Top products for this location */}
               {location.topProducts.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-xs font-medium text-gray-500 mb-2">Top Products</p>
+                  <p className="text-xs font-medium text-gray-500 mb-2">
+                    Top Products
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {location.topProducts.slice(0, 3).map((product) => (
                       <span
@@ -148,11 +158,12 @@ export function LocationAnalyticsWidget({
       </div>
 
       {locations.length > limit && (
-        <div className="mt-4 pt-4 border-t border-gray-100 text-center">
-          <span className="text-sm text-gray-500">
-            +{locations.length - limit} more locations
-          </span>
-        </div>
+        <button
+          onClick={onViewMore}
+          className="block w-full mt-4 pt-4 border-t border-gray-100 text-center text-sm text-blue-600 hover:text-blue-700"
+        >
+          View all {locations.length} locations
+        </button>
       )}
     </div>
   );

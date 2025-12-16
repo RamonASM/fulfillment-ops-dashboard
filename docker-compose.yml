@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # =============================================================================
@@ -50,7 +50,7 @@ services:
     container_name: inventory-api
     restart: unless-stopped
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3001
       DATABASE_URL: postgresql://${DB_USER:-inventory}:${DB_PASSWORD:-inventory123}@postgres:5432/${DB_NAME:-inventory_db}
       REDIS_URL: redis://redis:6379
@@ -58,7 +58,7 @@ services:
       WEB_URL: ${WEB_URL:-http://localhost}
       PORTAL_URL: ${PORTAL_URL:-http://localhost:8080}
     ports:
-      - "3001:3001"
+      - "3002:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,6 +82,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "8080:8080"
     depends_on:
       - api
 

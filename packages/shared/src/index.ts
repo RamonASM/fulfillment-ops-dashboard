@@ -6,7 +6,7 @@
 // USER & AUTH TYPES
 // -----------------------------------------------------------------------------
 
-export type UserRole = 'admin' | 'operations_manager' | 'account_manager';
+export type UserRole = "admin" | "operations_manager" | "account_manager";
 
 export interface User {
   id: string;
@@ -21,14 +21,14 @@ export interface User {
 }
 
 export interface UserSettings {
-  theme?: 'light' | 'dark' | 'system';
+  theme?: "light" | "dark" | "system";
   notifications?: {
     email: boolean;
     push: boolean;
     alertTypes: AlertType[];
   };
   dashboard?: {
-    defaultView: 'grid' | 'list';
+    defaultView: "grid" | "list";
     showOrphans: boolean;
   };
 }
@@ -45,7 +45,7 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  user: Omit<User, 'settings'>;
+  user: Omit<User, "settings">;
   accessToken: string;
 }
 
@@ -81,17 +81,19 @@ export interface ClientStats {
   lowCount: number;
   criticalCount: number;
   stockoutCount: number;
+  overstockCount: number;
   alertCount: number;
+  lowestWeeksRemaining: number | null;
 }
 
 // -----------------------------------------------------------------------------
 // PRODUCT TYPES
 // -----------------------------------------------------------------------------
 
-export type ItemType = 'evergreen' | 'event' | 'completed';
-export type CalculationBasis = '12-mo' | '3-mo' | 'weekly' | 'manual';
-export type StockStatus = 'healthy' | 'watch' | 'low' | 'critical' | 'stockout';
-export type ConfidenceLevel = 'high' | 'medium' | 'low';
+export type ItemType = "evergreen" | "event" | "completed";
+export type CalculationBasis = "12-mo" | "3-mo" | "weekly" | "manual";
+export type StockStatus = "healthy" | "watch" | "low" | "critical" | "stockout";
+export type ConfidenceLevel = "high" | "medium" | "low";
 
 export interface Product {
   id: string;
@@ -147,7 +149,7 @@ export interface StockDisplay {
 // TRANSACTION TYPES
 // -----------------------------------------------------------------------------
 
-export type OrderStatus = 'pending' | 'processing' | 'completed' | 'cancelled';
+export type OrderStatus = "pending" | "processing" | "completed" | "cancelled";
 
 export interface Transaction {
   id: string;
@@ -168,14 +170,14 @@ export interface Transaction {
 // -----------------------------------------------------------------------------
 
 export type AlertType =
-  | 'stockout'
-  | 'critical_stock'
-  | 'low_stock'
-  | 'reorder_due'
-  | 'usage_spike'
-  | 'no_movement';
+  | "stockout"
+  | "critical_stock"
+  | "low_stock"
+  | "reorder_due"
+  | "usage_spike"
+  | "no_movement";
 
-export type AlertSeverity = 'info' | 'warning' | 'critical';
+export type AlertSeverity = "info" | "warning" | "critical";
 
 export interface Alert {
   id: string;
@@ -195,16 +197,16 @@ export interface Alert {
 }
 
 export interface AlertWithProduct extends Alert {
-  product?: Pick<Product, 'productId' | 'name'>;
-  client?: Pick<Client, 'name' | 'code'>;
+  product?: Pick<Product, "productId" | "name">;
+  client?: Pick<Client, "name" | "code">;
 }
 
 // -----------------------------------------------------------------------------
 // IMPORT TYPES
 // -----------------------------------------------------------------------------
 
-export type ImportType = 'inventory' | 'orders' | 'both';
-export type ImportStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type ImportType = "inventory" | "orders" | "both";
+export type ImportStatus = "pending" | "processing" | "completed" | "failed";
 
 export interface ImportBatch {
   id: string;
@@ -246,7 +248,7 @@ export interface ColumnMapping {
 }
 
 export interface ImportWarning {
-  type: 'whitespace' | 'format' | 'duplicate' | 'missing';
+  type: "whitespace" | "format" | "duplicate" | "missing";
   message: string;
   affectedRows: number;
 }
@@ -266,7 +268,7 @@ export interface InventorySnapshot {
 
 export interface UsageTrendReport {
   clientId: string;
-  period: 'weekly' | 'monthly' | 'quarterly';
+  period: "weekly" | "monthly" | "quarterly";
   startDate: Date;
   endDate: Date;
   dataPoints: TrendDataPoint[];
@@ -291,13 +293,13 @@ export interface RiskScore {
 
 export interface RiskFactor {
   name: string;
-  impact: 'high' | 'medium' | 'low';
+  impact: "high" | "medium" | "low";
   description: string;
 }
 
 export interface DemandForecast {
   productId: string;
-  forecastPeriod: 'weekly' | 'monthly';
+  forecastPeriod: "weekly" | "monthly";
   predictions: ForecastPrediction[];
   confidence: number;
   model: string;
@@ -351,23 +353,23 @@ export interface ApiError {
 // -----------------------------------------------------------------------------
 
 export const STATUS_COLORS: Record<StockStatus, string> = {
-  healthy: '#10B981',
-  watch: '#3B82F6',
-  low: '#F59E0B',
-  critical: '#DC2626',
-  stockout: '#991B1B',
+  healthy: "#10B981",
+  watch: "#3B82F6",
+  low: "#F59E0B",
+  critical: "#DC2626",
+  stockout: "#991B1B",
 };
 
 export const STATUS_ICONS: Record<StockStatus, string> = {
-  healthy: '✓',
-  watch: '○',
-  low: '↓',
-  critical: '⚡',
-  stockout: '✕',
+  healthy: "✓",
+  watch: "○",
+  low: "↓",
+  critical: "⚡",
+  stockout: "✕",
 };
 
 export const SEVERITY_COLORS: Record<AlertSeverity, string> = {
-  info: '#3B82F6',
-  warning: '#F59E0B',
-  critical: '#DC2626',
+  info: "#3B82F6",
+  warning: "#F59E0B",
+  critical: "#DC2626",
 };
