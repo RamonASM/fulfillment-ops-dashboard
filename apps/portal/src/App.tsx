@@ -1,18 +1,19 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { usePortalAuthStore } from '@/stores/auth.store';
-import PortalLayout from '@/components/PortalLayout';
-import Login from '@/pages/Login';
-import ForgotPassword from '@/pages/ForgotPassword';
-import ResetPassword from '@/pages/ResetPassword';
-import Dashboard from '@/pages/Dashboard';
-import Products from '@/pages/Products';
-import Orders from '@/pages/Orders';
-import OrderRequest from '@/pages/OrderRequest';
-import Alerts from '@/pages/Alerts';
-import Settings from '@/pages/Settings';
-import Reports from '@/pages/Reports';
-import Analytics from '@/pages/Analytics';
-import Feedback from '@/pages/Feedback';
+import { Routes, Route, Navigate } from "react-router-dom";
+import { usePortalAuthStore } from "@/stores/auth.store";
+import PortalLayout from "@/components/PortalLayout";
+import Login from "@/pages/Login";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
+import Dashboard from "@/pages/Dashboard";
+import Products from "@/pages/Products";
+import Orders from "@/pages/Orders";
+import OrderRequest from "@/pages/OrderRequest";
+import Alerts from "@/pages/Alerts";
+import Settings from "@/pages/Settings";
+import Reports from "@/pages/Reports";
+import Analytics from "@/pages/Analytics";
+import Feedback from "@/pages/Feedback";
+import Help from "@/pages/Help";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = usePortalAuthStore();
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="reports" element={<Reports />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="feedback" element={<Feedback />} />
+        <Route path="help" element={<Help />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

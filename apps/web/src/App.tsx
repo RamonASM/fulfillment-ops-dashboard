@@ -1,25 +1,26 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuthStore } from '@/stores/auth.store';
+import { Routes, Route, Navigate } from "react-router-dom";
+import { useAuthStore } from "@/stores/auth.store";
 
 // Layouts
-import MainLayout from '@/components/layouts/MainLayout';
-import AuthLayout from '@/components/layouts/AuthLayout';
+import MainLayout from "@/components/layouts/MainLayout";
+import AuthLayout from "@/components/layouts/AuthLayout";
 
 // Pages
-import Dashboard from '@/pages/Dashboard';
-import Login from '@/pages/auth/Login';
-import ForgotPassword from '@/pages/auth/ForgotPassword';
-import ResetPassword from '@/pages/auth/ResetPassword';
-import Clients from '@/pages/Clients';
-import ClientDetail from '@/pages/ClientDetail';
-import Alerts from '@/pages/Alerts';
-import Orders from '@/pages/Orders';
-import Reports from '@/pages/Reports';
-import Settings from '@/pages/Settings';
-import FeedbackAnalytics from '@/pages/FeedbackAnalytics';
-import ClientLocations from '@/pages/ClientLocations';
-import ClientAnalytics from '@/pages/ClientAnalytics';
-import Imports from '@/pages/Imports';
+import Dashboard from "@/pages/Dashboard";
+import Login from "@/pages/auth/Login";
+import ForgotPassword from "@/pages/auth/ForgotPassword";
+import ResetPassword from "@/pages/auth/ResetPassword";
+import Clients from "@/pages/Clients";
+import ClientDetail from "@/pages/ClientDetail";
+import Alerts from "@/pages/Alerts";
+import Orders from "@/pages/Orders";
+import Reports from "@/pages/Reports";
+import Settings from "@/pages/Settings";
+import FeedbackAnalytics from "@/pages/FeedbackAnalytics";
+import ClientLocations from "@/pages/ClientLocations";
+import ClientAnalytics from "@/pages/ClientAnalytics";
+import Imports from "@/pages/Imports";
+import Help from "@/pages/Help";
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -89,13 +90,20 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="clients" element={<Clients />} />
         <Route path="clients/:clientId" element={<ClientDetail />} />
-        <Route path="clients/:clientId/locations" element={<ClientLocations />} />
-        <Route path="clients/:clientId/analytics" element={<ClientAnalytics />} />
+        <Route
+          path="clients/:clientId/locations"
+          element={<ClientLocations />}
+        />
+        <Route
+          path="clients/:clientId/analytics"
+          element={<ClientAnalytics />}
+        />
         <Route path="alerts" element={<Alerts />} />
         <Route path="orders" element={<Orders />} />
         <Route path="reports" element={<Reports />} />
         <Route path="feedback" element={<FeedbackAnalytics />} />
         <Route path="imports" element={<Imports />} />
+        <Route path="help" element={<Help />} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

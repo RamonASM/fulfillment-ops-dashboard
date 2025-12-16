@@ -374,3 +374,9 @@ export const SEVERITY_COLORS: Record<AlertSeverity, string> = {
   warning: "#F59E0B",
   critical: "#DC2626",
 };
+
+// -----------------------------------------------------------------------------
+// HELP/DOCUMENTATION COMPONENTS
+// -----------------------------------------------------------------------------
+
+export * from "./components/help";

@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Package,
@@ -12,22 +12,24 @@ import {
   FileText,
   BarChart3,
   MessageSquare,
-} from 'lucide-react';
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { usePortalAuthStore } from '@/stores/auth.store';
-import { portalApi } from '@/api/client';
-import { clsx } from 'clsx';
+  HelpCircle,
+} from "lucide-react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { usePortalAuthStore } from "@/stores/auth.store";
+import { portalApi } from "@/api/client";
+import { clsx } from "clsx";
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Products', href: '/products', icon: Package },
-  { name: 'Orders', href: '/orders', icon: ShoppingCart },
-  { name: 'Alerts', href: '/alerts', icon: Bell },
-  { name: 'Reports', href: '/reports', icon: FileText },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Feedback', href: '/feedback', icon: MessageSquare },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: "Dashboard", href: "/", icon: LayoutDashboard },
+  { name: "Products", href: "/products", icon: Package },
+  { name: "Orders", href: "/orders", icon: ShoppingCart },
+  { name: "Alerts", href: "/alerts", icon: Bell },
+  { name: "Reports", href: "/reports", icon: FileText },
+  { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Feedback", href: "/feedback", icon: MessageSquare },
+  { name: "Help", href: "/help", icon: HelpCircle },
+  { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 export default function PortalLayout() {
@@ -37,8 +39,9 @@ export default function PortalLayout() {
 
   // Fetch unread alert count for the notification badge
   const { data: alertsData } = useQuery({
-    queryKey: ['portal', 'alerts', 'unread-count'],
-    queryFn: () => portalApi.get<{ data: { unreadCount: number } }>('/alerts/unread-count'),
+    queryKey: ["portal", "alerts", "unread-count"],
+    queryFn: () =>
+      portalApi.get<{ data: { unreadCount: number } }>("/alerts/unread-count"),
     refetchInterval: 60000, // Refresh every minute
     staleTime: 30000,
   });
@@ -47,7 +50,7 @@ export default function PortalLayout() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate("/login");
   };
 
   return (
@@ -63,8 +66,8 @@ export default function PortalLayout() {
       {/* Sidebar */}
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-50 w-64 bg-emerald-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          "fixed inset-y-0 left-0 z-50 w-64 bg-emerald-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <div className="flex flex-col h-full">
@@ -75,8 +78,12 @@ export default function PortalLayout() {
                 <Package className="w-5 h-5 text-white" />
               </div>
               <div>
-                <span className="text-white font-semibold block text-sm">Client Portal</span>
-                <span className="text-emerald-300 text-xs">{user?.clientName}</span>
+                <span className="text-white font-semibold block text-sm">
+                  Client Portal
+                </span>
+                <span className="text-emerald-300 text-xs">
+                  {user?.clientName}
+                </span>
               </div>
             </div>
             <button
@@ -91,7 +98,7 @@ export default function PortalLayout() {
           <div className="p-3">
             <button
               onClick={() => {
-                navigate('/order/new');
+                navigate("/order/new");
                 setSidebarOpen(false);
               }}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg font-medium transition-colors"
@@ -107,14 +114,14 @@ export default function PortalLayout() {
               <NavLink
                 key={item.name}
                 to={item.href}
-                end={item.href === '/'}
+                end={item.href === "/"}
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
                   clsx(
-                    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isActive
-                      ? 'bg-emerald-700 text-white'
-                      : 'text-emerald-200 hover:bg-emerald-800 hover:text-white'
+                      ? "bg-emerald-700 text-white"
+                      : "text-emerald-200 hover:bg-emerald-800 hover:text-white",
                   )
                 }
               >
@@ -129,15 +136,15 @@ export default function PortalLayout() {
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 bg-emerald-700 rounded-full flex items-center justify-center">
                 <span className="text-white font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || 'U'}
+                  {user?.name?.charAt(0).toUpperCase() || "U"}
                 </span>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">
-                  {user?.name || 'User'}
+                  {user?.name || "User"}
                 </p>
                 <p className="text-xs text-emerald-300 truncate capitalize">
-                  {user?.role || 'Viewer'}
+                  {user?.role || "Viewer"}
                 </p>
               </div>
             </div>
@@ -165,14 +172,14 @@ export default function PortalLayout() {
                 <Menu className="w-5 h-5" />
               </button>
               <h1 className="text-lg font-semibold text-gray-900 hidden sm:block">
-                Welcome, {user?.name?.split(' ')[0]}
+                Welcome, {user?.name?.split(" ")[0]}
               </h1>
             </div>
 
             <div className="flex items-center gap-3">
               {/* Quick reorder button */}
               <button
-                onClick={() => navigate('/order/new')}
+                onClick={() => navigate("/order/new")}
                 className="btn btn-primary btn-sm hidden sm:flex"
               >
                 <Plus className="w-4 h-4" />
@@ -181,9 +188,9 @@ export default function PortalLayout() {
 
               {/* Alerts */}
               <button
-                onClick={() => navigate('/alerts')}
+                onClick={() => navigate("/alerts")}
                 className="relative p-2 text-gray-500 hover:text-gray-700"
-                aria-label={`Alerts${unreadAlertCount > 0 ? ` (${unreadAlertCount} unread)` : ''}`}
+                aria-label={`Alerts${unreadAlertCount > 0 ? ` (${unreadAlertCount} unread)` : ""}`}
               >
                 <Bell className="w-5 h-5" />
                 {unreadAlertCount > 0 && (

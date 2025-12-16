@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Building2,
@@ -12,20 +12,32 @@ import {
   Search,
   Command,
   MessageSquare,
-} from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { useAuthStore } from '@/stores/auth.store';
-import { clsx } from 'clsx';
-import { CommandPalette, useCommandPalette } from '@/components/CommandPalette';
+  HelpCircle,
+} from "lucide-react";
+import { useState, useEffect } from "react";
+import { useAuthStore } from "@/stores/auth.store";
+import { clsx } from "clsx";
+import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard, shortcut: 'G then H' },
-  { name: 'Clients', href: '/clients', icon: Building2, shortcut: 'G then C' },
-  { name: 'Alerts', href: '/alerts', icon: Bell, shortcut: 'G then A' },
-  { name: 'Orders', href: '/orders', icon: ShoppingCart, shortcut: 'G then O' },
-  { name: 'Reports', href: '/reports', icon: FileBarChart, shortcut: 'G then R' },
-  { name: 'Feedback', href: '/feedback', icon: MessageSquare, shortcut: 'G then F' },
-  { name: 'Settings', href: '/settings', icon: Settings, shortcut: 'G then S' },
+  { name: "Dashboard", href: "/", icon: LayoutDashboard, shortcut: "G then H" },
+  { name: "Clients", href: "/clients", icon: Building2, shortcut: "G then C" },
+  { name: "Alerts", href: "/alerts", icon: Bell, shortcut: "G then A" },
+  { name: "Orders", href: "/orders", icon: ShoppingCart, shortcut: "G then O" },
+  {
+    name: "Reports",
+    href: "/reports",
+    icon: FileBarChart,
+    shortcut: "G then R",
+  },
+  {
+    name: "Feedback",
+    href: "/feedback",
+    icon: MessageSquare,
+    shortcut: "G then F",
+  },
+  { name: "Help", href: "/help", icon: HelpCircle, shortcut: "G then ?" },
+  { name: "Settings", href: "/settings", icon: Settings, shortcut: "G then S" },
 ];
 
 export default function MainLayout() {
@@ -37,7 +49,7 @@ export default function MainLayout() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate("/login");
   };
 
   // Navigation shortcuts: G then X
@@ -48,22 +60,22 @@ export default function MainLayout() {
       // Don't trigger in inputs
       const target = e.target as HTMLElement;
       if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) {
         return;
       }
 
       // Handle '/' to focus search
-      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+      if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         commandPalette.open();
         return;
       }
 
       // Handle 'G' key for navigation
-      if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey) {
+      if (e.key.toLowerCase() === "g" && !e.ctrlKey && !e.metaKey) {
         setGPressed(true);
         timeout = setTimeout(() => setGPressed(false), 1500);
         return;
@@ -74,13 +86,14 @@ export default function MainLayout() {
         clearTimeout(timeout);
 
         const routes: Record<string, string> = {
-          h: '/',
-          a: '/alerts',
-          c: '/clients',
-          o: '/orders',
-          r: '/reports',
-          f: '/feedback',
-          s: '/settings',
+          h: "/",
+          a: "/alerts",
+          c: "/clients",
+          o: "/orders",
+          r: "/reports",
+          f: "/feedback",
+          "?": "/help",
+          s: "/settings",
         };
 
         const route = routes[e.key.toLowerCase()];
@@ -91,9 +104,9 @@ export default function MainLayout() {
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timeout);
     };
   }, [gPressed, navigate, commandPalette]);
@@ -117,8 +130,8 @@ export default function MainLayout() {
       {/* Sidebar */}
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          "fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <div className="flex flex-col h-full">
@@ -144,14 +157,14 @@ export default function MainLayout() {
               <NavLink
                 key={item.name}
                 to={item.href}
-                end={item.href === '/'}
+                end={item.href === "/"}
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
                   clsx(
-                    'group flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    "group flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isActive
-                      ? 'bg-primary-600 text-white'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                      ? "bg-primary-600 text-white"
+                      : "text-gray-300 hover:bg-gray-800 hover:text-white",
                   )
                 }
               >
@@ -185,15 +198,15 @@ export default function MainLayout() {
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center">
                 <span className="text-white font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || 'U'}
+                  {user?.name?.charAt(0).toUpperCase() || "U"}
                 </span>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">
-                  {user?.name || 'User'}
+                  {user?.name || "User"}
                 </p>
                 <p className="text-xs text-gray-400 truncate">
-                  {user?.role?.replace('_', ' ') || 'Account Manager'}
+                  {user?.role?.replace("_", " ") || "Account Manager"}
                 </p>
               </div>
             </div>
@@ -237,7 +250,7 @@ export default function MainLayout() {
             <div className="flex items-center gap-4">
               {/* Quick actions */}
               <button
-                onClick={() => navigate('/imports')}
+                onClick={() => navigate("/imports")}
                 className="btn-primary btn-sm hidden sm:flex"
               >
                 Import Data
@@ -245,7 +258,7 @@ export default function MainLayout() {
 
               {/* Notifications */}
               <button
-                onClick={() => navigate('/alerts')}
+                onClick={() => navigate("/alerts")}
                 className="relative p-2 text-gray-500 hover:text-gray-700"
               >
                 <Bell className="w-5 h-5" />
@@ -263,12 +276,12 @@ export default function MainLayout() {
         {/* G key indicator */}
         {gPressed && (
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg z-50 animate-fade-in">
-            Press: <kbd className="px-1 bg-gray-700 rounded mx-1">H</kbd> Home,{' '}
-            <kbd className="px-1 bg-gray-700 rounded mx-1">A</kbd> Alerts,{' '}
-            <kbd className="px-1 bg-gray-700 rounded mx-1">C</kbd> Clients,{' '}
-            <kbd className="px-1 bg-gray-700 rounded mx-1">O</kbd> Orders,{' '}
-            <kbd className="px-1 bg-gray-700 rounded mx-1">R</kbd> Reports,{' '}
-            <kbd className="px-1 bg-gray-700 rounded mx-1">F</kbd> Feedback,{' '}
+            Press: <kbd className="px-1 bg-gray-700 rounded mx-1">H</kbd> Home,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">A</kbd> Alerts,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">C</kbd> Clients,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">O</kbd> Orders,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">R</kbd> Reports,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">F</kbd> Feedback,{" "}
             <kbd className="px-1 bg-gray-700 rounded mx-1">S</kbd> Settings
           </div>
         )}
