@@ -206,22 +206,45 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build and start Docker services
+      - name: Start API server in background
+        working-directory: apps/api
         run: |
-          docker compose build
-          docker compose up -d
-          echo "Waiting for services to be healthy..."
-          sleep 15
+          npm start &
+          echo $! > api.pid
+          echo "Waiting for API to start..."
+          sleep 10
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          REDIS_URL: ${{ env.REDIS_URL }}
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          NODE_ENV: ${{ env.NODE_ENV }}
+          PORT: 3001
+
+      - name: Start web server in background
+        working-directory: apps/web
+        run: |
+          npm run preview -- --port 80 --host &
+          echo $! > web.pid
+          sleep 5
+
+      - name: Start portal server in background
+        working-directory: apps/portal
+        run: |
+          npm run preview -- --port 8080 --host &
+          echo $! > portal.pid
+          sleep 5
 
       - name: Check service health
         run: |
-          curl -f http://localhost:3002/health || echo "API health check failed"
-          docker compose ps
+          curl -f http://localhost:3001/health || echo "API health check failed"
+          curl -I http://localhost:80 || echo "Web health check failed"
+          curl -I http://localhost:8080 || echo "Portal health check failed"
 
       - name: Run E2E tests
         run: npm run test:e2e
         env:
           NODE_ENV: test
+          VITE_API_URL: http://localhost:3001
 
       - name: Upload Playwright report
         if: failure()
@@ -239,19 +262,12 @@ jobs:
           path: test-results/
           retention-days: 7
 
-      - name: Dump Docker logs on failure
-        if: failure()
-        run: |
-          echo "=== API Logs ==="
-          docker logs inventory-api --tail 100
-          echo "=== Web Logs ==="
-          docker logs inventory-web --tail 100
-          echo "=== DB Logs ==="
-          docker logs inventory-db --tail 50
-
-      - name: Cleanup
+      - name: Stop servers on cleanup
         if: always()
-        run: docker compose down -v
+        run: |
+          kill $(cat apps/api/api.pid 2>/dev/null) 2>/dev/null || true
+          kill $(cat apps/web/web.pid 2>/dev/null) 2>/dev/null || true
+          kill $(cat apps/portal/portal.pid 2>/dev/null) 2>/dev/null || true
 
   # =============================================================================
   # Security Audit
