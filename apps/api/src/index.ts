@@ -39,6 +39,14 @@ import feedbackRoutes from "./routes/feedback.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import artworkRoutes from "./routes/artwork.routes.js";
 import passwordResetRoutes from "./routes/password-reset.routes.js";
+import financialRoutes from "./routes/financial.routes.js";
+import shipmentRoutes from "./routes/shipment.routes.js";
+import orderTimingRoutes from "./routes/order-timing.routes.js";
+import locationAnalyticsRoutes from "./routes/location-analytics.routes.js";
+import mlRoutes from "./routes/ml.routes.js";
+import benchmarkingRoutes from "./routes/benchmarking.routes.js";
+import preferencesRoutes from "./routes/preferences.routes.js";
+import documentationRoutes from "./routes/documentation.routes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -138,6 +146,14 @@ app.use("/api/collaboration", collaborationRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/artworks", uploadLimiter, artworkRoutes);
+app.use("/api/financial", financialRoutes);
+app.use("/api/shipments", shipmentRoutes);
+app.use("/api/order-timing", orderTimingRoutes);
+app.use("/api/location-analytics", locationAnalyticsRoutes);
+app.use("/api/ml", aiLimiter, mlRoutes);
+app.use("/api/benchmarking", benchmarkingRoutes);
+app.use("/api/preferences", preferencesRoutes);
+app.use("/api/documentation", documentationRoutes);
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));

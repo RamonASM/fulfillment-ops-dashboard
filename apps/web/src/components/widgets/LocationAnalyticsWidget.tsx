@@ -3,8 +3,17 @@
 // Shows analytics by shipping location
 // =============================================================================
 
-import { MapPin, Building, TrendingUp, Package } from "lucide-react";
+import { useRef } from "react";
+import {
+  MapPin,
+  Building,
+  TrendingUp,
+  Package,
+  Camera,
+  FileSpreadsheet,
+} from "lucide-react";
 import { format } from "date-fns";
+import html2canvas from "html2canvas";
 
 interface TopProduct {
   productId: string;
@@ -28,6 +37,7 @@ interface LocationAnalyticsWidgetProps {
   title?: string;
   limit?: number;
   onViewMore?: () => void;
+  showExport?: boolean;
 }
 
 export function LocationAnalyticsWidget({
@@ -35,9 +45,47 @@ export function LocationAnalyticsWidget({
   title = "Top Locations",
   limit = 5,
   onViewMore,
+  showExport = true,
 }: LocationAnalyticsWidgetProps) {
+  const widgetRef = useRef<HTMLDivElement>(null);
   const displayLocations = locations.slice(0, limit);
   const totalUnits = locations.reduce((sum, l) => sum + l.totalUnits, 0);
+
+  // Export as PNG
+  const exportToPNG = async () => {
+    if (!widgetRef.current) return;
+    try {
+      const canvas = await html2canvas(widgetRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+      });
+      const link = document.createElement("a");
+      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (error) {
+      console.error("Error exporting widget:", error);
+    }
+  };
+
+  // Export as CSV
+  const exportToCSV = () => {
+    const csvContent = [
+      "Rank,Location Name,Company,Total Orders,Total Units,Order Frequency,Last Order Date,Top Products",
+      ...displayLocations.map(
+        (location, index) =>
+          `${index + 1},"${location.locationName}","${location.company}",${location.totalOrders},${location.totalUnits},${location.orderFrequency},${location.lastOrderDate || "N/A"},"${location.topProducts.map((p) => p.name).join("; ")}"`,
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.csv`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (displayLocations.length === 0) {
     return (
@@ -60,15 +108,38 @@ export function LocationAnalyticsWidget({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
+    <div
+      ref={widgetRef}
+      className="bg-white rounded-lg border border-gray-200 p-6"
+    >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <MapPin className="w-5 h-5 text-blue-500" />
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
         </div>
-        <span className="text-sm text-gray-500">
-          {locations.length} location{locations.length !== 1 ? "s" : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          {showExport && (
+            <div className="flex gap-1">
+              <button
+                onClick={exportToPNG}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title="Export as PNG"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+              <button
+                onClick={exportToCSV}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title="Export as CSV"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <span className="text-sm text-gray-500">
+            {locations.length} location{locations.length !== 1 ? "s" : ""}
+          </span>
+        </div>
       </div>
 
       <div className="space-y-4">

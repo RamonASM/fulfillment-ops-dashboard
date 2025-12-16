@@ -3,12 +3,28 @@
 // Shows detected anomalies in ordering patterns
 // =============================================================================
 
-import { AlertTriangle, TrendingUp, TrendingDown, Archive, Package, Eye } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { useRef } from "react";
+import {
+  AlertTriangle,
+  TrendingUp,
+  TrendingDown,
+  Archive,
+  Package,
+  Eye,
+  Camera,
+  FileSpreadsheet,
+} from "lucide-react";
+import { formatDistanceToNow, format } from "date-fns";
+import html2canvas from "html2canvas";
 
 interface AnomalyAlert {
-  type: 'demand_spike' | 'demand_drop' | 'unusual_order' | 'dead_stock' | 'overstock';
-  severity: 'high' | 'medium' | 'low';
+  type:
+    | "demand_spike"
+    | "demand_drop"
+    | "unusual_order"
+    | "dead_stock"
+    | "overstock";
+  severity: "high" | "medium" | "low";
   productId?: string;
   productName?: string;
   locationId?: string;
@@ -25,60 +41,99 @@ interface AnomalyAlertsWidgetProps {
   limit?: number;
   onViewAll?: () => void;
   onDismiss?: (index: number) => void;
+  showExport?: boolean;
 }
 
 const typeConfig = {
   demand_spike: {
     icon: TrendingUp,
-    color: 'text-emerald-700',
-    bg: 'bg-emerald-100',
-    label: 'Demand Spike',
+    color: "text-emerald-700",
+    bg: "bg-emerald-100",
+    label: "Demand Spike",
   },
   demand_drop: {
     icon: TrendingDown,
-    color: 'text-red-700',
-    bg: 'bg-red-100',
-    label: 'Demand Drop',
+    color: "text-red-700",
+    bg: "bg-red-100",
+    label: "Demand Drop",
   },
   unusual_order: {
     icon: AlertTriangle,
-    color: 'text-amber-700',
-    bg: 'bg-amber-100',
-    label: 'Unusual Order',
+    color: "text-amber-700",
+    bg: "bg-amber-100",
+    label: "Unusual Order",
   },
   dead_stock: {
     icon: Archive,
-    color: 'text-gray-700',
-    bg: 'bg-gray-100',
-    label: 'Dead Stock',
+    color: "text-gray-700",
+    bg: "bg-gray-100",
+    label: "Dead Stock",
   },
   overstock: {
     icon: Package,
-    color: 'text-purple-700',
-    bg: 'bg-purple-100',
-    label: 'Overstock',
+    color: "text-purple-700",
+    bg: "bg-purple-100",
+    label: "Overstock",
   },
 };
 
 const severityConfig = {
-  high: { bg: 'bg-red-500', text: 'text-white', label: 'High' },
-  medium: { bg: 'bg-amber-500', text: 'text-white', label: 'Medium' },
-  low: { bg: 'bg-blue-500', text: 'text-white', label: 'Low' },
+  high: { bg: "bg-red-500", text: "text-white", label: "High" },
+  medium: { bg: "bg-amber-500", text: "text-white", label: "Medium" },
+  low: { bg: "bg-blue-500", text: "text-white", label: "Low" },
 };
 
 export function AnomalyAlertsWidget({
   anomalies,
-  title = 'Anomaly Detection',
+  title = "Anomaly Detection",
   limit = 5,
   onViewAll,
   onDismiss,
+  showExport = true,
 }: AnomalyAlertsWidgetProps) {
+  const widgetRef = useRef<HTMLDivElement>(null);
   const displayAnomalies = anomalies.slice(0, limit);
 
   // Summary counts by severity
-  const highCount = anomalies.filter((a) => a.severity === 'high').length;
-  const mediumCount = anomalies.filter((a) => a.severity === 'medium').length;
-  const lowCount = anomalies.filter((a) => a.severity === 'low').length;
+  const highCount = anomalies.filter((a) => a.severity === "high").length;
+  const mediumCount = anomalies.filter((a) => a.severity === "medium").length;
+  const lowCount = anomalies.filter((a) => a.severity === "low").length;
+
+  // Export as PNG
+  const exportToPNG = async () => {
+    if (!widgetRef.current) return;
+    try {
+      const canvas = await html2canvas(widgetRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+      });
+      const link = document.createElement("a");
+      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (error) {
+      console.error("Error exporting widget:", error);
+    }
+  };
+
+  // Export as CSV
+  const exportToCSV = () => {
+    const csvContent = [
+      "Type,Severity,Message,Details,Product,Detected At,Value,Expected Value",
+      ...anomalies.map(
+        (anomaly) =>
+          `"${typeConfig[anomaly.type].label}","${anomaly.severity}","${anomaly.message}","${anomaly.details}","${anomaly.productName || "N/A"}","${format(new Date(anomaly.detectedAt), "yyyy-MM-dd HH:mm")}",${anomaly.value || "N/A"},${anomaly.expectedValue || "N/A"}`,
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.csv`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (displayAnomalies.length === 0) {
     return (
@@ -99,13 +154,34 @@ export function AnomalyAlertsWidget({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
+    <div
+      ref={widgetRef}
+      className="bg-white rounded-lg border border-gray-200 p-6"
+    >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-amber-500" />
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
         </div>
         <div className="flex items-center gap-2">
+          {showExport && (
+            <div className="flex gap-1 mr-2">
+              <button
+                onClick={exportToPNG}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title="Export as PNG"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+              <button
+                onClick={exportToCSV}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title="Export as CSV"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {highCount > 0 && (
             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
               {highCount} high
@@ -153,17 +229,23 @@ export function AnomalyAlertsWidget({
                   </div>
                   <p className="text-xs text-gray-600">{anomaly.details}</p>
                   <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                    <span className={`px-2 py-0.5 rounded-full ${config.bg} ${config.color}`}>
+                    <span
+                      className={`px-2 py-0.5 rounded-full ${config.bg} ${config.color}`}
+                    >
                       {config.label}
                     </span>
                     <span>
-                      {formatDistanceToNow(new Date(anomaly.detectedAt), { addSuffix: true })}
+                      {formatDistanceToNow(new Date(anomaly.detectedAt), {
+                        addSuffix: true,
+                      })}
                     </span>
-                    {anomaly.value !== undefined && anomaly.expectedValue !== undefined && (
-                      <span>
-                        {anomaly.value} vs expected {Math.round(anomaly.expectedValue)}
-                      </span>
-                    )}
+                    {anomaly.value !== undefined &&
+                      anomaly.expectedValue !== undefined && (
+                        <span>
+                          {anomaly.value} vs expected{" "}
+                          {Math.round(anomaly.expectedValue)}
+                        </span>
+                      )}
                   </div>
                 </div>
 
@@ -173,8 +255,18 @@ export function AnomalyAlertsWidget({
                     className="text-gray-400 hover:text-gray-600 p-1"
                   >
                     <span className="sr-only">Dismiss</span>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
                     </svg>
                   </button>
                 )}

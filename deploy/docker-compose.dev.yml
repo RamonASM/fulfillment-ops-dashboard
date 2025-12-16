@@ -1,0 +1,109 @@
+version: "3.8"
+
+# =============================================================================
+# Inventory Intelligence Platform - Development Docker Compose Configuration
+# =============================================================================
+# This file provides a local development environment with hot-reload
+# Usage: docker-compose -f deploy/docker-compose.dev.yml up
+# =============================================================================
+
+networks:
+  inventory-dev:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+services:
+  # ===========================================================================
+  # Development Database - PostgreSQL
+  # ===========================================================================
+  postgres-dev:
+    image: postgres:15-alpine
+    container_name: inventory-postgres-dev
+    restart: unless-stopped
+    networks:
+      - inventory-dev
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory123
+      POSTGRES_DB: inventory_dev
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # Development Redis
+  # ===========================================================================
+  redis-dev:
+    image: redis:7-alpine
+    container_name: inventory-redis-dev
+    restart: unless-stopped
+    networks:
+      - inventory-dev
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ===========================================================================
+  # Development ML Analytics (Optional)
+  # ===========================================================================
+  ml-analytics-dev:
+    build:
+      context: ../apps/ml-analytics
+      dockerfile: Dockerfile
+    container_name: inventory-ml-analytics-dev
+    restart: unless-stopped
+    networks:
+      - inventory-dev
+    environment:
+      DATABASE_URL: postgresql://inventory:inventory123@postgres-dev:5432/inventory_dev
+      PORT: 8000
+      HOST: 0.0.0.0
+      LOG_LEVEL: debug
+    volumes:
+      - ../apps/ml-analytics:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    profiles:
+      - ml
+
+# =============================================================================
+# Development Workflow:
+# =============================================================================
+#
+# 1. Start database and redis:
+#    docker-compose -f deploy/docker-compose.dev.yml up -d
+#
+# 2. Run API locally (with hot-reload):
+#    npm run dev:api
+#
+# 3. Run web dashboard locally:
+#    npm run dev:web
+#
+# 4. Run portal locally:
+#    npm run dev:portal
+#
+# 5. (Optional) Include ML analytics:
+#    docker-compose -f deploy/docker-compose.dev.yml --profile ml up -d
+#
+# Environment Variables:
+# - Use apps/api/.env.example as template
+# - DATABASE_URL: postgresql://inventory:inventory123@localhost:5432/inventory_dev
+# - REDIS_URL: redis://localhost:6379
+# =============================================================================

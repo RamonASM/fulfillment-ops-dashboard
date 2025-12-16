@@ -1,6 +1,6 @@
-import { usePortalAuthStore } from '@/stores/auth.store';
+import { usePortalAuthStore } from "@/stores/auth.store";
 
-const API_BASE = '/api/portal';
+const API_BASE = "/api/portal";
 
 interface RequestOptions {
   params?: Record<string, string>;
@@ -9,12 +9,12 @@ interface RequestOptions {
 class PortalApiClient {
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     };
 
     const token = usePortalAuthStore.getState().accessToken;
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers["Authorization"] = `Bearer ${token}`;
     }
 
     return headers;
@@ -23,13 +23,15 @@ class PortalApiClient {
   private async handleResponse<T>(response: Response): Promise<T> {
     if (response.status === 401) {
       usePortalAuthStore.getState().logout();
-      window.location.href = '/login';
-      throw new Error('Session expired');
+      window.location.href = "/login";
+      throw new Error("Session expired");
     }
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || 'Request failed');
+      const error = await response
+        .json()
+        .catch(() => ({ message: "Request failed" }));
+      throw new Error(error.message || "Request failed");
     }
 
     return response.json();
@@ -43,9 +45,9 @@ class PortalApiClient {
     }
 
     const response = await fetch(url, {
-      method: 'GET',
+      method: "GET",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
     });
 
     return this.handleResponse<T>(response);
@@ -53,9 +55,9 @@ class PortalApiClient {
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
+      method: "POST",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
       body: data ? JSON.stringify(data) : undefined,
     });
 
@@ -64,9 +66,9 @@ class PortalApiClient {
 
   async patch<T>(endpoint: string, data: unknown): Promise<T> {
     const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'PATCH',
+      method: "PATCH",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
       body: JSON.stringify(data),
     });
 
@@ -75,9 +77,9 @@ class PortalApiClient {
 
   async delete<T>(endpoint: string): Promise<T> {
     const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'DELETE',
+      method: "DELETE",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
     });
 
     return this.handleResponse<T>(response);
@@ -94,12 +96,12 @@ export { PortalApiClient };
 class DirectApiClient {
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     };
 
     const token = usePortalAuthStore.getState().accessToken;
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers["Authorization"] = `Bearer ${token}`;
     }
 
     return headers;
@@ -108,13 +110,15 @@ class DirectApiClient {
   private async handleResponse<T>(response: Response): Promise<T> {
     if (response.status === 401) {
       usePortalAuthStore.getState().logout();
-      window.location.href = '/login';
-      throw new Error('Session expired');
+      window.location.href = "/login";
+      throw new Error("Session expired");
     }
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || 'Request failed');
+      const error = await response
+        .json()
+        .catch(() => ({ message: "Request failed" }));
+      throw new Error(error.message || "Request failed");
     }
 
     return response.json();
@@ -128,9 +132,9 @@ class DirectApiClient {
     }
 
     const response = await fetch(url, {
-      method: 'GET',
+      method: "GET",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
     });
 
     return this.handleResponse<T>(response);
@@ -138,9 +142,9 @@ class DirectApiClient {
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {
     const response = await fetch(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: this.getHeaders(),
-      credentials: 'include',
+      credentials: "include",
       body: data ? JSON.stringify(data) : undefined,
     });
 
@@ -149,3 +153,6 @@ class DirectApiClient {
 }
 
 export const directApi = new DirectApiClient();
+
+// Default export for documentation and other non-portal endpoints
+export const api = directApi;

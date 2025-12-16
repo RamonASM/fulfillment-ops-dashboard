@@ -33,6 +33,9 @@ model User {
   dismissedAlerts     Alert[]                  @relation("DismissedBy")
   auditLogs           AuditLog[]
   dashboardPreference UserDashboardPreference?
+  // Dashboard personalization
+  dashboardLayouts    DashboardLayout[]
+  preferences         UserPreferences?
 
   @@index([email])
   @@index([role])
@@ -85,6 +88,13 @@ model Client {
   artworks               Artwork[]
   // Smart Import Enhancement
   customFieldDefinitions ClientCustomFieldDefinition[]
+  // Financial tracking
+  budgets                Budget[]
+  costTracking           CostTracking[]
+  // Shipment tracking
+  shipments              Shipment[]
+  // Benchmarking
+  benchmarkParticipation BenchmarkParticipation?
 
   @@index([code])
   @@index([isActive])
@@ -159,6 +169,34 @@ model Product {
   // Artwork relations
   artworks              Artwork[]
 
+  // Financial tracking fields
+  unitCost        Decimal?  @map("unit_cost") @db.Decimal(10, 2) // Cost per unit
+  unitPrice       Decimal?  @map("unit_price") @db.Decimal(10, 2) // Selling price per unit
+  reorderCost     Decimal?  @map("reorder_cost") @db.Decimal(10, 2) // Cost to place reorder
+  holdingCostRate Decimal?  @map("holding_cost_rate") @db.Decimal(5, 4) // Annual % of unit cost
+  lastCostUpdate  DateTime? @map("last_cost_update") @db.Timestamptz
+  costSource      String?   @map("cost_source") @db.VarChar(50) // 'manual' | 'imported' | 'calculated'
+
+  // Financial relations
+  budgets      Budget[]
+  costTracking CostTracking[]
+
+  // Lead time fields (Phase 3.5: Order Timing)
+  supplierLeadDays      Int?      @map("supplier_lead_days")    // Days from supplier
+  shippingLeadDays      Int?      @map("shipping_lead_days")    // Transit days
+  processingLeadDays    Int?      @map("processing_lead_days")  // Internal processing
+  safetyBufferDays      Int?      @map("safety_buffer_days")    // Extra cushion
+  totalLeadDays         Int?      @map("total_lead_days")       // Computed total
+  leadTimeSource        String?   @map("lead_time_source") @db.VarChar(20) // 'default' | 'override' | 'imported'
+
+  // Cached timing calculations
+  projectedStockoutDate DateTime? @map("projected_stockout_date") @db.Date
+  lastOrderByDate       DateTime? @map("last_order_by_date") @db.Date
+  timingLastCalculated  DateTime? @map("timing_last_calculated") @db.Timestamptz
+
+  // Shipment tracking relations
+  shipmentItems ShipmentItem[]
+
   @@unique([clientId, productId])
   @@index([clientId])
   @@index([productId])
@@ -202,6 +240,67 @@ model Transaction {
   @@index([productId, dateSubmitted])
   @@index([productId, dateSubmitted, orderStatus])
   @@map("transactions")
+}
+
+// -----------------------------------------------------------------------------
+// FINANCIAL TRACKING MODELS
+// -----------------------------------------------------------------------------
+
+model Budget {
+  id              String   @id @default(uuid()) @db.Uuid
+  clientId        String   @map("client_id") @db.Uuid
+  productId       String?  @map("product_id") @db.Uuid // null = client-level budget
+  period          String   @db.VarChar(20) // 'monthly' | 'quarterly' | 'annual'
+  periodStart     DateTime @map("period_start") @db.Date
+  periodEnd       DateTime @map("period_end") @db.Date
+  allocatedAmount Decimal  @map("allocated_amount") @db.Decimal(12, 2)
+  spentAmount     Decimal  @default(0) @map("spent_amount") @db.Decimal(12, 2)
+  forecastAmount  Decimal? @map("forecast_amount") @db.Decimal(12, 2)
+  variance        Decimal? @db.Decimal(12, 2) // allocated - spent
+  status          String   @db.VarChar(20) // 'under' | 'on_track' | 'over'
+  alertThreshold  Decimal? @map("alert_threshold") @db.Decimal(5, 2) // Alert at X% of budget
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, periodStart])
+  @@index([productId])
+  @@map("budgets")
+}
+
+model CostTracking {
+  id        String   @id @default(uuid()) @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  period    DateTime @db.Date // Monthly aggregation
+
+  // Quantity metrics
+  unitsOrdered Int @map("units_ordered")
+  packsOrdered Int @map("packs_ordered")
+
+  // Cost breakdown
+  purchaseCost Decimal  @map("purchase_cost") @db.Decimal(12, 2) // Total purchase cost
+  holdingCost  Decimal? @map("holding_cost") @db.Decimal(12, 2) // Storage/carrying cost
+  orderingCost Decimal? @map("ordering_cost") @db.Decimal(12, 2) // Admin/processing cost
+  shortageCost Decimal? @map("shortage_cost") @db.Decimal(12, 2) // Stockout opportunity cost
+  totalCost    Decimal  @map("total_cost") @db.Decimal(12, 2)
+
+  // Optimization metrics
+  eoqQuantity Int?     @map("eoq_quantity") // Economic Order Quantity
+  eoqSavings  Decimal? @map("eoq_savings") @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, productId, period])
+  @@index([period])
+  @@map("cost_tracking")
 }
 
 // -----------------------------------------------------------------------------
@@ -430,11 +529,15 @@ model OrderRequest {
   externalOrderDate  DateTime? @map("external_order_date") @db.Timestamptz
   externalOrderNotes String?   @map("external_order_notes") @db.Text
 
-  // Phase 13: SLA tracking
+  // Phase 13: SLA tracking (admin acknowledgment SLA)
   submittedAt    DateTime? @map("submitted_at") @db.Timestamptz
   acknowledgedAt DateTime? @map("acknowledged_at") @db.Timestamptz
   slaDeadline    DateTime? @map("sla_deadline") @db.Timestamptz
   slaBreached    Boolean   @default(false) @map("sla_breached")
+
+  // Phase 3.5: Delivery deadline tracking (client delivery SLA)
+  deliveryDeadline DateTime? @map("delivery_deadline") @db.Date
+  deliveryBreached Boolean   @default(false) @map("delivery_breached")
 
   // Phase 13: Fulfillment tracking
   fulfilledBy String?   @map("fulfilled_by") @db.Uuid
@@ -455,6 +558,8 @@ model OrderRequest {
   orderRequestItems OrderRequestItem[]
   statusHistory     RequestStatusHistory[]
   productFeedback   ProductFeedback[]
+  // Phase 3.5 relations
+  shipments         Shipment[]
 
   @@index([clientId])
   @@index([status])
@@ -678,8 +783,9 @@ model OrderRequestItem {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   // Relations
-  orderRequest OrderRequest @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
-  product      Product      @relation(fields: [productId], references: [id])
+  orderRequest  OrderRequest   @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
+  product       Product        @relation(fields: [productId], references: [id])
+  shipmentItems ShipmentItem[]
 
   @@index([orderRequestId])
   @@index([productId])
@@ -1106,4 +1212,235 @@ model ArtworkStatusHistory {
 
   @@index([artworkId, createdAt])
   @@map("artwork_status_history")
+}
+
+// =============================================================================
+// PHASE 3.5: SHIPMENT TRACKING & ORDER TIMING
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// SHIPMENT TRACKING MODEL
+// -----------------------------------------------------------------------------
+
+model Shipment {
+  id             String @id @default(uuid()) @db.Uuid
+  orderRequestId String @map("order_request_id") @db.Uuid
+  clientId       String @map("client_id") @db.Uuid
+
+  // Carrier information
+  carrier        String  @db.VarChar(100) // 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
+  carrierName    String? @map("carrier_name") @db.VarChar(255)
+  trackingNumber String  @map("tracking_number") @db.VarChar(100)
+  trackingUrl    String? @map("tracking_url") @db.VarChar(500)
+
+  // Status: 'pending' | 'label_created' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'exception'
+  status String @default("pending") @db.VarChar(50)
+
+  // Dates
+  shippedAt         DateTime? @map("shipped_at") @db.Timestamptz
+  estimatedDelivery DateTime? @map("estimated_delivery") @db.Date
+  deliveredAt       DateTime? @map("delivered_at") @db.Timestamptz
+
+  // Destination
+  destinationCity  String? @map("destination_city") @db.VarChar(100)
+  destinationState String? @map("destination_state") @db.VarChar(100)
+
+  // Package details
+  packageCount Int     @default(1) @map("package_count")
+  serviceLevel String? @map("service_level") @db.VarChar(100) // 'ground', '2-day', 'overnight'
+
+  // Exception handling
+  exceptionReason String? @map("exception_reason") @db.Text
+
+  // For future carrier API integration
+  isManual        Boolean   @default(true) @map("is_manual")
+  lastPolledAt    DateTime? @map("last_polled_at") @db.Timestamptz
+  rawTrackingData Json?     @map("raw_tracking_data")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  createdBy String?   @map("created_by") @db.Uuid
+
+  // Relations
+  orderRequest   OrderRequest    @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
+  client         Client          @relation(fields: [clientId], references: [id])
+  trackingEvents ShipmentEvent[]
+  shipmentItems  ShipmentItem[]
+
+  @@index([orderRequestId])
+  @@index([clientId, status])
+  @@index([trackingNumber])
+  @@map("shipments")
+}
+
+model ShipmentEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  shipmentId  String   @map("shipment_id") @db.Uuid
+  status      String   @db.VarChar(50)
+  description String   @db.Text
+  location    String?  @db.VarChar(255)
+  eventTime   DateTime @map("event_time") @db.Timestamptz
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, eventTime])
+  @@map("shipment_events")
+}
+
+model ShipmentItem {
+  id            String @id @default(uuid()) @db.Uuid
+  shipmentId    String @map("shipment_id") @db.Uuid
+  productId     String @map("product_id") @db.Uuid
+  orderItemId   String? @map("order_item_id") @db.Uuid
+  quantityPacks Int    @map("quantity_packs")
+  quantityUnits Int    @map("quantity_units")
+
+  shipment  Shipment          @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  product   Product           @relation(fields: [productId], references: [id])
+  orderItem OrderRequestItem? @relation(fields: [orderItemId], references: [id])
+
+  @@index([shipmentId])
+  @@map("shipment_items")
+}
+
+// =============================================================================
+// CROSS-CLIENT BENCHMARKING
+// Privacy-preserving performance comparison across clients
+// =============================================================================
+
+// Opt-in benchmarking participation
+model BenchmarkParticipation {
+  id              String   @id @default(uuid()) @db.Uuid
+  clientId        String   @unique @map("client_id") @db.Uuid
+  isParticipating Boolean  @default(false) @map("is_participating")
+  cohort          String?  @db.VarChar(50) // Industry cohort (e.g., 'healthcare', 'retail', 'general')
+  anonymousId     String   @unique @default(uuid()) @map("anonymous_id") @db.Uuid // For privacy
+  joinedAt        DateTime @default(now()) @map("joined_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([cohort, isParticipating])
+  @@map("benchmark_participation")
+}
+
+// Aggregated benchmark data (no PII, minimum 5 participants)
+model BenchmarkSnapshot {
+  id                   String   @id @default(uuid()) @db.Uuid
+  cohort               String   @db.VarChar(50)
+  period               DateTime @db.Date // Monthly snapshots
+  participantCount     Int      @map("participant_count")
+
+  // Aggregated metrics
+  avgProductCount      Decimal @db.Decimal(10, 2) @map("avg_product_count")
+  avgOrderFrequency    Decimal @db.Decimal(10, 2) @map("avg_order_frequency") // Orders per month
+  avgStockoutRate      Decimal @db.Decimal(5, 4) @map("avg_stockout_rate") // 0.0000 to 1.0000
+  avgForecastAccuracy  Decimal @db.Decimal(5, 4) @map("avg_forecast_accuracy") // 0.0000 to 1.0000
+  avgInventoryTurnover Decimal @db.Decimal(10, 2) @map("avg_inventory_turnover")
+
+  // Percentiles for product count
+  p25ProductCount Decimal @db.Decimal(10, 2) @map("p25_product_count")
+  p50ProductCount Decimal @db.Decimal(10, 2) @map("p50_product_count")
+  p75ProductCount Decimal @db.Decimal(10, 2) @map("p75_product_count")
+  p90ProductCount Decimal @db.Decimal(10, 2) @map("p90_product_count")
+
+  // Percentiles for order frequency
+  p25OrderFrequency Decimal @db.Decimal(10, 2) @map("p25_order_frequency")
+  p50OrderFrequency Decimal @db.Decimal(10, 2) @map("p50_order_frequency")
+  p75OrderFrequency Decimal @db.Decimal(10, 2) @map("p75_order_frequency")
+  p90OrderFrequency Decimal @db.Decimal(10, 2) @map("p90_order_frequency")
+
+  // Percentiles for stockout rate
+  p25StockoutRate Decimal @db.Decimal(5, 4) @map("p25_stockout_rate")
+  p50StockoutRate Decimal @db.Decimal(5, 4) @map("p50_stockout_rate")
+  p75StockoutRate Decimal @db.Decimal(5, 4) @map("p75_stockout_rate")
+  p90StockoutRate Decimal @db.Decimal(5, 4) @map("p90_stockout_rate")
+
+  // Percentiles for inventory turnover
+  p25InventoryTurnover Decimal @db.Decimal(10, 2) @map("p25_inventory_turnover")
+  p50InventoryTurnover Decimal @db.Decimal(10, 2) @map("p50_inventory_turnover")
+  p75InventoryTurnover Decimal @db.Decimal(10, 2) @map("p75_inventory_turnover")
+  p90InventoryTurnover Decimal @db.Decimal(10, 2) @map("p90_inventory_turnover")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([cohort, period])
+  @@index([period])
+  @@map("benchmark_snapshots")
+}
+
+// =============================================================================
+// DASHBOARD PERSONALIZATION
+// Custom layouts and user preferences
+// =============================================================================
+
+model DashboardLayout {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String   @db.VarChar(100)
+  isDefault Boolean  @default(false) @map("is_default")
+  layout    Json     // Widget positions and sizes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@map("dashboard_layouts")
+}
+
+model UserPreferences {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @map("user_id") @db.Uuid
+  defaultView          String   @default("dashboard") @db.VarChar(50) // 'dashboard' | 'clients' | 'analytics'
+  chartColorScheme     String   @default("default") @db.VarChar(50)
+  compactMode          Boolean  @default(false) @map("compact_mode")
+  enableRealtime       Boolean  @default(true) @map("enable_realtime")
+  notificationSettings Json?    @map("notification_settings")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// =============================================================================
+// DOCUMENTATION SYSTEM
+// Live, updateable documentation for admin and client users
+// =============================================================================
+
+model Documentation {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique @db.VarChar(100) // URL-friendly identifier
+  title       String   @db.VarChar(255)
+  category    String   @db.VarChar(100) // 'getting-started' | 'features' | 'how-to' | 'faq' | 'troubleshooting'
+  audience    String   @db.VarChar(20) // 'admin' | 'client' | 'both'
+  content     String   @db.Text // Markdown content
+  excerpt     String?  @db.VarChar(500) // Short description for search/listing
+  order       Int      @default(0) // Sort order within category
+  isPublished Boolean  @default(true) @map("is_published")
+  version     String   @default("1.0.0") @db.VarChar(20)
+
+  // Metadata for search and organization
+  tags        Json? // ['inventory', 'orders', 'shipments']
+  keywords    Json? // For search optimization
+
+  // Change tracking
+  lastUpdatedBy String?   @map("last_updated_by") @db.Uuid
+  changeLog     Json?     @map("change_log") // [{version, date, changes, updatedBy}]
+
+  // Usage analytics
+  viewCount     Int       @default(0) @map("view_count")
+  lastViewedAt  DateTime? @map("last_viewed_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([audience, category])
+  @@index([slug])
+  @@index([isPublished])
+  @@map("documentation")
 }

@@ -175,7 +175,8 @@ export type AlertType =
   | "low_stock"
   | "reorder_due"
   | "usage_spike"
-  | "no_movement";
+  | "no_movement"
+  | "order_deadline";
 
 export type AlertSeverity = "info" | "warning" | "critical";
 
