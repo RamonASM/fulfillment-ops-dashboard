@@ -47,7 +47,9 @@ test.describe("Order Management - Admin", () => {
 
 // Portal tests - use port 8080 (nginx serves portal there)
 test.describe("Order Request - Portal", () => {
-  test.use({ baseURL: "http://localhost:8080" });
+  test.use({
+    baseURL: process.env.CI ? "http://localhost:4174" : "http://localhost:8080",
+  });
 
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
