@@ -5,13 +5,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : 6,
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['list'],
   ],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:80',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -32,7 +32,7 @@ export default defineConfig({
     // },
   ],
 
-  webServer: [
+  /* webServer: [
     {
       command: 'npm run start:api',
       url: 'http://localhost:3001/health',
@@ -49,5 +49,5 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       cwd: '.',
     },
-  ],
+  ], */
 });

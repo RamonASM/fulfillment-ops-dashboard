@@ -234,11 +234,15 @@ jobs:
           echo $! > portal.pid
           sleep 5
 
-      - name: Check service health
+      - name: Wait for services to be ready
         run: |
-          curl -f http://localhost:3001/health || echo "API health check failed"
-          curl -I http://localhost:80 || echo "Web health check failed"
-          curl -I http://localhost:8080 || echo "Portal health check failed"
+          echo "Waiting for API..."
+          timeout 60 bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done' || exit 1
+          echo "Waiting for Web..."
+          timeout 30 bash -c 'until curl -I http://localhost:80; do sleep 2; done' || exit 1
+          echo "Waiting for Portal..."
+          timeout 30 bash -c 'until curl -I http://localhost:8080; do sleep 2; done' || exit 1
+          echo "All services ready!"
 
       - name: Run E2E tests
         run: npm run test:e2e
