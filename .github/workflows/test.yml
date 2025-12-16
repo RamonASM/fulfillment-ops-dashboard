@@ -44,6 +44,9 @@ jobs:
         working-directory: apps/api
         run: npx prisma generate
 
+      - name: Build shared package (required for typecheck)
+        run: npm run build:shared --if-present
+
       - name: Run ESLint
         run: npm run lint --if-present
         continue-on-error: true
