@@ -377,6 +377,8 @@ export const SEVERITY_COLORS: Record<AlertSeverity, string> = {
 
 // -----------------------------------------------------------------------------
 // HELP/DOCUMENTATION COMPONENTS
+// Note: React components not exported from shared package for API compatibility.
+// Web and Portal apps should import directly from '@inventory/shared/components/help'
 // -----------------------------------------------------------------------------
 
-export * from "./components/help";
+// export * from "./components/help/index.js";
