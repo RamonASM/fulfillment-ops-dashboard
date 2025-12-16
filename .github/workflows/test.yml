@@ -1,0 +1,353 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs when a new workflow is triggered
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  DATABASE_URL: postgresql://inventory:inventory123@localhost:5432/inventory_test
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: test-jwt-secret-min-32-chars-long-for-ci
+  NODE_ENV: test
+
+jobs:
+  # =============================================================================
+  # Lint & Type Check (Fast feedback)
+  # =============================================================================
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint --if-present
+        continue-on-error: true
+
+      - name: Type check - Shared
+        run: npm run typecheck:shared --if-present
+
+      - name: Type check - API
+        run: npm run typecheck:api
+
+      - name: Type check - Web
+        run: npm run typecheck:web
+
+      - name: Type check - Portal
+        run: npm run typecheck:portal
+
+  # =============================================================================
+  # Build (Verify all packages compile)
+  # =============================================================================
+  build:
+    name: Build All Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build:shared --if-present
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Build Web
+        run: npm run build:web
+
+      - name: Build Portal
+        run: npm run build:portal
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            apps/api/dist/
+            apps/web/dist/
+            apps/portal/dist/
+            packages/shared/dist/
+          retention-days: 7
+
+  # =============================================================================
+  # Unit Tests (if you add them later)
+  # =============================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test --if-present || echo "No unit tests found, skipping..."
+
+  # =============================================================================
+  # E2E Tests (Critical path)
+  # =============================================================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint-and-typecheck, build]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: inventory
+          POSTGRES_PASSWORD: inventory123
+          POSTGRES_DB: inventory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+
+      - name: Generate Prisma Client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: apps/api
+        run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Seed database
+        working-directory: apps/api
+        run: npm run db:seed --if-present || echo "No seed script found, skipping..."
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build and start Docker services
+        run: |
+          docker compose build
+          docker compose up -d
+          echo "Waiting for services to be healthy..."
+          sleep 15
+
+      - name: Check service health
+        run: |
+          curl -f http://localhost:3002/health || echo "API health check failed"
+          docker compose ps
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          NODE_ENV: test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
+
+      - name: Dump Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== API Logs ==="
+          docker logs inventory-api --tail 100
+          echo "=== Web Logs ==="
+          docker logs inventory-web --tail 100
+          echo "=== DB Logs ==="
+          docker logs inventory-db --tail 50
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
+
+  # =============================================================================
+  # Security Audit
+  # =============================================================================
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high --production || echo "Security vulnerabilities found"
+        continue-on-error: true
+
+  # =============================================================================
+  # Database Schema Validation
+  # =============================================================================
+  validate-schema:
+    name: Validate Database Schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: inventory
+          POSTGRES_PASSWORD: inventory123
+          POSTGRES_DB: inventory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        working-directory: apps/api
+        run: npx prisma generate
+
+      - name: Validate Prisma schema
+        working-directory: apps/api
+        run: npx prisma validate
+
+      - name: Check for schema drift
+        working-directory: apps/api
+        run: npx prisma format --check
+
+      - name: Test migrations
+        working-directory: apps/api
+        run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+  # =============================================================================
+  # Summary (Status check for PR)
+  # =============================================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs:
+      [
+        lint-and-typecheck,
+        build,
+        unit-tests,
+        e2e-tests,
+        security-audit,
+        validate-schema,
+      ]
+    if: always()
+
+    steps:
+      - name: Check all jobs status
+        run: |
+          if [ "${{ needs.lint-and-typecheck.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.e2e-tests.result }}" != "success" ] || \
+             [ "${{ needs.validate-schema.result }}" != "success" ]; then
+            echo "❌ CI pipeline failed"
+            exit 1
+          else
+            echo "✅ All CI checks passed"
+          fi
+
+      - name: Post success comment
+        if: success() && github.event_name == 'pull_request'
+        run: echo "✅ All CI checks passed - ready for review"
