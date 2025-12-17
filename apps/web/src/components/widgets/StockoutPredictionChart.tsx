@@ -14,6 +14,7 @@ import {
 import { AlertTriangle, Calendar, TrendingDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { ConfidenceBadge } from "../shared/ConfidenceBadge";
 
 interface StockoutPredictionData {
   productId: string;
@@ -175,19 +176,18 @@ export function StockoutPredictionChart({
         </div>
 
         <div className="bg-blue-50 rounded-lg p-3">
-          <div className="text-xs text-gray-600 mb-1">Confidence</div>
-          <div className="text-lg font-semibold text-blue-700">
-            {prediction?.confidence
-              ? `${(prediction.confidence * 100).toFixed(0)}%`
-              : "N/A"}
+          <div className="text-xs text-gray-600 mb-2">
+            Prediction Confidence
           </div>
-          <div className="text-xs text-gray-500 mt-1">
-            {prediction?.confidence && prediction.confidence > 0.8
-              ? "High"
-              : prediction?.confidence && prediction.confidence > 0.6
-                ? "Medium"
-                : "Low"}
-          </div>
+          {prediction?.confidence ? (
+            <ConfidenceBadge
+              score={prediction.confidence}
+              showBreakdown={true}
+              method="stockout_prediction"
+            />
+          ) : (
+            <div className="text-sm text-gray-500">N/A</div>
+          )}
         </div>
       </div>
 

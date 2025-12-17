@@ -1,5 +1,7 @@
 import { emitToClient, emitToUser, SocketEvents } from "../lib/socket.js";
 import { prisma } from "../lib/prisma.js";
+import * as emailService from "./email.service.js";
+import * as notificationPrefService from "./notification-preference.service.js";
 
 interface NotificationPayload {
   id: string;
@@ -327,11 +329,82 @@ export async function emitOrderDeadlineAlert(
   // Get users assigned to this client and notify them
   const userClients = await prisma.userClient.findMany({
     where: { clientId },
-    select: { userId: true },
+    include: { user: true },
   });
 
   for (const userClient of userClients) {
     emitToUser(userClient.userId, SocketEvents.NOTIFICATION, notification);
+  }
+
+  // Send email notifications for overdue or critical deadlines
+  if (urgency === "overdue" || urgency === "critical") {
+    // Get client name for email
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+      select: { name: true },
+    });
+
+    if (!client) return;
+
+    const productData = {
+      name: product.name,
+      currentStock: product.currentStockUnits,
+      daysUntilDeadline: product.daysUntilDeadline,
+      orderByDate: product.orderByDate.toLocaleDateString(),
+    };
+
+    // Email account managers
+    for (const uc of userClients) {
+      const shouldSend = await notificationPrefService.shouldSendNotification(
+        uc.user.id,
+        "User",
+        "order_deadline",
+        "email",
+      );
+
+      if (shouldSend) {
+        try {
+          await emailService.sendOrderDeadlineAlert(
+            uc.user.email,
+            client.name,
+            [productData],
+          );
+        } catch (error) {
+          console.error(
+            `Failed to send order deadline email to ${uc.user.email}:`,
+            error,
+          );
+        }
+      }
+    }
+
+    // Email portal users
+    const portalUsers = await prisma.portalUser.findMany({
+      where: { clientId, isActive: true },
+      select: { id: true, email: true },
+    });
+
+    for (const pu of portalUsers) {
+      const shouldSend = await notificationPrefService.shouldSendNotification(
+        pu.id,
+        "PortalUser",
+        "order_deadline",
+        "email",
+      );
+
+      if (shouldSend) {
+        try {
+          await emailService.sendOrderDeadlineAlert(pu.email, client.name, [
+            productData,
+          ]);
+        } catch (error) {
+          console.error(
+            `Failed to send order deadline email to ${pu.email}:`,
+            error,
+          );
+        }
+      }
+    }
   }
 }
 

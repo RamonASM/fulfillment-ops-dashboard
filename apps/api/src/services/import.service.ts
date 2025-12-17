@@ -11,6 +11,7 @@ import {
 } from "./usage.service.js";
 import { runAlertGeneration } from "./alert.service.js";
 import { discoverCustomFields } from "./custom-field.service.js";
+import { calculateUsageAfterImport } from "./ds-analytics.service.js";
 import {
   similarityWithExpansion,
   getConfidenceScore,
@@ -3117,8 +3118,21 @@ export async function processImport(
       }
     }
 
-    // Recalculate usage metrics
-    await recalculateClientUsage(importBatch.clientId);
+    // Advanced usage calculation using Python DS Analytics service
+    // This calculates monthly usage with multiple methods, confidence scoring, and predictions
+    try {
+      // Get all active products for the client to recalculate usage
+      const products = await prisma.product.findMany({
+        where: { clientId: importBatch.clientId, isActive: true },
+        select: { id: true },
+      });
+      const productIds = products.map((p) => p.id);
+      await calculateUsageAfterImport(productIds, importBatch.clientId);
+    } catch (err) {
+      console.error("Failed to calculate advanced usage metrics:", err);
+      // Fall back to basic usage calculation
+      await recalculateClientUsage(importBatch.clientId);
+    }
 
     // Calculate monthly usage for Phase 13 features (stock health, AI insights)
     await recalculateClientMonthlyUsage(importBatch.clientId);

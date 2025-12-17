@@ -1,58 +1,79 @@
-import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { ChevronLeft, Upload, Download, Settings, Package, MapPin, MessageSquare, Activity, CheckSquare, ShoppingCart, X, Loader2, Trash2, AlertTriangle, TrendingUp } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '@/api/client';
-import type { ClientWithStats, ProductWithMetrics } from '@inventory/shared';
-import { STATUS_COLORS, STATUS_ICONS } from '@inventory/shared';
-import { useState, useEffect } from 'react';
-import { clsx } from 'clsx';
-import { UsageTierBadge } from '@/components/ui';
-import { fadeInUp } from '@/lib/animations';
-import { CommentThread } from '@/components/CommentThread';
-import { ActivityFeed } from '@/components/ActivityFeed';
-import { TodoList } from '@/components/TodoList';
-import { ImportModal } from '@/components/ImportModal';
-import { CustomDataInsightsWidget } from '@/components/widgets/CustomDataInsightsWidget';
-import toast from 'react-hot-toast';
+import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import {
+  ChevronLeft,
+  Upload,
+  Download,
+  Settings,
+  Package,
+  MapPin,
+  MessageSquare,
+  Activity,
+  CheckSquare,
+  ShoppingCart,
+  X,
+  Loader2,
+  Trash2,
+  AlertTriangle,
+  TrendingUp,
+  Brain,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { api } from "@/api/client";
+import type { ClientWithStats, ProductWithMetrics } from "@inventory/shared";
+import { STATUS_COLORS, STATUS_ICONS } from "@inventory/shared";
+import { useState, useEffect } from "react";
+import { clsx } from "clsx";
+import { UsageTierBadge } from "@/components/ui";
+import { fadeInUp } from "@/lib/animations";
+import { CommentThread } from "@/components/CommentThread";
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { TodoList } from "@/components/TodoList";
+import { ImportModal } from "@/components/ImportModal";
+import { CustomDataInsightsWidget } from "@/components/widgets/CustomDataInsightsWidget";
+import { ForecastModal } from "@/components/ForecastModal";
+import toast from "react-hot-toast";
 
-type ItemTypeTab = 'evergreen' | 'event' | 'completed';
-type SectionTab = 'products' | 'comments' | 'activity' | 'tasks';
+type ItemTypeTab = "evergreen" | "event" | "completed";
+type SectionTab = "products" | "comments" | "activity" | "tasks";
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<ItemTypeTab>('evergreen');
-  const [sectionTab, setSectionTab] = useState<SectionTab>('products');
-  const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<ItemTypeTab>("evergreen");
+  const [sectionTab, setSectionTab] = useState<SectionTab>("products");
+  const [search, setSearch] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editCode, setEditCode] = useState('');
+  const [showForecastModal, setShowForecastModal] = useState(false);
+  const [selectedProduct, setSelectedProduct] =
+    useState<ProductWithMetrics | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editCode, setEditCode] = useState("");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
   // Detect ?import=true query param and open modal automatically
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('import') === 'true') {
+    if (params.get("import") === "true") {
       setShowImportModal(true);
       // Clean up URL after opening modal
-      window.history.replaceState({}, '', `/clients/${clientId}`);
+      window.history.replaceState({}, "", `/clients/${clientId}`);
     }
   }, [location.search, clientId]);
 
   // Fetch client
   const { data: client, isLoading: clientLoading } = useQuery({
-    queryKey: ['client', clientId],
+    queryKey: ["client", clientId],
     queryFn: () => api.get<ClientWithStats>(`/clients/${clientId}`),
     enabled: !!clientId,
   });
 
   // Fetch products
   const { data: productsData, isLoading: productsLoading } = useQuery({
-    queryKey: ['products', clientId, activeTab, search],
+    queryKey: ["products", clientId, activeTab, search],
     queryFn: () =>
       api.get<{
         data: ProductWithMetrics[];
@@ -75,13 +96,13 @@ export default function ClientDetail() {
       return api.patch(`/clients/${clientId}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['client', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      toast.success('Client updated successfully');
+      queryClient.invalidateQueries({ queryKey: ["client", clientId] });
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      toast.success("Client updated successfully");
       setShowSettingsModal(false);
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to update client');
+      toast.error(error.message || "Failed to update client");
     },
   });
 
@@ -91,18 +112,18 @@ export default function ClientDetail() {
       return api.delete(`/clients/${clientId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      toast.success('Client deleted successfully');
-      navigate('/clients');
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      toast.success("Client deleted successfully");
+      navigate("/clients");
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to delete client');
+      toast.error(error.message || "Failed to delete client");
     },
   });
 
   // Handle import success - invalidate queries to refresh data
   const handleImportSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ['products', clientId] });
+    queryClient.invalidateQueries({ queryKey: ["products", clientId] });
   };
 
   // Open settings modal and populate form
@@ -118,10 +139,13 @@ export default function ClientDetail() {
   const handleUpdateClient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editName.trim() || !editCode.trim()) {
-      toast.error('Name and code are required');
+      toast.error("Name and code are required");
       return;
     }
-    updateClientMutation.mutate({ name: editName.trim(), code: editCode.trim().toUpperCase() });
+    updateClientMutation.mutate({
+      name: editName.trim(),
+      code: editCode.trim().toUpperCase(),
+    });
   };
 
   // Handle delete client
@@ -133,39 +157,49 @@ export default function ClientDetail() {
     try {
       // Use the products data we already have
       if (!products || products.length === 0) {
-        toast.error('No data to export');
+        toast.error("No data to export");
         return;
       }
 
       // Create CSV content
-      const headers = ['Product ID', 'Name', 'Status', 'Stock (Packs)', 'Stock (Units)', 'Reorder Point', 'Weeks Remaining'];
-      const rows = products.map(p => [
+      const headers = [
+        "Product ID",
+        "Name",
+        "Status",
+        "Stock (Packs)",
+        "Stock (Units)",
+        "Reorder Point",
+        "Weeks Remaining",
+      ];
+      const rows = products.map((p) => [
         p.productId,
         p.name,
         p.status.level,
         p.currentStockPacks,
         p.currentStockUnits,
         p.reorderPointPacks,
-        p.status.weeksRemaining === 999 ? '' : p.status.weeksRemaining
+        p.status.weeksRemaining === 999 ? "" : p.status.weeksRemaining,
       ]);
 
       const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      ].join('\n');
+        headers.join(","),
+        ...rows.map((row) =>
+          row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+        ),
+      ].join("\n");
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = `${client?.code || 'export'}-${activeTab}-${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `${client?.code || "export"}-${activeTab}-${new Date().toISOString().split("T")[0]}.csv`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success('Export downloaded');
+      toast.success("Export downloaded");
     } catch {
-      toast.error('Failed to export data');
+      toast.error("Failed to export data");
     }
   };
 
@@ -183,7 +217,10 @@ export default function ClientDetail() {
     return (
       <div className="text-center py-12">
         <h2 className="text-lg font-medium text-gray-900">Client not found</h2>
-        <Link to="/clients" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
+        <Link
+          to="/clients"
+          className="text-primary-600 hover:text-primary-700 mt-2 inline-block"
+        >
           Back to clients
         </Link>
       </div>
@@ -226,7 +263,10 @@ export default function ClientDetail() {
             <MapPin className="w-4 h-4 mr-2" />
             Locations
           </Link>
-          <button className="btn-secondary btn-sm" onClick={() => setShowImportModal(true)}>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={() => setShowImportModal(true)}
+          >
             <Upload className="w-4 h-4 mr-2" />
             Import
           </button>
@@ -268,55 +308,53 @@ export default function ClientDetail() {
       </div>
 
       {/* Custom Data Insights Widget - Shows insights from imported custom fields */}
-      {clientId && (
-        <CustomDataInsightsWidget clientId={clientId} />
-      )}
+      {clientId && <CustomDataInsightsWidget clientId={clientId} />}
 
       {/* Section Tabs */}
       <div className="flex items-center gap-4 border-b border-gray-200">
         <button
-          onClick={() => setSectionTab('products')}
+          onClick={() => setSectionTab("products")}
           className={clsx(
-            'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
-            sectionTab === 'products'
-              ? 'border-primary-600 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+            sectionTab === "products"
+              ? "border-primary-600 text-primary-600"
+              : "border-transparent text-gray-500 hover:text-gray-700",
           )}
         >
           <Package className="w-4 h-4" />
           Products
         </button>
         <button
-          onClick={() => setSectionTab('comments')}
+          onClick={() => setSectionTab("comments")}
           className={clsx(
-            'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
-            sectionTab === 'comments'
-              ? 'border-primary-600 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+            sectionTab === "comments"
+              ? "border-primary-600 text-primary-600"
+              : "border-transparent text-gray-500 hover:text-gray-700",
           )}
         >
           <MessageSquare className="w-4 h-4" />
           Comments
         </button>
         <button
-          onClick={() => setSectionTab('activity')}
+          onClick={() => setSectionTab("activity")}
           className={clsx(
-            'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
-            sectionTab === 'activity'
-              ? 'border-primary-600 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+            sectionTab === "activity"
+              ? "border-primary-600 text-primary-600"
+              : "border-transparent text-gray-500 hover:text-gray-700",
           )}
         >
           <Activity className="w-4 h-4" />
           Activity
         </button>
         <button
-          onClick={() => setSectionTab('tasks')}
+          onClick={() => setSectionTab("tasks")}
           className={clsx(
-            'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
-            sectionTab === 'tasks'
-              ? 'border-primary-600 text-primary-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+            sectionTab === "tasks"
+              ? "border-primary-600 text-primary-600"
+              : "border-transparent text-gray-500 hover:text-gray-700",
           )}
         >
           <CheckSquare className="w-4 h-4" />
@@ -325,20 +363,20 @@ export default function ClientDetail() {
       </div>
 
       {/* Section Content */}
-      {sectionTab === 'products' && (
+      {sectionTab === "products" && (
         <>
           {/* Tabs and Search */}
           <div className="flex items-center justify-between">
             <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
-              {(['evergreen', 'event', 'completed'] as const).map((tab) => (
+              {(["evergreen", "event", "completed"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   className={clsx(
-                    'px-4 py-2 text-sm font-medium rounded-md transition-colors capitalize',
+                    "px-4 py-2 text-sm font-medium rounded-md transition-colors capitalize",
                     activeTab === tab
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900",
                   )}
                 >
                   {tab}
@@ -358,7 +396,9 @@ export default function ClientDetail() {
           {/* Products Table */}
           <div className="card overflow-hidden">
             {productsLoading ? (
-              <div className="p-8 text-center text-gray-500">Loading products...</div>
+              <div className="p-8 text-center text-gray-500">
+                Loading products...
+              </div>
             ) : products.length === 0 ? (
               <div className="p-12 text-center">
                 <Package className="w-12 h-12 mx-auto text-gray-300" />
@@ -367,7 +407,7 @@ export default function ClientDetail() {
                 </h3>
                 <p className="mt-2 text-gray-500">
                   {search
-                    ? 'Try adjusting your search terms'
+                    ? "Try adjusting your search terms"
                     : `No ${activeTab} products for this client`}
                 </p>
               </div>
@@ -383,11 +423,19 @@ export default function ClientDetail() {
                       <th>Usage</th>
                       <th>On Order</th>
                       <th>Weeks Left</th>
+                      <th>AI Insights</th>
                     </tr>
                   </thead>
                   <tbody>
                     {products.map((product) => (
-                      <ProductRow key={product.id} product={product} />
+                      <ProductRow
+                        key={product.id}
+                        product={product}
+                        onViewForecast={(product) => {
+                          setSelectedProduct(product);
+                          setShowForecastModal(true);
+                        }}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -397,7 +445,7 @@ export default function ClientDetail() {
         </>
       )}
 
-      {sectionTab === 'comments' && clientId && (
+      {sectionTab === "comments" && clientId && (
         <CommentThread
           entityType="client"
           entityId={clientId}
@@ -405,7 +453,7 @@ export default function ClientDetail() {
         />
       )}
 
-      {sectionTab === 'activity' && clientId && (
+      {sectionTab === "activity" && clientId && (
         <ActivityFeed
           clientId={clientId}
           title="Client Activity"
@@ -414,7 +462,7 @@ export default function ClientDetail() {
         />
       )}
 
-      {sectionTab === 'tasks' && clientId && (
+      {sectionTab === "tasks" && clientId && (
         <TodoList
           clientId={clientId}
           title="Client Tasks"
@@ -430,6 +478,20 @@ export default function ClientDetail() {
         onClose={() => setShowImportModal(false)}
         onSuccess={handleImportSuccess}
       />
+
+      {/* Forecast Modal */}
+      {selectedProduct && (
+        <ForecastModal
+          isOpen={showForecastModal}
+          onClose={() => {
+            setShowForecastModal(false);
+            setSelectedProduct(null);
+          }}
+          productId={selectedProduct.id}
+          productName={selectedProduct.name}
+          currentStock={selectedProduct.currentStockUnits}
+        />
+      )}
 
       {/* Settings Modal */}
       <AnimatePresence>
@@ -450,7 +512,9 @@ export default function ClientDetail() {
             >
               {/* Modal Header */}
               <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900">Client Settings</h2>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Client Settings
+                </h2>
                 <button
                   onClick={() => setShowSettingsModal(false)}
                   className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
@@ -520,7 +584,7 @@ export default function ClientDetail() {
                           Saving...
                         </>
                       ) : (
-                        'Save Changes'
+                        "Save Changes"
                       )}
                     </button>
                   </div>
@@ -553,12 +617,17 @@ export default function ClientDetail() {
                 <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <AlertTriangle className="w-8 h-8 text-red-600" />
                 </div>
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">Delete Client?</h2>
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                  Delete Client?
+                </h2>
                 <p className="text-gray-600 mb-2">
-                  Are you sure you want to delete <strong>{client?.name}</strong>?
+                  Are you sure you want to delete{" "}
+                  <strong>{client?.name}</strong>?
                 </p>
                 <p className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
-                  This action cannot be undone. All products, inventory data, orders, and history associated with this client will be permanently deleted.
+                  This action cannot be undone. All products, inventory data,
+                  orders, and history associated with this client will be
+                  permanently deleted.
                 </p>
               </div>
 
@@ -622,7 +691,13 @@ function StatusPill({
   );
 }
 
-function ProductRow({ product }: { product: ProductWithMetrics }) {
+function ProductRow({
+  product,
+  onViewForecast,
+}: {
+  product: ProductWithMetrics;
+  onViewForecast: (product: ProductWithMetrics) => void;
+}) {
   const status = product.status;
   const stockPercent = status.percentOfReorderPoint;
 
@@ -675,26 +750,37 @@ function ProductRow({ product }: { product: ProductWithMetrics }) {
           <div className="group relative">
             <div className="flex items-center gap-1.5 text-blue-600">
               <ShoppingCart className="w-4 h-4" />
-              <span className="font-medium text-sm">{(product as any).onOrderPacks} pks</span>
+              <span className="font-medium text-sm">
+                {(product as any).onOrderPacks} pks
+              </span>
             </div>
             {/* Tooltip on hover showing order details */}
-            {(product as any).pendingOrders && (product as any).pendingOrders.length > 0 && (
-              <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg py-2 px-3 -top-2 left-1/2 -translate-x-1/2 -translate-y-full w-48 shadow-lg">
-                <p className="font-semibold mb-1">
-                  {(product as any).pendingOrders.length} pending order{(product as any).pendingOrders.length > 1 ? 's' : ''}
-                </p>
-                {(product as any).pendingOrders.slice(0, 3).map((order: any) => (
-                  <div key={order.orderId} className="flex justify-between text-gray-300">
-                    <span className="capitalize">{order.status}</span>
-                    <span>{order.quantityPacks} pks</span>
-                  </div>
-                ))}
-                {(product as any).pendingOrders.length > 3 && (
-                  <p className="text-gray-400 mt-1">+{(product as any).pendingOrders.length - 3} more...</p>
-                )}
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full border-4 border-transparent border-t-gray-900" />
-              </div>
-            )}
+            {(product as any).pendingOrders &&
+              (product as any).pendingOrders.length > 0 && (
+                <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg py-2 px-3 -top-2 left-1/2 -translate-x-1/2 -translate-y-full w-48 shadow-lg">
+                  <p className="font-semibold mb-1">
+                    {(product as any).pendingOrders.length} pending order
+                    {(product as any).pendingOrders.length > 1 ? "s" : ""}
+                  </p>
+                  {(product as any).pendingOrders
+                    .slice(0, 3)
+                    .map((order: any) => (
+                      <div
+                        key={order.orderId}
+                        className="flex justify-between text-gray-300"
+                      >
+                        <span className="capitalize">{order.status}</span>
+                        <span>{order.quantityPacks} pks</span>
+                      </div>
+                    ))}
+                  {(product as any).pendingOrders.length > 3 && (
+                    <p className="text-gray-400 mt-1">
+                      +{(product as any).pendingOrders.length - 3} more...
+                    </p>
+                  )}
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full border-4 border-transparent border-t-gray-900" />
+                </div>
+              )}
           </div>
         ) : (
           <span className="text-gray-400">—</span>
@@ -703,14 +789,29 @@ function ProductRow({ product }: { product: ProductWithMetrics }) {
       <td>
         <span
           className={clsx(
-            'font-medium',
-            status.weeksRemaining < 2 && 'text-red-600',
-            status.weeksRemaining >= 2 && status.weeksRemaining < 4 && 'text-amber-600',
-            status.weeksRemaining >= 4 && 'text-gray-900'
+            "font-medium",
+            status.weeksRemaining < 2 && "text-red-600",
+            status.weeksRemaining >= 2 &&
+              status.weeksRemaining < 4 &&
+              "text-amber-600",
+            status.weeksRemaining >= 4 && "text-gray-900",
           )}
         >
-          {status.weeksRemaining === 999 ? '—' : `${status.weeksRemaining}w`}
+          {status.weeksRemaining === 999 ? "—" : `${status.weeksRemaining}w`}
         </span>
+      </td>
+      <td>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewForecast(product);
+          }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 border border-purple-200 rounded-lg transition-colors"
+          title="View AI-powered demand forecast and stockout predictions"
+        >
+          <Brain className="w-4 h-4" />
+          <span>Forecast</span>
+        </button>
       </td>
     </tr>
   );

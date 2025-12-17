@@ -3,7 +3,7 @@
 // Shows analytics by shipping location
 // =============================================================================
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   MapPin,
   Building,
@@ -11,16 +11,22 @@ import {
   Package,
   Camera,
   FileSpreadsheet,
+  Activity,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { format } from "date-fns";
 import html2canvas from "html2canvas";
 
 interface TopProduct {
   productId: string;
-  name: string;
-  units: number;
+  productName: string;
+  totalUnits: number;
+  percentOfLocationVolume: number;
+  lastOrderDate: string | null;
 }
 
+// Legacy interface for backward compatibility
 interface LocationData {
   locationId: string;
   locationName: string;
@@ -32,12 +38,64 @@ interface LocationData {
   lastOrderDate: string | null;
 }
 
+// New enhanced interface matching backend
+interface EnhancedLocationPerformance {
+  id: string;
+  name: string;
+  code: string;
+  city: string;
+  state: string;
+  performanceScore: number;
+  performanceRank: number;
+  performanceTier: "excellent" | "good" | "average" | "needs-attention";
+  volumeScore: number;
+  frequencyScore: number;
+  healthScore: number;
+  totalOrders: number;
+  totalUnits: number;
+  volumePercentOfClient: number;
+  orderFrequency: number;
+  frequencyConsistency: number;
+  lastOrderDate: string | null;
+  healthStatus: "healthy" | "watch" | "critical";
+  totalProducts: number;
+  stockoutCount: number;
+  topProducts: TopProduct[];
+}
+
+type LocationDataType = LocationData | EnhancedLocationPerformance;
+
 interface LocationAnalyticsWidgetProps {
-  locations: LocationData[];
+  locations: LocationDataType[];
   title?: string;
   limit?: number;
   onViewMore?: () => void;
   showExport?: boolean;
+  showEnhancedMetrics?: boolean;
+}
+
+// Helper functions to check data type and access fields safely
+function isEnhancedData(
+  location: LocationDataType,
+): location is EnhancedLocationPerformance {
+  return "performanceScore" in location;
+}
+
+function getLocationId(location: LocationDataType): string {
+  return isEnhancedData(location) ? location.id : location.locationId;
+}
+
+function getLocationName(location: LocationDataType): string {
+  return isEnhancedData(location) ? location.name : location.locationName;
+}
+
+function getLocationCompany(location: LocationDataType): string {
+  if (isEnhancedData(location)) {
+    return location.city && location.state
+      ? `${location.city}, ${location.state}`
+      : location.code;
+  }
+  return location.company;
 }
 
 export function LocationAnalyticsWidget({
@@ -46,10 +104,67 @@ export function LocationAnalyticsWidget({
   limit = 5,
   onViewMore,
   showExport = true,
+  showEnhancedMetrics = false,
 }: LocationAnalyticsWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(
+    new Set(),
+  );
   const displayLocations = locations.slice(0, limit);
   const totalUnits = locations.reduce((sum, l) => sum + l.totalUnits, 0);
+
+  const toggleProductExpansion = (locationId: string) => {
+    setExpandedProducts((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(locationId)) {
+        newSet.delete(locationId);
+      } else {
+        newSet.add(locationId);
+      }
+      return newSet;
+    });
+  };
+
+  // Get performance tier styling
+  const getTierConfig = (tier: string) => {
+    switch (tier) {
+      case "excellent":
+        return {
+          color: "text-green-700",
+          bgColor: "bg-green-100",
+          borderColor: "border-green-200",
+          label: "Excellent",
+        };
+      case "good":
+        return {
+          color: "text-blue-700",
+          bgColor: "bg-blue-100",
+          borderColor: "border-blue-200",
+          label: "Good",
+        };
+      case "average":
+        return {
+          color: "text-yellow-700",
+          bgColor: "bg-yellow-100",
+          borderColor: "border-yellow-200",
+          label: "Average",
+        };
+      case "needs-attention":
+        return {
+          color: "text-red-700",
+          bgColor: "bg-red-100",
+          borderColor: "border-red-200",
+          label: "Needs Attention",
+        };
+      default:
+        return {
+          color: "text-gray-700",
+          bgColor: "bg-gray-100",
+          borderColor: "border-gray-200",
+          label: "Unknown",
+        };
+    }
+  };
 
   // Export as PNG
   const exportToPNG = async () => {
@@ -70,12 +185,24 @@ export function LocationAnalyticsWidget({
 
   // Export as CSV
   const exportToCSV = () => {
+    const headers = showEnhancedMetrics
+      ? "Rank,Location Name,City/State,Performance Score,Total Orders,Total Units,Order Frequency,Last Order Date,Top Products"
+      : "Rank,Location Name,Company,Total Orders,Total Units,Order Frequency,Last Order Date,Top Products";
+
     const csvContent = [
-      "Rank,Location Name,Company,Total Orders,Total Units,Order Frequency,Last Order Date,Top Products",
-      ...displayLocations.map(
-        (location, index) =>
-          `${index + 1},"${location.locationName}","${location.company}",${location.totalOrders},${location.totalUnits},${location.orderFrequency},${location.lastOrderDate || "N/A"},"${location.topProducts.map((p) => p.name).join("; ")}"`,
-      ),
+      headers,
+      ...displayLocations.map((location, index) => {
+        const locationName = getLocationName(location);
+        const company = getLocationCompany(location);
+        const products = location.topProducts
+          .map((p) => ("productName" in p ? p.productName : (p as any).name))
+          .join("; ");
+
+        if (showEnhancedMetrics && isEnhancedData(location)) {
+          return `${index + 1},"${locationName}","${company}",${location.performanceScore},${location.totalOrders},${location.totalUnits},${location.orderFrequency.toFixed(2)},${location.lastOrderDate || "N/A"},"${products}"`;
+        }
+        return `${index + 1},"${locationName}","${company}",${location.totalOrders},${location.totalUnits},${location.orderFrequency},${location.lastOrderDate || "N/A"},"${products}"`;
+      }),
     ].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -144,26 +271,32 @@ export function LocationAnalyticsWidget({
 
       <div className="space-y-4">
         {displayLocations.map((location, index) => {
+          const locationId = getLocationId(location);
+          const locationName = getLocationName(location);
+          const company = getLocationCompany(location);
           const percentOfTotal =
             totalUnits > 0 ? (location.totalUnits / totalUnits) * 100 : 0;
+          const isEnhanced = isEnhancedData(location);
+          const isExpanded = expandedProducts.has(locationId);
+          const productLimit = isExpanded ? 10 : 5;
 
           return (
             <div
-              key={location.locationId}
+              key={locationId}
               className="p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
             >
               <div className="flex items-start justify-between mb-2">
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-3 flex-1">
                   <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm">
                     {index + 1}
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium text-gray-900">
-                      {location.locationName}
+                      {locationName}
                     </p>
                     <p className="text-xs text-gray-500 flex items-center gap-1">
                       <Building className="w-3 h-3" />
-                      {location.company}
+                      {company}
                     </p>
                   </div>
                 </div>
@@ -176,6 +309,35 @@ export function LocationAnalyticsWidget({
                   </p>
                 </div>
               </div>
+
+              {/* Performance Score (Enhanced Mode) */}
+              {showEnhancedMetrics && isEnhanced && (
+                <div
+                  className={`flex items-center justify-between mb-3 p-2 rounded-lg border ${getTierConfig(location.performanceTier).bgColor} ${getTierConfig(location.performanceTier).borderColor}`}
+                  title={`Volume: ${location.volumeScore}/100 (50%) | Frequency: ${location.frequencyScore}/100 (30%) | Health: ${location.healthScore}/100 (20%)`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Activity
+                      className={`w-4 h-4 ${getTierConfig(location.performanceTier).color}`}
+                    />
+                    <div>
+                      <div
+                        className={`text-lg font-bold ${getTierConfig(location.performanceTier).color}`}
+                      >
+                        {location.performanceScore}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        Performance Score
+                      </div>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs font-medium px-2 py-1 rounded-full ${getTierConfig(location.performanceTier).bgColor} ${getTierConfig(location.performanceTier).color}`}
+                  >
+                    {getTierConfig(location.performanceTier).label}
+                  </span>
+                </div>
+              )}
 
               {/* Progress bar */}
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden mb-3">
@@ -194,7 +356,10 @@ export function LocationAnalyticsWidget({
                   </span>
                   <span className="flex items-center gap-1">
                     <TrendingUp className="w-3 h-3" />
-                    {location.orderFrequency}/mo avg
+                    {typeof location.orderFrequency === "number"
+                      ? location.orderFrequency.toFixed(2)
+                      : location.orderFrequency}
+                    /mo avg
                   </span>
                 </div>
                 {location.lastOrderDate && (
@@ -209,18 +374,50 @@ export function LocationAnalyticsWidget({
               {location.topProducts.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
                   <p className="text-xs font-medium text-gray-500 mb-2">
-                    Top Products
+                    Top Products (showing{" "}
+                    {Math.min(productLimit, location.topProducts.length)} of{" "}
+                    {location.topProducts.length})
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {location.topProducts.slice(0, 3).map((product) => (
-                      <span
-                        key={product.productId}
-                        className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-600"
-                      >
-                        {product.name} ({product.units.toLocaleString()})
-                      </span>
-                    ))}
+                    {location.topProducts
+                      .slice(0, productLimit)
+                      .map((product) => {
+                        const productName =
+                          "productName" in product
+                            ? product.productName
+                            : (product as any).name;
+                        const productUnits =
+                          "totalUnits" in product
+                            ? product.totalUnits
+                            : (product as any).units;
+                        return (
+                          <span
+                            key={product.productId}
+                            className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-600"
+                          >
+                            {productName} ({productUnits.toLocaleString()})
+                          </span>
+                        );
+                      })}
                   </div>
+                  {location.topProducts.length > 5 && (
+                    <button
+                      onClick={() => toggleProductExpansion(locationId)}
+                      className="flex items-center gap-1 mt-2 text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronUp className="w-3 h-3" />
+                          Show fewer products
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-3 h-3" />
+                          Show all {location.topProducts.length} products
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

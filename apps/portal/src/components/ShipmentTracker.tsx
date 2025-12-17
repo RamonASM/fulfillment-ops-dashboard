@@ -162,8 +162,8 @@ export function ShipmentTracker({
       const endpoint = orderRequestId
         ? `/portal/shipments/order/${orderRequestId}`
         : "/portal/shipments/active";
-      const response = await api.get(endpoint);
-      return response.data.data as Shipment[];
+      const response = await api.get<{ data: Shipment[] }>(endpoint);
+      return response.data;
     },
   });
 

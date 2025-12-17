@@ -16,6 +16,8 @@ import {
 } from "../services/order-timing.service.js";
 import { emitOrderDeadlineAlert } from "../services/notification.service.js";
 import { BenchmarkingService } from "../services/benchmarking.service.js";
+import { recalculateAllClientsUsage } from "../services/ds-analytics.service.js";
+import { MLClientService } from "../services/ml-client.service.js";
 
 // =============================================================================
 // JOB SCHEDULER
@@ -99,29 +101,41 @@ export function startScheduler(): void {
 /**
  * Daily usage recalculation for all active clients
  * Runs every 24 hours
+ * Uses advanced DS Analytics service for multi-method calculation
  */
 registerJob("daily-usage-recalculation", 24 * 60 * 60 * 1000, async () => {
-  const clients = await prisma.client.findMany({
-    where: { isActive: true },
-    select: { id: true, name: true },
-  });
+  try {
+    // Use Python DS Analytics service for advanced calculations
+    await recalculateAllClientsUsage();
+  } catch (error) {
+    logger.error(
+      "Advanced usage recalculation failed, falling back to basic calculation",
+      error as Error,
+    );
 
-  for (const client of clients) {
-    try {
-      logger.debug("Recalculating usage for client", {
-        clientId: client.id,
-        clientName: client.name,
-      });
-      // Phase 12: Basic usage metrics
-      await recalculateClientUsage(client.id);
-      // Phase 13: Monthly usage with tier transparency (12-mo, 6-mo, 3-mo, weekly)
-      await recalculateClientMonthlyUsage(client.id);
-    } catch (error) {
-      logger.error(
-        `Usage recalculation failed for client: ${client.name}`,
-        error as Error,
-        { clientId: client.id },
-      );
+    // Fallback to basic TypeScript calculation
+    const clients = await prisma.client.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+
+    for (const client of clients) {
+      try {
+        logger.debug("Recalculating usage for client", {
+          clientId: client.id,
+          clientName: client.name,
+        });
+        // Phase 12: Basic usage metrics
+        await recalculateClientUsage(client.id);
+        // Phase 13: Monthly usage with tier transparency (12-mo, 6-mo, 3-mo, weekly)
+        await recalculateClientMonthlyUsage(client.id);
+      } catch (error) {
+        logger.error(
+          `Usage recalculation failed for client: ${client.name}`,
+          error as Error,
+          { clientId: client.id },
+        );
+      }
     }
   }
 });
@@ -214,6 +228,106 @@ registerJob("daily-alert-metrics", 24 * 60 * 60 * 1000, async () => {
  */
 registerJob("hourly-risk-cache", 60 * 60 * 1000, async () => {
   await refreshRiskScoreCache();
+});
+
+/**
+ * Daily trend monitoring - detects significant usage trend changes
+ * Runs every 24 hours to analyze monthly usage snapshots and create alerts
+ * for products with significant trend shifts
+ */
+registerJob("daily-trend-monitoring", 24 * 60 * 60 * 1000, async () => {
+  logger.info("Running trend monitoring job");
+
+  // Get all products with at least 3 months of usage snapshots
+  const products = await prisma.product.findMany({
+    where: {
+      isActive: true,
+      client: { isActive: true },
+    },
+    include: {
+      monthlyUsageSnapshots: {
+        orderBy: { yearMonth: "desc" },
+        take: 3,
+      },
+      client: {
+        select: { id: true, name: true },
+      },
+    },
+  });
+
+  let alertsCreated = 0;
+
+  for (const product of products) {
+    const snapshots = product.monthlyUsageSnapshots;
+    if (snapshots.length < 3) continue;
+
+    // Calculate trend from last 3 months
+    const [latest, prev, prevPrev] = snapshots;
+
+    // Skip if no consumption data
+    if (prev.consumedUnits === 0) continue;
+
+    // Calculate percentage changes
+    const recentChange =
+      ((latest.consumedUnits - prev.consumedUnits) / prev.consumedUnits) * 100;
+    const priorChange =
+      ((prev.consumedUnits - prevPrev.consumedUnits) / prevPrev.consumedUnits) *
+      100;
+
+    // Detect significant trend shift (>20% difference between periods)
+    const trendShift = Math.abs(recentChange - priorChange);
+    if (trendShift < 20) continue;
+
+    // Check if alert already exists for this product in the last 7 days
+    const existingAlert = await prisma.alert.findFirst({
+      where: {
+        productId: product.id,
+        alertType: "usage_trend_change",
+        createdAt: {
+          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        },
+      },
+    });
+
+    if (existingAlert) continue;
+
+    // Determine severity based on magnitude of change
+    const severity =
+      Math.abs(recentChange) > 50
+        ? "critical"
+        : Math.abs(recentChange) > 30
+          ? "warning"
+          : "info";
+
+    // Create alert
+    await prisma.alert.create({
+      data: {
+        clientId: product.clientId,
+        productId: product.id,
+        alertType: "usage_trend_change",
+        severity,
+        status: "active",
+        title: `Demand ${recentChange > 0 ? "Increase" : "Decrease"} Detected: ${product.name}`,
+        message: `${product.name} demand ${recentChange > 0 ? "increased" : "decreased"} ${Math.abs(recentChange).toFixed(1)}% in the last 30 days. Previous trend was ${priorChange > 0 ? "+" : ""}${priorChange.toFixed(1)}%. This ${trendShift > 30 ? "significant" : "notable"} shift may require action.`,
+        currentValue: latest.consumedUnits,
+        thresholdValue: prev.consumedUnits,
+        isRead: false,
+        isDismissed: false,
+      },
+    });
+
+    alertsCreated++;
+
+    logger.debug("Created trend alert", {
+      productId: product.id,
+      productName: product.name,
+      recentChange: recentChange.toFixed(1),
+      priorChange: priorChange.toFixed(1),
+      trendShift: trendShift.toFixed(1),
+    });
+  }
+
+  logger.info("Trend monitoring completed", { alertsCreated });
 });
 
 // =============================================================================
@@ -475,6 +589,154 @@ registerJob("monthly-benchmark-snapshot", 24 * 60 * 60 * 1000, async () => {
   logger.info("Monthly benchmark snapshot generation completed", {
     cohortCount: cohorts.length,
   });
+});
+
+// =============================================================================
+// ML ANALYTICS JOBS
+// =============================================================================
+
+/**
+ * Daily ML forecast generation
+ * Generates demand forecasts for top 50 most active products
+ * Runs every 24 hours
+ */
+registerJob("daily-ml-forecasts", 24 * 60 * 60 * 1000, async () => {
+  logger.info("Starting daily ML forecast generation");
+
+  // Check ML service health
+  const isHealthy = await MLClientService.healthCheck();
+  if (!isHealthy) {
+    logger.warn("ML service unavailable, skipping forecasts");
+    return;
+  }
+
+  // Get top 50 products by transaction count (last 90 days)
+  const topProducts = await prisma.$queryRaw<
+    Array<{ id: string; name: string; order_count: bigint }>
+  >`
+    SELECT p.id, p.name, COUNT(DISTINCT ori.order_request_id) as order_count
+    FROM products p
+    JOIN order_request_items ori ON ori.product_id = p.id
+    JOIN order_requests o ON o.id = ori.order_request_id
+    WHERE p.is_active = true
+      AND o.created_at >= NOW() - INTERVAL '90 days'
+    GROUP BY p.id, p.name
+    ORDER BY order_count DESC
+    LIMIT 50
+  `;
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const product of topProducts) {
+    try {
+      // Generate demand forecast
+      await MLClientService.getDemandForecast(product.id, 30);
+
+      // Generate stockout prediction
+      const productData = await prisma.product.findUnique({
+        where: { id: product.id },
+        select: { currentStockUnits: true },
+      });
+
+      if (productData && productData.currentStockUnits > 0) {
+        await MLClientService.predictStockout(
+          product.id,
+          productData.currentStockUnits,
+          90,
+        );
+      }
+
+      successCount++;
+    } catch (error) {
+      logger.warn(
+        `ML forecast failed for product ${product.id}: ${(error as Error).message}`,
+      );
+      errorCount++;
+    }
+  }
+
+  logger.info(
+    `ML forecast job complete: ${successCount} success, ${errorCount} errors`,
+  );
+});
+
+/**
+ * Weekly ML stockout alert generation
+ * Scans products with low/critical stock for ML-predicted stockouts
+ * Creates alerts for products predicted to stock out within 14 days
+ * Runs every 7 days
+ */
+registerJob("weekly-ml-stockout-alerts", 7 * 24 * 60 * 60 * 1000, async () => {
+  logger.info("Starting ML stockout alert scan");
+
+  // Check ML service health
+  const isHealthy = await MLClientService.healthCheck();
+  if (!isHealthy) {
+    logger.warn("ML service unavailable, skipping stockout alerts");
+    return;
+  }
+
+  const products = await prisma.product.findMany({
+    where: {
+      isActive: true,
+      stockStatus: { in: ["low", "critical"] },
+    },
+    select: { id: true, name: true, clientId: true, currentStockUnits: true },
+  });
+
+  let alertsCreated = 0;
+
+  for (const product of products) {
+    try {
+      const prediction = await MLClientService.predictStockout(
+        product.id,
+        product.currentStockUnits,
+        90,
+      );
+
+      if (
+        prediction.days_until_stockout &&
+        prediction.days_until_stockout <= 14
+      ) {
+        const severity =
+          prediction.days_until_stockout <= 7 ? "critical" : "warning";
+
+        // Check if alert already exists
+        const existingAlert = await prisma.alert.findFirst({
+          where: {
+            productId: product.id,
+            alertType: "ml_stockout_prediction",
+            createdAt: {
+              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            },
+          },
+        });
+
+        if (!existingAlert) {
+          await prisma.alert.create({
+            data: {
+              clientId: product.clientId,
+              productId: product.id,
+              alertType: "ml_stockout_prediction",
+              severity,
+              title: `ML Stockout Prediction: ${product.name}`,
+              message: `AI predicts stockout in ${prediction.days_until_stockout} days with ${Math.round(prediction.confidence * 100)}% confidence. Consider reordering soon. (Days: ${prediction.days_until_stockout}, Confidence: ${Math.round(prediction.confidence * 100)}%)`,
+            },
+          });
+          alertsCreated++;
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `ML stockout prediction failed for ${product.id}: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  logger.info(
+    `ML stockout alert scan complete: ${alertsCreated} alerts created`,
+  );
 });
 
 // Export for manual initialization

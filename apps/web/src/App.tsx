@@ -21,6 +21,7 @@ import ClientLocations from "@/pages/ClientLocations";
 import ClientAnalytics from "@/pages/ClientAnalytics";
 import Imports from "@/pages/Imports";
 import Help from "@/pages/Help";
+import MLAnalytics from "@/pages/MLAnalytics";
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="alerts" element={<Alerts />} />
         <Route path="orders" element={<Orders />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="ml-analytics" element={<MLAnalytics />} />
         <Route path="feedback" element={<FeedbackAnalytics />} />
         <Route path="imports" element={<Imports />} />
         <Route path="help" element={<Help />} />

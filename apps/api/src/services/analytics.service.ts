@@ -760,12 +760,21 @@ export interface ReorderRecommendation {
   productId: string;
   productName: string;
   currentStock: number;
+  currentStockPacks: number;
   monthlyUsage: number;
-  weeksOfSupply: number;
-  suggestedOrderQty: number;
-  urgency: "critical" | "soon" | "planned";
+  monthlyUsagePacks: number;
+  weeksRemaining: number;
+  stockStatus: string;
+  suggestedQty: number;
+  suggestedQtyPacks: number;
+  urgency: "critical" | "high" | "medium" | "low";
   reason: string;
-  estimatedStockoutDate: Date | null;
+  stockoutDate: Date | null;
+  confidence: string;
+  confidenceScore: number;
+  trend: string;
+  calculationMethod: string;
+  seasonalityDetected: boolean;
 }
 
 export interface IntelligentDashboardSummary {
@@ -1172,78 +1181,187 @@ export async function getReorderRecommendations(
   clientId: string,
 ): Promise<ReorderRecommendation[]> {
   const now = new Date();
-  const threeMonthsAgo = subDays(now, 90);
 
+  // Get products with DS Analytics calculations
   const products = await prisma.product.findMany({
-    where: { clientId, isActive: true },
-    include: {
-      transactions: {
-        where: {
-          orderStatus: { in: ["completed", "Completed", "COMPLETED"] },
-          dateSubmitted: { gte: threeMonthsAgo },
-        },
-      },
+    where: {
+      clientId,
+      isActive: true,
+      OR: [
+        { stockStatus: { in: ["critical", "low", "watch"] } },
+        { weeksRemaining: { lte: 8 } },
+      ],
     },
+    orderBy: [
+      { stockStatus: "asc" }, // critical first
+      { weeksRemaining: "asc" },
+    ],
+    take: 20, // Top 20 products needing attention
   });
 
   const recommendations: ReorderRecommendation[] = [];
 
   for (const product of products) {
-    const totalUnits = product.transactions.reduce(
-      (sum, t) => sum + t.quantityUnits,
-      0,
-    );
-    const monthlyUsage = totalUnits / 3;
+    // Use DS Analytics calculated values if available
+    const monthlyUsage = product.monthlyUsageUnits || 0;
+    const weeksRemaining = product.weeksRemaining || 0;
+    // Calculate suggested qty based on monthly usage (2 months supply)
+    const suggestedQty = monthlyUsage > 0 ? Math.ceil(monthlyUsage * 2) : 0;
+    const stockStatus = product.stockStatus || "unknown";
+    const confidence = product.usageConfidence || "low";
+    // TODO: Add trend analysis if needed
+    const trend: "increasing" | "stable" | "decreasing" = "stable";
+    const calculationMethod = product.usageCalculationTier || "estimated";
 
+    // Skip products without usage data
     if (monthlyUsage < 1) continue;
 
-    const currentStock =
-      product.currentStockUnits || product.currentStockPacks * product.packSize;
-    const weeklyUsage = monthlyUsage / 4.33;
-    const weeksOfSupply = currentStock / weeklyUsage;
-
-    if (weeksOfSupply > 6) continue; // Sufficient stock
-
-    let urgency: "critical" | "soon" | "planned";
+    // Determine urgency based on stock status and weeks remaining
+    let urgency: "critical" | "high" | "medium" | "low";
     let reason: string;
 
-    if (weeksOfSupply <= 2) {
+    if (stockStatus === "critical" || weeksRemaining <= 2) {
       urgency = "critical";
-      reason = `Only ${Math.round(weeksOfSupply * 10) / 10} weeks remaining`;
-    } else if (weeksOfSupply <= 4) {
-      urgency = "soon";
-      reason = `${Math.round(weeksOfSupply)} weeks remaining`;
-    } else {
-      urgency = "planned";
+      reason = `${weeksRemaining.toFixed(1)} weeks remaining`;
+    } else if (stockStatus === "low" || weeksRemaining <= 4) {
+      urgency = "high";
+      reason = `${Math.round(weeksRemaining)} weeks of supply left`;
+    } else if (stockStatus === "watch" || weeksRemaining <= 6) {
+      urgency = "medium";
       reason = "Approaching reorder point";
+    } else {
+      urgency = "low";
+      reason = "Planned reorder";
     }
 
-    // Suggest 8 weeks of supply
-    const targetStock = weeklyUsage * 8;
-    const suggestedQty = Math.ceil(targetStock - currentStock);
+    // Add trend information to reasoning (currently disabled, would need historical analysis)
+    // if (trend === "increasing") {
+    //   reason += " (demand trending up)";
+    // } else if (trend === "decreasing") {
+    //   reason += " (demand trending down)";
+    // }
 
-    const daysOfSupply = currentStock / (monthlyUsage / 30);
-    const stockoutDate = new Date(
-      now.getTime() + daysOfSupply * 24 * 60 * 60 * 1000,
-    );
+    // Calculate stockout date
+    const stockoutDate =
+      product.projectedStockoutDate ||
+      new Date(now.getTime() + weeksRemaining * 7 * 24 * 60 * 60 * 1000);
 
     recommendations.push({
-      productId: product.productId,
+      productId: product.id,
       productName: product.name,
-      currentStock: Math.round(currentStock),
+      currentStock: product.currentStockUnits || 0,
+      currentStockPacks: product.currentStockPacks || 0,
       monthlyUsage: Math.round(monthlyUsage),
-      weeksOfSupply: Math.round(weeksOfSupply * 10) / 10,
-      suggestedOrderQty: suggestedQty,
+      monthlyUsagePacks: product.monthlyUsagePacks || 0,
+      weeksRemaining,
+      stockStatus,
+      suggestedQty:
+        suggestedQty || Math.ceil((monthlyUsage * 2) / product.packSize), // 2 months supply as fallback
+      suggestedQtyPacks: Math.ceil(suggestedQty / product.packSize),
       urgency,
       reason,
-      estimatedStockoutDate: stockoutDate,
+      stockoutDate,
+      confidence,
+      confidenceScore:
+        confidence === "high" ? 0.85 : confidence === "medium" ? 0.65 : 0.35,
+      trend,
+      calculationMethod,
+      // TODO: Add seasonality detection if needed
+      seasonalityDetected: false,
     });
   }
 
-  const urgencyOrder = { critical: 0, soon: 1, planned: 2 };
-  return recommendations.sort(
-    (a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency],
-  );
+  return recommendations;
+}
+
+/**
+ * Get stockout countdown predictions with urgency levels
+ */
+export interface StockoutPrediction {
+  productId: string;
+  productName: string;
+  currentStock: number;
+  currentStockPacks: number;
+  dailyUsage: number;
+  weeksRemaining: number;
+  daysRemaining: number;
+  predictedStockoutDate: Date;
+  urgency: "critical" | "high" | "medium" | "low";
+  trend: "increasing" | "stable" | "decreasing";
+  confidence: number;
+}
+
+export async function getStockoutPredictions(
+  clientId: string,
+): Promise<StockoutPrediction[]> {
+  const now = new Date();
+
+  // Get products predicted to stock out in the next 60 days
+  const products = await prisma.product.findMany({
+    where: {
+      clientId,
+      isActive: true,
+      weeksRemaining: { lte: 8.6 }, // ~60 days
+      monthlyUsageUnits: { gt: 0 }, // Must have usage data
+    },
+    orderBy: [
+      { weeksRemaining: "asc" }, // Soonest stockouts first
+    ],
+    take: 20,
+  });
+
+  const predictions: StockoutPrediction[] = [];
+
+  for (const product of products) {
+    const monthlyUsage = product.monthlyUsageUnits || 0;
+    const weeksRemaining = product.weeksRemaining || 0;
+    const daysRemaining = Math.round(weeksRemaining * 7);
+    const dailyUsage = monthlyUsage / 30.44; // Average days per month
+
+    // Determine urgency based on days remaining
+    let urgency: "critical" | "high" | "medium" | "low";
+    if (daysRemaining <= 7) {
+      urgency = "critical";
+    } else if (daysRemaining <= 14) {
+      urgency = "high";
+    } else if (daysRemaining <= 30) {
+      urgency = "medium";
+    } else {
+      urgency = "low";
+    }
+
+    // Calculate stockout date
+    const stockoutDate =
+      product.projectedStockoutDate ||
+      new Date(now.getTime() + daysRemaining * 24 * 60 * 60 * 1000);
+
+    // TODO: Add trend analysis from historical data
+    const trend: "increasing" | "stable" | "decreasing" = "stable";
+
+    // Get confidence
+    const confidence =
+      product.usageConfidence === "high"
+        ? 0.85
+        : product.usageConfidence === "medium"
+          ? 0.65
+          : 0.35;
+
+    predictions.push({
+      productId: product.id,
+      productName: product.name,
+      currentStock: product.currentStockUnits || 0,
+      currentStockPacks: product.currentStockPacks || 0,
+      dailyUsage,
+      weeksRemaining,
+      daysRemaining,
+      predictedStockoutDate: stockoutDate,
+      urgency,
+      trend,
+      confidence,
+    });
+  }
+
+  return predictions;
 }
 
 /**

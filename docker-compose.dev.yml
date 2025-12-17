@@ -1,0 +1,84 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: inventory-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: inventory_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: inventory-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Python DS Analytics Service
+  ds-analytics:
+    build:
+      context: ./apps/ds-analytics
+      dockerfile: Dockerfile
+    container_name: inventory-ds-analytics
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/inventory_db
+      REDIS_URL: redis://redis:6379/0
+      PORT: 8000
+      WORKERS: 4
+      LOG_LEVEL: info
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/ds-analytics:/app
+    restart: unless-stopped
+
+  # Node.js API (optional - if running in Docker)
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: inventory-api
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/inventory_db
+      DS_ANALYTICS_URL: http://ds-analytics:8000
+      PORT: 3001
+      NODE_ENV: development
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ds-analytics:
+        condition: service_started
+    volumes:
+      - ./apps/api:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

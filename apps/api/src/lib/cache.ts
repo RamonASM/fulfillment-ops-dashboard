@@ -76,7 +76,7 @@ class InMemoryCache {
   async getOrSet<T>(
     key: string,
     factory: () => Promise<T>,
-    ttlMs: number
+    ttlMs: number,
   ): Promise<T> {
     const cached = this.get<T>(key);
     if (cached !== null) return cached;
@@ -132,24 +132,34 @@ export const cache = new InMemoryCache();
 
 // Cache TTL constants (in milliseconds)
 export const CacheTTL = {
-  RISK_SCORES: 24 * 60 * 60 * 1000,      // 24 hours
-  USAGE_METRICS: 6 * 60 * 60 * 1000,      // 6 hours
-  CLIENT_AGGREGATES: 60 * 60 * 1000,      // 1 hour
+  RISK_SCORES: 24 * 60 * 60 * 1000, // 24 hours
+  USAGE_METRICS: 6 * 60 * 60 * 1000, // 6 hours
+  CLIENT_AGGREGATES: 60 * 60 * 1000, // 1 hour
   SEASONAL_PATTERNS: 7 * 24 * 60 * 60 * 1000, // 7 days
-  DASHBOARD_WIDGETS: 5 * 60 * 1000,       // 5 minutes
-  ALERT_TRENDS: 15 * 60 * 1000,           // 15 minutes
+  DASHBOARD_WIDGETS: 5 * 60 * 1000, // 5 minutes
+  ALERT_TRENDS: 15 * 60 * 1000, // 15 minutes
+  ML_FORECAST: 6 * 60 * 60 * 1000, // 6 hours
+  ML_STOCKOUT: 4 * 60 * 60 * 1000, // 4 hours
+  ML_HEALTH: 2 * 60 * 1000, // 2 minutes
 } as const;
 
 // Cache key generators
 export const CacheKeys = {
   riskScore: (productId: string) => `risk:${productId}`,
-  usageMetrics: (productId: string, period: string) => `usage:${productId}:${period}`,
+  usageMetrics: (productId: string, period: string) =>
+    `usage:${productId}:${period}`,
   clientAggregates: (clientId: string) => `client:${clientId}:aggregates`,
   seasonalPattern: (productId: string) => `seasonal:${productId}`,
-  dashboardWidget: (userId: string, widget: string) => `dashboard:${userId}:${widget}`,
+  dashboardWidget: (userId: string, widget: string) =>
+    `dashboard:${userId}:${widget}`,
   alertTrends: (clientId: string) => `alerts:${clientId}:trends`,
   portfolioRisk: (clientId: string) => `portfolio:${clientId}:risk`,
-  inventoryHealth: () => 'inventory:health:global',
+  inventoryHealth: () => "inventory:health:global",
+  mlForecast: (productId: string, horizon: number) =>
+    `ml:forecast:${productId}:${horizon}`,
+  mlStockout: (productId: string, horizon: number) =>
+    `ml:stockout:${productId}:${horizon}`,
+  mlHealth: () => "ml:health",
 } as const;
 
 export default cache;

@@ -3,7 +3,7 @@
 // Comprehensive help and documentation for admins/account managers
 // =============================================================================
 
-import { HelpDashboard } from "@inventory/shared";
+import { HelpDashboard } from "@inventory/shared/components/help";
 import { useSearchParams } from "react-router-dom";
 
 export default function Help() {

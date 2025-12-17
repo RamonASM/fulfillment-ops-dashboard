@@ -95,6 +95,8 @@ model Client {
   shipments              Shipment[]
   // Benchmarking
   benchmarkParticipation BenchmarkParticipation?
+  // Health scoring
+  healthSnapshots        ClientHealthSnapshot[]
 
   @@index([code])
   @@index([isActive])
@@ -162,6 +164,7 @@ model Product {
   alerts                Alert[]
   dailySnapshots        DailySnapshot[]
   riskScoreCache        RiskScoreCache?
+  mlPredictions         MLPrediction[]
   // Phase 13 relations
   monthlyUsageSnapshots MonthlyUsageSnapshot[]
   orderRequestItems     OrderRequestItem[]
@@ -182,12 +185,12 @@ model Product {
   costTracking CostTracking[]
 
   // Lead time fields (Phase 3.5: Order Timing)
-  supplierLeadDays      Int?      @map("supplier_lead_days")    // Days from supplier
-  shippingLeadDays      Int?      @map("shipping_lead_days")    // Transit days
-  processingLeadDays    Int?      @map("processing_lead_days")  // Internal processing
-  safetyBufferDays      Int?      @map("safety_buffer_days")    // Extra cushion
-  totalLeadDays         Int?      @map("total_lead_days")       // Computed total
-  leadTimeSource        String?   @map("lead_time_source") @db.VarChar(20) // 'default' | 'override' | 'imported'
+  supplierLeadDays   Int?    @map("supplier_lead_days") // Days from supplier
+  shippingLeadDays   Int?    @map("shipping_lead_days") // Transit days
+  processingLeadDays Int?    @map("processing_lead_days") // Internal processing
+  safetyBufferDays   Int?    @map("safety_buffer_days") // Extra cushion
+  totalLeadDays      Int?    @map("total_lead_days") // Computed total
+  leadTimeSource     String? @map("lead_time_source") @db.VarChar(20) // 'default' | 'override' | 'imported'
 
   // Cached timing calculations
   projectedStockoutDate DateTime? @map("projected_stockout_date") @db.Date
@@ -658,6 +661,29 @@ model RiskScoreCache {
   @@map("risk_score_cache")
 }
 
+// -----------------------------------------------------------------------------
+// ML PREDICTION MODELS
+// -----------------------------------------------------------------------------
+
+model MLPrediction {
+  id             String   @id @default(uuid()) @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  predictionType String   @map("prediction_type") @db.VarChar(50) // 'demand_forecast' | 'stockout'
+  horizonDays    Int      @map("horizon_days")
+  predictions    Json // Array of {date, value, lower, upper}
+  metrics        Json // {mape, rmse, seasonality}
+  confidence     Float?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, predictionType, createdAt])
+  @@index([expiresAt])
+  @@map("ml_predictions")
+}
+
 model UserDashboardPreference {
   id          String   @id @default(uuid()) @db.Uuid
   userId      String   @unique @map("user_id") @db.Uuid
@@ -755,6 +781,29 @@ model MonthlyUsageSnapshot {
   @@unique([productId, yearMonth])
   @@index([productId, yearMonth])
   @@map("monthly_usage_snapshots")
+}
+
+// -----------------------------------------------------------------------------
+// CLIENT HEALTH SNAPSHOTS (Health Score Tracking)
+// -----------------------------------------------------------------------------
+
+model ClientHealthSnapshot {
+  id               String   @id @default(uuid()) @db.Uuid
+  clientId         String   @map("client_id") @db.Uuid
+  snapshotDate     DateTime @default(now()) @map("snapshot_date") @db.Timestamptz
+  overallScore     Int      @map("overall_score")
+  stockHealth      Int      @map("stock_health")
+  alertHealth      Int      @map("alert_health")
+  orderHealth      Int      @map("order_health")
+  engagementHealth Int      @map("engagement_health")
+  financialHealth  Int      @map("financial_health")
+  riskLevel        String   @map("risk_level") @db.VarChar(20)
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, snapshotDate])
+  @@map("client_health_snapshots")
 }
 
 // -----------------------------------------------------------------------------
@@ -1257,9 +1306,9 @@ model Shipment {
   lastPolledAt    DateTime? @map("last_polled_at") @db.Timestamptz
   rawTrackingData Json?     @map("raw_tracking_data")
 
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdBy String?  @map("created_by") @db.Uuid
 
   // Relations
   orderRequest   OrderRequest    @relation(fields: [orderRequestId], references: [id], onDelete: Cascade)
@@ -1289,12 +1338,12 @@ model ShipmentEvent {
 }
 
 model ShipmentItem {
-  id            String @id @default(uuid()) @db.Uuid
-  shipmentId    String @map("shipment_id") @db.Uuid
-  productId     String @map("product_id") @db.Uuid
+  id            String  @id @default(uuid()) @db.Uuid
+  shipmentId    String  @map("shipment_id") @db.Uuid
+  productId     String  @map("product_id") @db.Uuid
   orderItemId   String? @map("order_item_id") @db.Uuid
-  quantityPacks Int    @map("quantity_packs")
-  quantityUnits Int    @map("quantity_units")
+  quantityPacks Int     @map("quantity_packs")
+  quantityUnits Int     @map("quantity_units")
 
   shipment  Shipment          @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
   product   Product           @relation(fields: [productId], references: [id])
@@ -1327,41 +1376,41 @@ model BenchmarkParticipation {
 
 // Aggregated benchmark data (no PII, minimum 5 participants)
 model BenchmarkSnapshot {
-  id                   String   @id @default(uuid()) @db.Uuid
-  cohort               String   @db.VarChar(50)
-  period               DateTime @db.Date // Monthly snapshots
-  participantCount     Int      @map("participant_count")
+  id               String   @id @default(uuid()) @db.Uuid
+  cohort           String   @db.VarChar(50)
+  period           DateTime @db.Date // Monthly snapshots
+  participantCount Int      @map("participant_count")
 
   // Aggregated metrics
-  avgProductCount      Decimal @db.Decimal(10, 2) @map("avg_product_count")
-  avgOrderFrequency    Decimal @db.Decimal(10, 2) @map("avg_order_frequency") // Orders per month
-  avgStockoutRate      Decimal @db.Decimal(5, 4) @map("avg_stockout_rate") // 0.0000 to 1.0000
-  avgForecastAccuracy  Decimal @db.Decimal(5, 4) @map("avg_forecast_accuracy") // 0.0000 to 1.0000
-  avgInventoryTurnover Decimal @db.Decimal(10, 2) @map("avg_inventory_turnover")
+  avgProductCount      Decimal @map("avg_product_count") @db.Decimal(10, 2)
+  avgOrderFrequency    Decimal @map("avg_order_frequency") @db.Decimal(10, 2) // Orders per month
+  avgStockoutRate      Decimal @map("avg_stockout_rate") @db.Decimal(5, 4) // 0.0000 to 1.0000
+  avgForecastAccuracy  Decimal @map("avg_forecast_accuracy") @db.Decimal(5, 4) // 0.0000 to 1.0000
+  avgInventoryTurnover Decimal @map("avg_inventory_turnover") @db.Decimal(10, 2)
 
   // Percentiles for product count
-  p25ProductCount Decimal @db.Decimal(10, 2) @map("p25_product_count")
-  p50ProductCount Decimal @db.Decimal(10, 2) @map("p50_product_count")
-  p75ProductCount Decimal @db.Decimal(10, 2) @map("p75_product_count")
-  p90ProductCount Decimal @db.Decimal(10, 2) @map("p90_product_count")
+  p25ProductCount Decimal @map("p25_product_count") @db.Decimal(10, 2)
+  p50ProductCount Decimal @map("p50_product_count") @db.Decimal(10, 2)
+  p75ProductCount Decimal @map("p75_product_count") @db.Decimal(10, 2)
+  p90ProductCount Decimal @map("p90_product_count") @db.Decimal(10, 2)
 
   // Percentiles for order frequency
-  p25OrderFrequency Decimal @db.Decimal(10, 2) @map("p25_order_frequency")
-  p50OrderFrequency Decimal @db.Decimal(10, 2) @map("p50_order_frequency")
-  p75OrderFrequency Decimal @db.Decimal(10, 2) @map("p75_order_frequency")
-  p90OrderFrequency Decimal @db.Decimal(10, 2) @map("p90_order_frequency")
+  p25OrderFrequency Decimal @map("p25_order_frequency") @db.Decimal(10, 2)
+  p50OrderFrequency Decimal @map("p50_order_frequency") @db.Decimal(10, 2)
+  p75OrderFrequency Decimal @map("p75_order_frequency") @db.Decimal(10, 2)
+  p90OrderFrequency Decimal @map("p90_order_frequency") @db.Decimal(10, 2)
 
   // Percentiles for stockout rate
-  p25StockoutRate Decimal @db.Decimal(5, 4) @map("p25_stockout_rate")
-  p50StockoutRate Decimal @db.Decimal(5, 4) @map("p50_stockout_rate")
-  p75StockoutRate Decimal @db.Decimal(5, 4) @map("p75_stockout_rate")
-  p90StockoutRate Decimal @db.Decimal(5, 4) @map("p90_stockout_rate")
+  p25StockoutRate Decimal @map("p25_stockout_rate") @db.Decimal(5, 4)
+  p50StockoutRate Decimal @map("p50_stockout_rate") @db.Decimal(5, 4)
+  p75StockoutRate Decimal @map("p75_stockout_rate") @db.Decimal(5, 4)
+  p90StockoutRate Decimal @map("p90_stockout_rate") @db.Decimal(5, 4)
 
   // Percentiles for inventory turnover
-  p25InventoryTurnover Decimal @db.Decimal(10, 2) @map("p25_inventory_turnover")
-  p50InventoryTurnover Decimal @db.Decimal(10, 2) @map("p50_inventory_turnover")
-  p75InventoryTurnover Decimal @db.Decimal(10, 2) @map("p75_inventory_turnover")
-  p90InventoryTurnover Decimal @db.Decimal(10, 2) @map("p90_inventory_turnover")
+  p25InventoryTurnover Decimal @map("p25_inventory_turnover") @db.Decimal(10, 2)
+  p50InventoryTurnover Decimal @map("p50_inventory_turnover") @db.Decimal(10, 2)
+  p75InventoryTurnover Decimal @map("p75_inventory_turnover") @db.Decimal(10, 2)
+  p90InventoryTurnover Decimal @map("p90_inventory_turnover") @db.Decimal(10, 2)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
@@ -1380,7 +1429,7 @@ model DashboardLayout {
   userId    String   @map("user_id") @db.Uuid
   name      String   @db.VarChar(100)
   isDefault Boolean  @default(false) @map("is_default")
-  layout    Json     // Widget positions and sizes
+  layout    Json // Widget positions and sizes
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1413,28 +1462,28 @@ model UserPreferences {
 // =============================================================================
 
 model Documentation {
-  id          String   @id @default(uuid()) @db.Uuid
-  slug        String   @unique @db.VarChar(100) // URL-friendly identifier
-  title       String   @db.VarChar(255)
-  category    String   @db.VarChar(100) // 'getting-started' | 'features' | 'how-to' | 'faq' | 'troubleshooting'
-  audience    String   @db.VarChar(20) // 'admin' | 'client' | 'both'
-  content     String   @db.Text // Markdown content
-  excerpt     String?  @db.VarChar(500) // Short description for search/listing
-  order       Int      @default(0) // Sort order within category
-  isPublished Boolean  @default(true) @map("is_published")
-  version     String   @default("1.0.0") @db.VarChar(20)
+  id          String  @id @default(uuid()) @db.Uuid
+  slug        String  @unique @db.VarChar(100) // URL-friendly identifier
+  title       String  @db.VarChar(255)
+  category    String  @db.VarChar(100) // 'getting-started' | 'features' | 'how-to' | 'faq' | 'troubleshooting'
+  audience    String  @db.VarChar(20) // 'admin' | 'client' | 'both'
+  content     String  @db.Text // Markdown content
+  excerpt     String? @db.VarChar(500) // Short description for search/listing
+  order       Int     @default(0) // Sort order within category
+  isPublished Boolean @default(true) @map("is_published")
+  version     String  @default("1.0.0") @db.VarChar(20)
 
   // Metadata for search and organization
-  tags        Json? // ['inventory', 'orders', 'shipments']
-  keywords    Json? // For search optimization
+  tags     Json? // ['inventory', 'orders', 'shipments']
+  keywords Json? // For search optimization
 
   // Change tracking
-  lastUpdatedBy String?   @map("last_updated_by") @db.Uuid
-  changeLog     Json?     @map("change_log") // [{version, date, changes, updatedBy}]
+  lastUpdatedBy String? @map("last_updated_by") @db.Uuid
+  changeLog     Json?   @map("change_log") // [{version, date, changes, updatedBy}]
 
   // Usage analytics
-  viewCount     Int       @default(0) @map("view_count")
-  lastViewedAt  DateTime? @map("last_viewed_at") @db.Timestamptz
+  viewCount    Int       @default(0) @map("view_count")
+  lastViewedAt DateTime? @map("last_viewed_at") @db.Timestamptz
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz

@@ -14,12 +14,20 @@ import { fadeInUp } from "@/lib/animations";
 // Import all analytics widgets
 import { StockHealthDonut } from "@/components/widgets/StockHealthDonut";
 import { TopProductsWidget } from "@/components/widgets/TopProductsWidget";
-import { UpcomingStockoutsWidget } from "@/components/widgets/UpcomingStockoutsWidget";
-import { ReorderQueueWidget } from "@/components/widgets/ReorderQueueWidget";
+import { SmartReorderWidget } from "@/components/widgets/SmartReorderWidget";
+import { StockoutCountdownWidget } from "@/components/widgets/StockoutCountdownWidget";
 import { MonthlyTrendsChart } from "@/components/widgets/MonthlyTrendsChart";
 import { AnomalyAlertsWidget } from "@/components/widgets/AnomalyAlertsWidget";
 import { LocationAnalyticsWidget } from "@/components/widgets/LocationAnalyticsWidget";
+import { RegionalSummaryWidget } from "@/components/widgets/RegionalSummaryWidget";
 import { KPIGrid } from "@/components/widgets/KPICard";
+import { ClientHealthScoreWidget } from "@/components/widgets/ClientHealthScoreWidget";
+import { BudgetSummaryWidget } from "@/components/widgets/BudgetSummaryWidget";
+import { EOQOpportunitiesWidget } from "@/components/widgets/EOQOpportunitiesWidget";
+import { BudgetVsActualChart } from "@/components/widgets/BudgetVsActualChart";
+import { CostBreakdownWidget } from "@/components/widgets/CostBreakdownWidget";
+import { TopForecastsWidget } from "@/components/widgets/TopForecastsWidget";
+import { StockoutRiskWidget } from "@/components/widgets/StockoutRiskWidget";
 
 interface IntelligentSummary {
   stockHealth: {
@@ -160,9 +168,35 @@ export default function ClientAnalytics() {
     staleTime: 60000,
   });
 
+  // Fetch enhanced location performance
+  const { data: enhancedLocationsData, isLoading: enhancedLocationsLoading } =
+    useQuery({
+      queryKey: ["location-analytics-enhanced", clientId],
+      queryFn: () =>
+        api.get<{ data: any[] }>(
+          `/location-analytics/${clientId}/enhanced-performance`,
+        ),
+      enabled: !!clientId,
+      staleTime: 300000, // 5 minutes
+    });
+
+  // Fetch regional performance summary
+  const { data: regionalSummaryData, isLoading: regionalSummaryLoading } =
+    useQuery({
+      queryKey: ["location-analytics-regional", clientId],
+      queryFn: () =>
+        api.get<{ data: any }>(
+          `/location-analytics/${clientId}/regional-summary`,
+        ),
+      enabled: !!clientId,
+      staleTime: 300000, // 5 minutes
+    });
+
   const summary = summaryData?.data;
   const anomalies = anomaliesData?.data || [];
   const locations = locationsData?.data || [];
+  const enhancedLocations = enhancedLocationsData?.data || [];
+  const regionalSummary = regionalSummaryData?.data || null;
   const trends = trendsData?.data || {
     labels: [],
     orders: [],
@@ -324,11 +358,21 @@ export default function ClientAnalytics() {
               clientId={clientId}
             />
 
-            {/* Upcoming Stockouts */}
-            <UpcomingStockoutsWidget
-              stockouts={summary?.upcomingStockouts || []}
-              clientId={clientId}
-            />
+            {/* Client Health Score */}
+            {clientId && <ClientHealthScoreWidget clientId={clientId} />}
+          </div>
+
+          {/* Main Grid - Row 1.5 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Stockout Countdown */}
+            {clientId && (
+              <StockoutCountdownWidget clientId={clientId} limit={5} />
+            )}
+
+            {/* Smart Reorder Recommendations */}
+            {clientId && (
+              <SmartReorderWidget clientId={clientId} limit={5} showExport />
+            )}
           </div>
 
           {/* Main Grid - Row 2 */}
@@ -348,22 +392,79 @@ export default function ClientAnalytics() {
             )}
           </div>
 
-          {/* Main Grid - Row 3 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Reorder Queue */}
-            <ReorderQueueWidget
-              recommendations={summary?.reorderQueue || []}
-              limit={5}
-            />
+          {/* Main Grid - Row 3: Regional Performance */}
+          <div className="grid grid-cols-1 gap-6">
+            {/* Regional Summary - shows state-level performance */}
+            {!regionalSummaryLoading && regionalSummary && (
+              <RegionalSummaryWidget data={regionalSummary} />
+            )}
+          </div>
 
-            {/* Location Analytics */}
-            {!locationsLoading && (
+          {/* Main Grid - Row 4: Location Analytics */}
+          <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
+            {/* Enhanced Location Analytics with performance scores */}
+            {!enhancedLocationsLoading && enhancedLocations.length > 0 ? (
               <LocationAnalyticsWidget
-                locations={locations}
-                limit={showAllLocations ? 999 : 4}
+                locations={enhancedLocations as any}
+                showEnhancedMetrics={true}
+                limit={showAllLocations ? 999 : 5}
                 onViewMore={() => setShowAllLocations(true)}
               />
+            ) : (
+              !locationsLoading &&
+              locations.length > 0 && (
+                <LocationAnalyticsWidget
+                  locations={locations as any}
+                  limit={showAllLocations ? 999 : 4}
+                  onViewMore={() => setShowAllLocations(true)}
+                />
+              )
             )}
+          </div>
+
+          {/* Main Grid - Row 5: Financial Analytics */}
+          <div className="mt-8 mb-4">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <span className="text-green-600">💰</span>
+              Financial Analytics
+            </h2>
+            <p className="text-gray-500 text-sm mt-1">
+              Budget tracking, cost optimization, and spending insights
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <BudgetSummaryWidget clientId={clientId!} />
+            <EOQOpportunitiesWidget clientId={clientId!} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <BudgetVsActualChart clientId={clientId!} periodMonths={12} />
+            <CostBreakdownWidget clientId={clientId!} />
+          </div>
+
+          {/* Main Grid - Row 6: ML-Powered Predictions */}
+          <div className="mt-8 mb-4">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <span className="text-purple-600">🧠</span>
+              ML-Powered Predictions
+            </h2>
+            <p className="text-gray-500 text-sm mt-1">
+              AI-driven demand forecasting and stockout risk analysis
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <TopForecastsWidget
+              clientId={clientId!}
+              limit={5}
+              showClientName={false}
+            />
+            <StockoutRiskWidget
+              clientId={clientId!}
+              limit={5}
+              showClientName={false}
+            />
           </div>
         </>
       )}

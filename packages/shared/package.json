@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./components/help": {
+      "types": "./dist/components/help/index.d.ts",
+      "import": "./dist/components/help/index.js",
+      "default": "./dist/components/help/index.js"
     }
   },
   "scripts": {

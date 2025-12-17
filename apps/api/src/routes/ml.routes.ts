@@ -26,16 +26,15 @@ router.get("/health", async (_req, res) => {
   try {
     const isHealthy = await MLClientService.healthCheck();
     res.json({
-      success: true,
-      data: {
-        available: isHealthy,
-        service: "ml-analytics",
-      },
+      status: isHealthy ? "healthy" : "offline",
+      service: "ml-analytics",
+      database: isHealthy ? "connected" : "unknown",
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: "Failed to check ML service health",
+    res.json({
+      status: "offline",
+      service: "ml-analytics",
+      database: "unknown",
     });
   }
 });

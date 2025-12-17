@@ -13,11 +13,13 @@ import {
   Command,
   MessageSquare,
   HelpCircle,
+  Brain,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/auth.store";
 import { clsx } from "clsx";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
+import { MLStatusBadge } from "@/components/MLStatusBadge";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard, shortcut: "G then H" },
@@ -29,6 +31,12 @@ const navigation = [
     href: "/reports",
     icon: FileBarChart,
     shortcut: "G then R",
+  },
+  {
+    name: "ML Analytics",
+    href: "/ml-analytics",
+    icon: Brain,
+    shortcut: "G then M",
   },
   {
     name: "Feedback",
@@ -91,6 +99,7 @@ export default function MainLayout() {
           c: "/clients",
           o: "/orders",
           r: "/reports",
+          m: "/ml-analytics",
           f: "/feedback",
           "?": "/help",
           s: "/settings",
@@ -256,6 +265,15 @@ export default function MainLayout() {
                 Import Data
               </button>
 
+              {/* ML Status Badge */}
+              <button
+                onClick={() => navigate("/ml-analytics")}
+                className="hidden sm:flex"
+                title="View ML Analytics"
+              >
+                <MLStatusBadge showLabel={false} />
+              </button>
+
               {/* Notifications */}
               <button
                 onClick={() => navigate("/alerts")}
@@ -281,6 +299,7 @@ export default function MainLayout() {
             <kbd className="px-1 bg-gray-700 rounded mx-1">C</kbd> Clients,{" "}
             <kbd className="px-1 bg-gray-700 rounded mx-1">O</kbd> Orders,{" "}
             <kbd className="px-1 bg-gray-700 rounded mx-1">R</kbd> Reports,{" "}
+            <kbd className="px-1 bg-gray-700 rounded mx-1">M</kbd> ML,{" "}
             <kbd className="px-1 bg-gray-700 rounded mx-1">F</kbd> Feedback,{" "}
             <kbd className="px-1 bg-gray-700 rounded mx-1">S</kbd> Settings
           </div>

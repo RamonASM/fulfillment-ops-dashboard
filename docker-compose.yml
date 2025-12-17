@@ -40,6 +40,28 @@ services:
       retries: 5
 
   # =============================================================================
+  # ML Analytics Service
+  # =============================================================================
+  ml-analytics:
+    build:
+      context: ./apps/ml-analytics
+      dockerfile: Dockerfile
+    container_name: inventory-ml
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-inventory}:${DB_PASSWORD:-inventory123}@postgres:5432/${DB_NAME:-inventory_db}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
   # API Server
   # =============================================================================
   api:
@@ -57,12 +79,15 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
       WEB_URL: ${WEB_URL:-http://localhost}
       PORTAL_URL: ${PORTAL_URL:-http://localhost:8080}
+      ML_SERVICE_URL: http://ml-analytics:8000
     ports:
       - "3002:3001"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ml-analytics:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]

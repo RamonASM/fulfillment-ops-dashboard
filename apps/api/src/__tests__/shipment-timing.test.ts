@@ -3,6 +3,7 @@
 // Tests all endpoints, calculations, and authorization
 // =============================================================================
 
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../lib/prisma.js";
 import * as ShipmentService from "../services/shipment.service.js";
 import * as OrderTimingService from "../services/order-timing.service.js";

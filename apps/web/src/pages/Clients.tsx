@@ -1,6 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Plus, Search, Building2, X, Loader2 } from "lucide-react";
+import {
+  Plus,
+  Search,
+  Building2,
+  X,
+  Loader2,
+  Activity,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/api/client";
 import type { ClientWithStats } from "@inventory/shared";
@@ -8,6 +18,23 @@ import { STATUS_COLORS } from "@inventory/shared";
 import { useState } from "react";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/animations";
 import toast from "react-hot-toast";
+
+interface ClientHealthScore {
+  clientId: string;
+  clientName: string;
+  overallScore: number;
+  scoreBreakdown: {
+    stockHealth: number;
+    alertHealth: number;
+    orderHealth: number;
+    engagementHealth: number;
+    financialHealth: number;
+  };
+  riskLevel: "low" | "medium" | "high" | "critical";
+  trend: "improving" | "stable" | "declining";
+  recommendations: string[];
+  lastCalculated: string;
+}
 
 export default function Clients() {
   const [search, setSearch] = useState("");
@@ -19,6 +46,13 @@ export default function Clients() {
   const { data, isLoading } = useQuery({
     queryKey: ["clients"],
     queryFn: () => api.get<{ data: ClientWithStats[] }>("/clients"),
+  });
+
+  // Fetch all client health scores
+  const { data: healthScoresData } = useQuery({
+    queryKey: ["client-health-all"],
+    queryFn: () => api.get<{ data: ClientHealthScore[] }>("/client-health"),
+    staleTime: 300000, // 5 minutes
   });
 
   const createClientMutation = useMutation({
@@ -49,6 +83,13 @@ export default function Clients() {
   };
 
   const clients = data?.data || [];
+  const healthScores = healthScoresData?.data || [];
+
+  // Create a map of clientId -> health score for quick lookup
+  const healthScoreMap = new Map(
+    healthScores.map((score) => [score.clientId, score]),
+  );
+
   const filteredClients = clients.filter(
     (client) =>
       client.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -123,7 +164,11 @@ export default function Clients() {
           animate="visible"
         >
           {filteredClients.map((client) => (
-            <ClientCard key={client.id} client={client} />
+            <ClientCard
+              key={client.id}
+              client={client}
+              healthScore={healthScoreMap.get(client.id)}
+            />
           ))}
         </motion.div>
       )}
@@ -224,7 +269,13 @@ export default function Clients() {
   );
 }
 
-function ClientCard({ client }: { client: ClientWithStats }) {
+function ClientCard({
+  client,
+  healthScore,
+}: {
+  client: ClientWithStats;
+  healthScore?: ClientHealthScore;
+}) {
   const stats = client.stats;
   const total = stats?.totalProducts || 0;
   const critical = (stats?.criticalCount || 0) + (stats?.stockoutCount || 0);
@@ -240,6 +291,46 @@ function ClientCard({ client }: { client: ClientWithStats }) {
     if (weeksRemaining < 4) return "bg-amber-100 text-amber-700";
     return "bg-emerald-100 text-emerald-700";
   };
+
+  // Health score configurations
+  const riskLevelConfig = {
+    low: {
+      color: "text-green-600",
+      bgColor: "bg-green-50",
+      borderColor: "border-green-200",
+      label: "Low Risk",
+    },
+    medium: {
+      color: "text-yellow-600",
+      bgColor: "bg-yellow-50",
+      borderColor: "border-yellow-200",
+      label: "Medium Risk",
+    },
+    high: {
+      color: "text-orange-600",
+      bgColor: "bg-orange-50",
+      borderColor: "border-orange-200",
+      label: "High Risk",
+    },
+    critical: {
+      color: "text-red-600",
+      bgColor: "bg-red-50",
+      borderColor: "border-red-200",
+      label: "Critical Risk",
+    },
+  };
+
+  const trendConfig = {
+    improving: { icon: TrendingUp, color: "text-green-600" },
+    stable: { icon: Minus, color: "text-gray-600" },
+    declining: { icon: TrendingDown, color: "text-red-600" },
+  };
+
+  const riskConfig = healthScore
+    ? riskLevelConfig[healthScore.riskLevel]
+    : null;
+  const trendConf = healthScore ? trendConfig[healthScore.trend] : null;
+  const TrendIcon = trendConf?.icon;
 
   return (
     <motion.div variants={staggerItem}>
@@ -263,6 +354,26 @@ function ClientCard({ client }: { client: ClientWithStats }) {
             )}
           </div>
         </div>
+
+        {/* Health Score Badge */}
+        {healthScore && riskConfig && (
+          <div
+            className={`flex items-center justify-between mb-3 p-2 rounded-lg border ${riskConfig.bgColor} ${riskConfig.borderColor}`}
+          >
+            <div className="flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${riskConfig.color}`} />
+              <div>
+                <div className={`text-lg font-bold ${riskConfig.color}`}>
+                  {healthScore.overallScore}
+                </div>
+                <div className="text-xs text-gray-600">Health Score</div>
+              </div>
+            </div>
+            {TrendIcon && (
+              <TrendIcon className={`w-4 h-4 ${trendConf.color}`} />
+            )}
+          </div>
+        )}
 
         {/* Progress bar */}
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden flex mb-3">

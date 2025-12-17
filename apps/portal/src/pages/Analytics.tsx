@@ -1,94 +1,113 @@
 // =============================================================================
-// PORTAL ANALYTICS PAGE (Phase 11)
-// Stock velocity, trends, and insights for portal users
+// PORTAL ANALYTICS PAGE - ENHANCED
+// Comprehensive analytics dashboard for portal users with parity to admin dashboard
 // =============================================================================
 
-import { useQuery } from '@tanstack/react-query';
-import {
-  TrendingUp,
-  TrendingDown,
-  Package,
-  AlertTriangle,
-  Activity,
-} from 'lucide-react';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
-import { usePortalAuthStore } from '../stores/auth.store';
-import { portalApi } from '../api/client';
-import { Skeleton } from '../components/ui/Skeleton';
+import { useQuery } from "@tanstack/react-query";
+import { TrendingUp, Package, AlertTriangle, Activity } from "lucide-react";
+import { usePortalAuthStore } from "../stores/auth.store";
+import { portalApi } from "../api/client";
+import { Skeleton } from "../components/ui/Skeleton";
+import { MonthlyTrendsChart } from "../components/charts/MonthlyTrendsChart";
+import { StockHealthDonut } from "../components/charts/StockHealthDonut";
+import { SmartReorderWidget } from "../components/widgets/SmartReorderWidget";
+import { UpcomingStockoutsWidget } from "../components/widgets/UpcomingStockoutsWidget";
+import { TopProductsWidget } from "../components/widgets/TopProductsWidget";
 
-interface StockVelocity {
-  productId: string;
-  productName: string;
-  avgDailyUsage: number;
-  trend: 'increasing' | 'decreasing' | 'stable';
-  changePercent: number;
+interface PortalSummary {
+  stockHealth: {
+    critical: number;
+    low: number;
+    watch: number;
+    healthy: number;
+    overstock: number;
+  };
+  activity: {
+    ordersThisWeek: number;
+    ordersLastWeek: number;
+    trend: "up" | "down" | "stable";
+  };
+  topProducts: Array<{
+    id: string;
+    name: string;
+    units: number;
+  }>;
+  upcomingStockouts: Array<{
+    name: string;
+    daysUntil: number;
+    currentStock: number;
+  }>;
+  totalProducts: number;
 }
 
-interface UsageTrend {
-  date: string;
-  units: number;
-  packs: number;
-}
-
-interface RiskProduct {
-  productId: string;
-  productName: string;
-  riskScore: number;
-  riskLevel: string;
-  stockStatus: string;
-  weeksRemaining: number | null;
-  currentStock: number;
+interface MonthlyTrendsData {
+  labels: string[];
+  orders: number[];
+  units: number[];
 }
 
 export default function Analytics() {
   const { user } = usePortalAuthStore();
 
-  // Fetch stock velocity data
-  const { data: velocityData, isLoading: velocityLoading } = useQuery({
-    queryKey: ['portal', 'analytics', 'velocity'],
+  // Fetch analytics summary
+  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+    queryKey: ["portal", "analytics", "summary"],
     queryFn: async () => {
-      const response = await portalApi.get<{ data: StockVelocity[] }>('/analytics/stock-velocity');
+      const response = await portalApi.get<{ data: PortalSummary }>(
+        "/analytics/summary",
+      );
       return response.data;
     },
     enabled: !!user?.clientId,
   });
 
-  // Fetch usage trends
+  // Fetch monthly trends
   const { data: trendsData, isLoading: trendsLoading } = useQuery({
-    queryKey: ['portal', 'analytics', 'trends'],
+    queryKey: ["portal", "analytics", "monthly-trends"],
     queryFn: async () => {
-      const response = await portalApi.get<{ data: UsageTrend[] }>('/analytics/usage-trends');
+      const response = await portalApi.get<{ data: MonthlyTrendsData }>(
+        "/analytics/monthly-trends",
+      );
       return response.data;
     },
     enabled: !!user?.clientId,
   });
 
-  // Fetch risk products
-  const { data: riskData, isLoading: riskLoading } = useQuery({
-    queryKey: ['portal', 'analytics', 'risk'],
-    queryFn: async () => {
-      const response = await portalApi.get<{ data: RiskProduct[] }>('/analytics/risk-products');
-      return response.data;
+  const summary = summaryData || {
+    stockHealth: { critical: 0, low: 0, watch: 0, healthy: 0, overstock: 0 },
+    activity: {
+      ordersThisWeek: 0,
+      ordersLastWeek: 0,
+      trend: "stable" as const,
     },
-    enabled: !!user?.clientId,
-  });
+    topProducts: [],
+    upcomingStockouts: [],
+    totalProducts: 0,
+  };
 
-  const topMovers = velocityData
-    ?.sort((a: StockVelocity, b: StockVelocity) => b.avgDailyUsage - a.avgDailyUsage)
-    .slice(0, 5) || [];
+  const trends = trendsData || {
+    labels: [],
+    orders: [],
+    units: [],
+  };
 
-  const slowMovers = velocityData
-    ?.filter((p: StockVelocity) => p.avgDailyUsage > 0)
-    .sort((a: StockVelocity, b: StockVelocity) => a.avgDailyUsage - b.avgDailyUsage)
-    .slice(0, 5) || [];
+  // Convert top products to proper format with trend
+  const topProductsWithTrend = summary.topProducts.map((p) => ({
+    ...p,
+    trend: "stable" as const,
+  }));
+
+  // Convert upcomingStockouts to proper format
+  const upcomingStockoutsFormatted = summary.upcomingStockouts.map((s) => ({
+    id: s.name,
+    name: s.name,
+    daysUntil: s.daysUntil,
+    currentStock: s.currentStock,
+  }));
+
+  // Calculate KPI stats
+  const totalOrders = trends.orders.reduce((sum, v) => sum + v, 0);
+  const totalUnits = trends.units.reduce((sum, v) => sum + v, 0);
 
   return (
     <div className="space-y-6">
@@ -96,226 +115,132 @@ export default function Analytics() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Inventory trends, stock velocity, and consumption patterns
+          Comprehensive inventory insights and trends
         </p>
       </div>
 
-      {/* Summary Cards */}
+      {/* KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <SummaryCard
           title="Total Products"
-          value={velocityData?.length || 0}
+          value={summary.totalProducts}
           icon={Package}
-          loading={velocityLoading}
+          loading={summaryLoading}
         />
         <SummaryCard
-          title="High Velocity"
-          value={velocityData?.filter((p: StockVelocity) => p.avgDailyUsage > 10).length || 0}
+          title="Orders This Week"
+          value={summary.activity.ordersThisWeek}
           icon={TrendingUp}
-          color="green"
-          loading={velocityLoading}
+          color={
+            summary.activity.trend === "up"
+              ? "green"
+              : summary.activity.trend === "down"
+                ? "red"
+                : "emerald"
+          }
+          loading={summaryLoading}
         />
         <SummaryCard
-          title="Low Velocity"
-          value={velocityData?.filter((p: StockVelocity) => p.avgDailyUsage < 1).length || 0}
-          icon={TrendingDown}
-          color="amber"
-          loading={velocityLoading}
-        />
-        <SummaryCard
-          title="At Risk"
-          value={riskData?.length || 0}
+          title="Critical Stock"
+          value={summary.stockHealth.critical}
           icon={AlertTriangle}
           color="red"
-          loading={riskLoading}
+          loading={summaryLoading}
+        />
+        <SummaryCard
+          title="Upcoming Stockouts"
+          value={summary.upcomingStockouts.length}
+          icon={Activity}
+          color="amber"
+          loading={summaryLoading}
         />
       </div>
 
-      {/* Usage Trends Chart */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Activity className="h-5 w-5 text-emerald-600" />
-          <h2 className="text-lg font-semibold text-gray-900">
-            Usage Trends (Last 30 Days)
-          </h2>
-        </div>
-
-        {trendsLoading ? (
-          <Skeleton className="h-[300px] w-full" />
-        ) : trendsData && trendsData.length > 0 ? (
-          <div className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendsData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fontSize: 12, fill: '#6B7280' }}
-                  tickFormatter={(value) => {
-                    const date = new Date(value);
-                    return `${date.getMonth() + 1}/${date.getDate()}`;
-                  }}
-                />
-                <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#fff',
-                    border: '1px solid #E5E7EB',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="units"
-                  name="Units"
-                  stroke="#10B981"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+      {/* Main Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {summaryLoading ? (
+          <>
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <Skeleton className="h-[280px] w-full" />
+            </div>
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <Skeleton className="h-[300px] w-full" />
+            </div>
+          </>
         ) : (
-          <div className="h-[300px] flex items-center justify-center text-gray-500">
-            No trend data available
-          </div>
+          <>
+            <StockHealthDonut data={summary.stockHealth} />
+            {!trendsLoading && trends.labels.length > 0 && (
+              <MonthlyTrendsChart data={trends} height={300} />
+            )}
+          </>
         )}
       </div>
 
-      {/* Top Movers and Slow Movers */}
+      {/* Action Items Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Movers */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="h-5 w-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-gray-900">
-              Top Movers
-            </h2>
-          </div>
-
-          {velocityLoading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
+        {summaryLoading ? (
+          <>
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <Skeleton className="h-[400px] w-full" />
             </div>
-          ) : topMovers.length > 0 ? (
-            <div className="space-y-3">
-              {topMovers.map((product: StockVelocity, index: number) => (
-                <div
-                  key={product.productId}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 flex items-center justify-center bg-emerald-100 text-emerald-700 text-sm font-medium rounded-full">
-                      {index + 1}
-                    </span>
-                    <span className="text-sm font-medium text-gray-900 truncate max-w-[200px]">
-                      {product.productName}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-semibold text-emerald-600">
-                      {product.avgDailyUsage.toFixed(1)}/day
-                    </span>
-                    {product.trend !== 'stable' && (
-                      <span className={`ml-2 text-xs ${
-                        product.trend === 'increasing' ? 'text-emerald-600' : 'text-red-600'
-                      }`}>
-                        {product.trend === 'increasing' ? '+' : '-'}{product.changePercent.toFixed(0)}%
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <Skeleton className="h-[400px] w-full" />
             </div>
-          ) : (
-            <p className="text-gray-500 text-center py-4">No data available</p>
-          )}
-        </div>
-
-        {/* Slow Movers */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingDown className="h-5 w-5 text-amber-600" />
-            <h2 className="text-lg font-semibold text-gray-900">
-              Slow Movers
-            </h2>
-          </div>
-
-          {velocityLoading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : slowMovers.length > 0 ? (
-            <div className="space-y-3">
-              {slowMovers.map((product: StockVelocity, index: number) => (
-                <div
-                  key={product.productId}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 flex items-center justify-center bg-amber-100 text-amber-700 text-sm font-medium rounded-full">
-                      {index + 1}
-                    </span>
-                    <span className="text-sm font-medium text-gray-900 truncate max-w-[200px]">
-                      {product.productName}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-semibold text-amber-600">
-                      {product.avgDailyUsage.toFixed(2)}/day
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-center py-4">No data available</p>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            <UpcomingStockoutsWidget
+              products={upcomingStockoutsFormatted}
+              limit={5}
+            />
+            <SmartReorderWidget limit={5} />
+          </>
+        )}
       </div>
 
-      {/* At-Risk Products */}
-      {riskData && riskData.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="h-5 w-5 text-red-600" />
-            <h2 className="text-lg font-semibold text-gray-900">
-              Products at Risk
-            </h2>
+      {/* Performance Row */}
+      <div className="grid grid-cols-1 gap-6">
+        {summaryLoading ? (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <Skeleton className="h-[400px] w-full" />
           </div>
+        ) : (
+          topProductsWithTrend.length > 0 && (
+            <TopProductsWidget products={topProductsWithTrend} limit={5} />
+          )
+        )}
+      </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Product</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Risk Score</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Status</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Weeks Remaining</th>
-                </tr>
-              </thead>
-              <tbody>
-                {riskData.slice(0, 10).map((product: RiskProduct) => (
-                  <tr key={product.productId} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-sm text-gray-900">{product.productName}</td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                        product.riskScore >= 80 ? 'bg-red-100 text-red-800' :
-                        product.riskScore >= 60 ? 'bg-amber-100 text-amber-800' :
-                        'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {product.riskScore}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{product.stockStatus}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{product.weeksRemaining ?? 'N/A'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Additional Stats */}
+      {!summaryLoading && totalOrders > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Overall Statistics
+          </h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-3xl font-bold text-gray-900">{totalOrders}</p>
+              <p className="text-sm text-gray-500 mt-1">Total Orders (12mo)</p>
+            </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-3xl font-bold text-blue-600">
+                {totalUnits.toLocaleString()}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">Total Units (12mo)</p>
+            </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-3xl font-bold text-green-600">
+                {summary.stockHealth.healthy}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">Healthy Stock</p>
+            </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-3xl font-bold text-amber-600">
+                {summary.stockHealth.low + summary.stockHealth.critical}
+              </p>
+              <p className="text-sm text-gray-500 mt-1">Need Attention</p>
+            </div>
           </div>
         </div>
       )}
@@ -328,20 +253,20 @@ function SummaryCard({
   title,
   value,
   icon: Icon,
-  color = 'emerald',
+  color = "emerald",
   loading = false,
 }: {
   title: string;
   value: number;
   icon: typeof Package;
-  color?: 'emerald' | 'green' | 'amber' | 'red';
+  color?: "emerald" | "green" | "amber" | "red";
   loading?: boolean;
 }) {
   const colorClasses = {
-    emerald: 'bg-emerald-100 text-emerald-600',
-    green: 'bg-green-100 text-green-600',
-    amber: 'bg-amber-100 text-amber-600',
-    red: 'bg-red-100 text-red-600',
+    emerald: "bg-emerald-100 text-emerald-600",
+    green: "bg-green-100 text-green-600",
+    amber: "bg-amber-100 text-amber-600",
+    red: "bg-red-100 text-red-600",
   };
 
   if (loading) {
@@ -356,7 +281,9 @@ function SummaryCard({
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <div className={`w-10 h-10 rounded-lg ${colorClasses[color]} flex items-center justify-center mb-3`}>
+      <div
+        className={`w-10 h-10 rounded-lg ${colorClasses[color]} flex items-center justify-center mb-3`}
+      >
         <Icon className="h-5 w-5" />
       </div>
       <p className="text-sm text-gray-500">{title}</p>

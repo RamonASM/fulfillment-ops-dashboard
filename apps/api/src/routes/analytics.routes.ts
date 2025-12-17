@@ -239,6 +239,26 @@ router.get(
 );
 
 /**
+ * GET /api/analytics/stockout-predictions/:clientId
+ * Get stockout countdown predictions with urgency levels
+ */
+router.get(
+  "/stockout-predictions/:clientId",
+  requireClientAccess,
+  async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.params as { clientId: string };
+      const predictions =
+        await analyticsService.getStockoutPredictions(clientId);
+      res.json({ data: predictions });
+    } catch (error) {
+      logger.error("Error fetching stockout predictions", error as Error);
+      res.status(500).json({ error: "Failed to fetch stockout predictions" });
+    }
+  },
+);
+
+/**
  * GET /api/analytics/intelligent-summary/:clientId
  * Get comprehensive intelligent dashboard summary
  */

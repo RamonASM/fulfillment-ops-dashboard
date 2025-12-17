@@ -169,7 +169,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-5",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client 5" },
         });
 
         const result = await BenchmarkingService.getClientBenchmark(clientId);
@@ -237,10 +236,10 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
         mockFindMany.mockResolvedValue([
-          { clientId: "client-1", client: {} } as any,
-          { clientId: "client-2", client: {} } as any,
-          { clientId: "client-3", client: {} } as any,
-          { clientId: "client-4", client: {} } as any,
+          { clientId: "client-1" } as any,
+          { clientId: "client-2" } as any,
+          { clientId: "client-3" } as any,
+          { clientId: "client-4" } as any,
         ]);
 
         const mockUpsert = vi.mocked(prisma.benchmarkSnapshot.upsert);
@@ -254,7 +253,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 5 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -281,7 +279,6 @@ describe("BenchmarkingService", () => {
         const cohort = "healthcare";
         const participants = Array.from({ length: 10 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -310,7 +307,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 5 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -325,14 +321,14 @@ describe("BenchmarkingService", () => {
         vi.mocked(prisma.product.count).mockImplementation(() => {
           const result = productCounts[Math.floor(callIndex / 2)];
           callIndex++;
-          return Promise.resolve(result);
+          return Promise.resolve(result) as any;
         });
 
         callIndex = 0;
         vi.mocked(prisma.orderRequest.count).mockImplementation(() => {
           const result = orderCounts[callIndex];
           callIndex++;
-          return Promise.resolve(result);
+          return Promise.resolve(result) as any;
         });
 
         callIndex = 0;
@@ -341,7 +337,7 @@ describe("BenchmarkingService", () => {
           callIndex++;
           return Promise.resolve({
             _sum: { currentStockPacks: result },
-          } as any);
+          }) as any;
         });
 
         const mockUpsert = vi.mocked(prisma.benchmarkSnapshot.upsert);
@@ -362,7 +358,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 10 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -378,7 +373,7 @@ describe("BenchmarkingService", () => {
         vi.mocked(prisma.product.count).mockImplementation(() => {
           const result = productCounts[Math.floor(callIndex / 2)];
           callIndex++;
-          return Promise.resolve(result);
+          return Promise.resolve(result) as any;
         });
 
         vi.mocked(prisma.orderRequest.count).mockResolvedValue(5);
@@ -428,7 +423,6 @@ describe("BenchmarkingService", () => {
         const cohort = "test-cohort";
         const participants = Array.from({ length: size }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -456,7 +450,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 5 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: { name: `Client Name ${i}` },
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -476,9 +469,9 @@ describe("BenchmarkingService", () => {
         const callArgs = mockUpsert.mock.calls[0][0];
         const snapshotData = JSON.stringify(callArgs.create);
 
-        // Verify no client names in snapshot
+        // Verify no client IDs in snapshot (anonymized)
         participants.forEach((p) => {
-          expect(snapshotData).not.toContain(p.client.name);
+          expect(snapshotData).not.toContain(p.clientId);
         });
       });
 
@@ -486,7 +479,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 5 }, (_, i) => ({
           clientId: `client-id-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -516,7 +508,6 @@ describe("BenchmarkingService", () => {
         const cohort = "general";
         const participants = Array.from({ length: 5 }, (_, i) => ({
           clientId: `client-${i}`,
-          client: {},
         }));
 
         const mockFindMany = vi.mocked(prisma.benchmarkParticipation.findMany);
@@ -570,7 +561,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-1",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client" },
         });
 
         const mockFindFirst = vi.mocked(prisma.benchmarkSnapshot.findFirst);
@@ -621,7 +611,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-1",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client" },
         });
 
         const mockFindFirst = vi.mocked(prisma.benchmarkSnapshot.findFirst);
@@ -711,7 +700,7 @@ describe("BenchmarkingService", () => {
           callCount++;
           return Promise.resolve(
             callCount === 1 ? totalProducts : stockoutProducts,
-          );
+          ) as any;
         });
 
         vi.mocked(prisma.orderRequest.count).mockResolvedValue(10);
@@ -861,7 +850,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-1",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client" },
         });
 
         const mockFindFirst = vi.mocked(prisma.benchmarkSnapshot.findFirst);
@@ -902,7 +890,7 @@ describe("BenchmarkingService", () => {
           callCount++;
           return Promise.resolve(
             callCount === 1 ? metrics.productCount : stockoutProducts,
-          );
+          ) as any;
         });
 
         vi.mocked(prisma.orderRequest.count).mockResolvedValue(
@@ -1012,7 +1000,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-1",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client" },
         });
 
         const mockFindFirst = vi.mocked(prisma.benchmarkSnapshot.findFirst);
@@ -1053,7 +1040,7 @@ describe("BenchmarkingService", () => {
           callCount++;
           return Promise.resolve(
             callCount === 1 ? metrics.productCount : stockoutProducts,
-          );
+          ) as any;
         });
 
         vi.mocked(prisma.orderRequest.count).mockResolvedValue(
@@ -1087,7 +1074,6 @@ describe("BenchmarkingService", () => {
           anonymousId: "anon-1",
           joinedAt: new Date(),
           updatedAt: new Date(),
-          client: { name: "Test Client" },
         });
 
         const mockFindFirst = vi.mocked(prisma.benchmarkSnapshot.findFirst);
@@ -1129,7 +1115,7 @@ describe("BenchmarkingService", () => {
           callCount++;
           return Promise.resolve(
             callCount === 1 ? totalProducts : stockoutProducts,
-          );
+          ) as any;
         });
 
         vi.mocked(prisma.orderRequest.count).mockResolvedValue(5);

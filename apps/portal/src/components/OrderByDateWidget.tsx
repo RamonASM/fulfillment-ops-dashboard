@@ -127,8 +127,10 @@ export function OrderByDateWidget({
   const { data: summary, isLoading } = useQuery({
     queryKey: ["portal", "timing", "summary"],
     queryFn: async () => {
-      const response = await api.get("/portal/shipments/timing/summary");
-      return response.data.data as TimingSummary;
+      const response = await api.get<{ data: TimingSummary }>(
+        "/portal/shipments/timing/summary",
+      );
+      return response.data;
     },
   });
 
