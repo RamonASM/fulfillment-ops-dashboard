@@ -221,6 +221,18 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
 
     # Select only columns that exist in the Product model
     model_columns = [c.name for c in models.Product.__table__.columns]
+
+    # Validate required columns exist before reindex
+    required_for_model = ['productId', 'name']  # Required for Product model
+    existing_columns = set(df.columns)
+    missing_required = [col for col in required_for_model if col not in existing_columns]
+
+    if missing_required:
+        raise ValueError(
+            f"Cannot proceed: Required columns {missing_required} not found after mapping. "
+            f"Available columns: {list(df.columns)}"
+        )
+
     df = df.reindex(columns=model_columns, fill_value=None)
 
     return df
@@ -277,8 +289,13 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
             break
 
     if date_col and date_col in df.columns:
+        rows_before = len(df)
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         df.dropna(subset=[date_col], inplace=True)
+        rows_after = len(df)
+
+        if rows_after < rows_before:
+            print(f"  Warning: Dropped {rows_before - rows_after} rows with invalid dates", file=sys.stderr)
 
     # Clean quantity columns before renaming
     for source, target in rename_map.items():
@@ -447,11 +464,24 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 db.commit()
                 print(f"  Finished chunk {i+1}. Total rows processed: {total_rows_processed}")
 
+            except ValueError as ve:
+                # Validation error from cleaning functions (required columns missing, etc.)
+                db.rollback()
+                error_detail = {
+                    "row_range": f"{(i*chunk_size)+1}-{i*chunk_size+len(chunk)}",
+                    "message": f"Data validation error: {str(ve)}",
+                    "type": "ValidationError"
+                }
+                errors_encountered.append(error_detail)
+                print(f"FATAL ERROR in chunk {i+1}: Data validation - {ve}", file=sys.stderr)
+
             except Exception as chunk_e:
+                # Other errors (database, unexpected issues)
                 db.rollback()
                 error_detail = {
                     "row_range": f"{(i*chunk_size)+1}-{i*chunk_size+len(chunk)}",
                     "message": str(chunk_e),
+                    "type": type(chunk_e).__name__
                 }
                 errors_encountered.append(error_detail)
                 print(f"FATAL ERROR in chunk {i+1}: {chunk_e}", file=sys.stderr)
