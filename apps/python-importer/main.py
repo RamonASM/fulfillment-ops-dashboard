@@ -332,6 +332,10 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     if 'pack_size' in df.columns:
         df['pack_size'] = df['pack_size'].fillna(1).astype(int)
 
+    # String columns that need defaults (database default is 'evergreen')
+    if 'item_type' in df.columns:
+        df['item_type'] = df['item_type'].fillna('evergreen')
+
     # Replace remaining NaN with None for proper SQL NULL handling
     # pandas.where doesn't always work properly, so we use a more explicit approach
     for col in df.columns:
@@ -446,6 +450,21 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
     mapper = inspect(models.Transaction)
     model_columns = [attr.key for attr in mapper.column_attrs]
     df = df.reindex(columns=model_columns, fill_value=None)
+
+    # Set defaults for required columns after reindex (to handle NaN/None values)
+    # String columns that need defaults (database default is 'completed')
+    if 'order_status' in df.columns:
+        df['order_status'] = df['order_status'].fillna('completed')
+
+    # Integer columns that need defaults (no database default - NOT NULL)
+    if 'quantity_packs' in df.columns:
+        df['quantity_packs'] = df['quantity_packs'].fillna(0).astype(int)
+    if 'quantity_units' in df.columns:
+        df['quantity_units'] = df['quantity_units'].fillna(0).astype(int)
+
+    # Replace remaining NaN with None for proper SQL NULL handling
+    for col in df.columns:
+        df[col] = df[col].apply(lambda x: None if pd.isna(x) else x)
 
     return df
 
