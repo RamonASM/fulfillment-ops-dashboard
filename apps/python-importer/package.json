@@ -1,0 +1,6 @@
+{
+  "name": "@inventory/python-importer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Python data importer for inventory system"
+}

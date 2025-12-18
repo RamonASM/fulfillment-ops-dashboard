@@ -109,14 +109,17 @@ module.exports = {
       script: 'uvicorn',
       args: 'main:app --host 0.0.0.0 --port 8000 --workers 2',
       cwd: '/var/www/inventory/apps/ml-analytics',
-      interpreter: 'python3',
+      // Use absolute path to venv Python to avoid PATH issues
+      interpreter: '/var/www/inventory/apps/ml-analytics/venv/bin/python3',
       instances: 1,
       exec_mode: 'fork',  // Python apps use fork mode
 
       env_production: {
         PORT: 8000,
         DATABASE_URL: 'postgresql://inventory:password@localhost:5432/inventory_db',
-        LOG_LEVEL: 'info'
+        LOG_LEVEL: 'info',
+        // Ensure Python can find the venv packages
+        PATH: '/var/www/inventory/apps/ml-analytics/venv/bin:/usr/local/bin:/usr/bin:/bin'
       },
 
       error_file: '/var/www/inventory/logs/ml-error.log',

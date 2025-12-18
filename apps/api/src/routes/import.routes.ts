@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { spawn, execSync } from "child_process";
+import { fileURLToPath } from "url";
 import { prisma } from "../lib/prisma.js";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
@@ -29,11 +30,39 @@ import {
 } from "../services/custom-field.service.js";
 
 /**
- * Get the monorepo root path.
- * In production (PM2), cwd is set to /var/www/inventory (monorepo root).
- * In development, run from monorepo root: npm run dev:api
+ * Get the monorepo root path by walking up from the current file's directory.
+ * This works regardless of how the API is started (PM2, npm workspace, direct).
+ *
+ * Detection method: Find directory containing package.json with name "inventory-intelligence-platform"
  */
 function getMonorepoRoot(): string {
+  // Start from __dirname (works in compiled CommonJS)
+  // In dev with tsx, this also works
+  let currentDir = __dirname;
+
+  // Walk up the directory tree looking for monorepo root marker
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = path.join(currentDir, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        // Found the monorepo root package.json
+        if (pkg.name === "inventory-intelligence-platform") {
+          return currentDir;
+        }
+      } catch {
+        // Ignore parse errors, continue walking up
+      }
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break; // Reached filesystem root
+    currentDir = parentDir;
+  }
+
+  // Fallback: assume cwd is correct (for PM2 which explicitly sets cwd)
+  console.warn(
+    "[Import] Could not detect monorepo root from __dirname, falling back to process.cwd()",
+  );
   return process.cwd();
 }
 

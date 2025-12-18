@@ -71,6 +71,33 @@ npm ci --production=false
 echo -e "${GREEN}Dependencies installed.${NC}"
 
 # =============================================================================
+# Install Python dependencies
+# =============================================================================
+echo -e "\n${YELLOW}[3.5/8] Setting up Python environment...${NC}"
+
+# Check if Python is installed
+if ! command -v python3 &> /dev/null; then
+    echo -e "${YELLOW}Installing Python...${NC}"
+    apt-get update && apt-get install -y python3 python3-pip python3-venv
+fi
+
+# Set up Python virtual environment for importer
+cd ${APP_DIR}/apps/python-importer
+if [ ! -d "venv" ]; then
+    echo -e "${BLUE}Creating Python virtual environment...${NC}"
+    python3 -m venv venv
+fi
+
+echo -e "${BLUE}Installing Python dependencies...${NC}"
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+deactivate
+
+cd ${APP_DIR}
+echo -e "${GREEN}Python environment ready.${NC}"
+
+# =============================================================================
 # Build applications
 # =============================================================================
 echo -e "\n${YELLOW}[4/8] Building applications...${NC}"
