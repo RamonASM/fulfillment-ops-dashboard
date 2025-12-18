@@ -278,7 +278,7 @@ export function ImportModal({
   // This useEffect ensures we wait for the actual import to finish (Python runs async)
   // Without this, the UI would show "complete" before data is actually imported
   useEffect(() => {
-    const status = importProgress?.data?.data?.status;
+    const status = importProgress?.data?.status;
 
     if (status && isWaitingForCompletion) {
       const isTerminal = [
@@ -320,7 +320,7 @@ export function ImportModal({
       }
     }
   }, [
-    importProgress?.data?.data?.status,
+    importProgress?.data?.status,
     isWaitingForCompletion,
     currentPreviewIndex,
     importPreviews.length,

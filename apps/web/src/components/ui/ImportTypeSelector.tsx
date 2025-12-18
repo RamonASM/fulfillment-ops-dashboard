@@ -84,7 +84,8 @@ export function ImportTypeSelector({
   disabled = false,
 }: ImportTypeSelectorProps) {
   const [showDetails, setShowDetails] = useState(false);
-  const confidenceInfo = confidenceConfig[detection.confidence];
+  const confidenceLevel = detection.confidence as keyof typeof confidenceConfig;
+  const confidenceInfo = confidenceConfig[confidenceLevel];
   const ConfidenceIcon = confidenceInfo.icon;
 
   return (
