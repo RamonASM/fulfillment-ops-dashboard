@@ -159,9 +159,11 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
             'Product Name': 'name',
             'Item Type': 'itemType',
             'Quantity Multiplier': 'packSize',
-            'Current Notification Point': 'notificationPoint',
             'Available Quantity': 'currentStockPacks',
+            # Note: Both 'Current Notification Point' and 'New Notification Point' map to 'notificationPoint'
+            # The logic at line 170-173 handles finding whichever exists in the CSV
             'New Notification Point': 'notificationPoint',
+            'Current Notification Point': 'notificationPoint',  # Fallback if 'New' doesn't exist
         }
         print("Using fallback hard-coded column mapping")
 
