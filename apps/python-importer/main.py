@@ -152,6 +152,35 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     if mapping_data and mapping_data.get('columnMappings'):
         rename_map = build_rename_map(mapping_data['columnMappings'])
         print(f"Using intelligent column mapping with {len(rename_map)} mappings")
+
+        # Fill in missing required mappings from fallback (case-insensitive)
+        # This handles the case where user corrects intelligent mappings and leaves gaps
+        required_mappings = {
+            'Product ID': 'productId',
+            'Product Name': 'name',
+            'Item Type': 'itemType',
+            'Quantity Multiplier': 'packSize',
+            'Available Quantity': 'currentStockPacks',
+            'New Notification Point': 'notificationPoint',
+        }
+
+        for fallback_source, target in required_mappings.items():
+            # Skip if target already mapped
+            if target in rename_map.values():
+                continue
+
+            # Find matching column in CSV (case-insensitive, space-insensitive)
+            fallback_normalized = fallback_source.lower().replace(' ', '')
+            matching_col = None
+
+            for csv_col in df.columns:
+                if csv_col.lower().replace(' ', '') == fallback_normalized and csv_col not in rename_map:
+                    matching_col = csv_col
+                    break
+
+            if matching_col:
+                rename_map[matching_col] = target
+                print(f"  Added fallback mapping: {matching_col} -> {target}")
     else:
         # Fallback to hard-coded mapping for backwards compatibility
         rename_map = {
@@ -264,15 +293,24 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
         rename_map = build_rename_map(mapping_data['columnMappings'])
         print(f"Using intelligent column mapping with {len(rename_map)} mappings")
 
-        # Fill in missing required mappings from fallback
-        for source, target in required_mappings.items():
-            # Only add if:
-            # 1. Target column doesn't already exist (wasn't already renamed)
-            # 2. Source column exists in CSV
-            # 3. Source hasn't already been mapped to something else
-            if target not in rename_map.values() and source in df.columns and source not in rename_map:
-                rename_map[source] = target
-                print(f"  Added fallback mapping: {source} -> {target}")
+        # Fill in missing required mappings from fallback (case-insensitive)
+        for fallback_source, target in required_mappings.items():
+            # Skip if target already mapped
+            if target in rename_map.values():
+                continue
+
+            # Find matching column in CSV (case-insensitive, space-insensitive)
+            fallback_normalized = fallback_source.lower().replace(' ', '')
+            matching_col = None
+
+            for csv_col in df.columns:
+                if csv_col.lower().replace(' ', '') == fallback_normalized and csv_col not in rename_map:
+                    matching_col = csv_col
+                    break
+
+            if matching_col:
+                rename_map[matching_col] = target
+                print(f"  Added fallback mapping: {matching_col} -> {target}")
     else:
         rename_map = required_mappings
         print("Using fallback hard-coded column mapping")
