@@ -742,12 +742,33 @@ router.post("/:importId/confirm", async (req, res, next) => {
           where: { id: importId },
           data: { status: "post_processing" },
         });
+
+        let postProcessingError: Error | null = null;
         try {
           await recalculateClientUsage(importBatch.clientId);
           await runAlertGeneration(importBatch.clientId);
         } catch (calcError) {
           console.error("Post-import calculation error:", calcError);
+          postProcessingError = calcError as Error;
         }
+
+        // CRITICAL: Finalize status after post-processing completes
+        // Without this, imports stay stuck at "post_processing" forever!
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            status: postProcessingError ? "completed_with_errors" : "completed",
+            completedAt: new Date(),
+            ...(postProcessingError && {
+              errors: [
+                {
+                  message: "Post-processing failed",
+                  details: String(postProcessingError),
+                },
+              ],
+            }),
+          },
+        });
       } else {
         // FAILURE: Save the complete stderr output to database
         await prisma.importBatch.update({

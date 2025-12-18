@@ -17,6 +17,11 @@ import {
   AlertTriangle,
   TrendingUp,
   Brain,
+  Key,
+  Eye,
+  EyeOff,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/api/client";
@@ -32,6 +37,7 @@ import { TodoList } from "@/components/TodoList";
 import { ImportModal } from "@/components/ImportModal";
 import { CustomDataInsightsWidget } from "@/components/widgets/CustomDataInsightsWidget";
 import { ForecastModal } from "@/components/ForecastModal";
+import { useAuthStore } from "@/stores/auth.store";
 import toast from "react-hot-toast";
 
 type ItemTypeTab = "evergreen" | "event" | "completed";
@@ -51,8 +57,16 @@ export default function ClientDetail() {
     useState<ProductWithMetrics | null>(null);
   const [editName, setEditName] = useState("");
   const [editCode, setEditCode] = useState("");
+  const [useOwnAiKey, setUseOwnAiKey] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { user } = useAuthStore();
+
+  // Check if user can edit AI settings (admin or operations_manager only)
+  const canEditAiSettings =
+    user?.role === "admin" || user?.role === "operations_manager";
 
   // Detect ?import=true query param and open modal automatically
   useEffect(() => {
@@ -68,6 +82,20 @@ export default function ClientDetail() {
   const { data: client, isLoading: clientLoading } = useQuery({
     queryKey: ["client", clientId],
     queryFn: () => api.get<ClientWithStats>(`/clients/${clientId}`),
+    enabled: !!clientId,
+  });
+
+  // Fetch AI settings
+  const { data: aiSettings, isLoading: aiSettingsLoading } = useQuery({
+    queryKey: ["client-ai-settings", clientId],
+    queryFn: () =>
+      api.get<{
+        useOwnAiKey: boolean;
+        hasApiKey: boolean;
+        apiKeyMasked: string | null;
+        encryptionConfigured: boolean;
+        platformKeyConfigured: boolean;
+      }>(`/clients/${clientId}/ai-settings`),
     enabled: !!clientId,
   });
 
@@ -121,9 +149,49 @@ export default function ClientDetail() {
     },
   });
 
+  // Update AI settings mutation
+  const updateAiSettingsMutation = useMutation({
+    mutationFn: async (data: {
+      useOwnAiKey: boolean;
+      anthropicApiKey?: string;
+    }) => {
+      return api.patch(`/clients/${clientId}/ai-settings`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["client-ai-settings", clientId],
+      });
+      toast.success("AI settings updated successfully");
+      setApiKeyInput("");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to update AI settings");
+    },
+  });
+
+  // Delete AI key mutation
+  const deleteAiKeyMutation = useMutation({
+    mutationFn: async () => {
+      return api.delete(`/clients/${clientId}/ai-settings/key`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["client-ai-settings", clientId],
+      });
+      toast.success("API key removed");
+      setUseOwnAiKey(false);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to remove API key");
+    },
+  });
+
   // Handle import success - invalidate queries to refresh data
+  // Use exact: false to match partial query keys (actual key includes activeTab, search)
   const handleImportSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ["products", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["products"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["imports"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["orders"], exact: false });
   };
 
   // Open settings modal and populate form
@@ -132,6 +200,11 @@ export default function ClientDetail() {
       setEditName(client.name);
       setEditCode(client.code);
     }
+    if (aiSettings) {
+      setUseOwnAiKey(aiSettings.useOwnAiKey);
+    }
+    setApiKeyInput("");
+    setShowApiKey(false);
     setShowSettingsModal(true);
   };
 
@@ -550,6 +623,201 @@ export default function ClientDetail() {
                     placeholder="e.g., ACME"
                     maxLength={10}
                   />
+                </div>
+
+                {/* AI Settings Section */}
+                <div className="pt-4 border-t border-gray-200">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Brain className="w-5 h-5 text-purple-600" />
+                    <h3 className="text-sm font-semibold text-gray-900">
+                      AI Import Mapping
+                    </h3>
+                  </div>
+
+                  {/* AI Status Indicator */}
+                  <div className="flex items-center gap-2 mb-4 p-3 bg-gray-50 rounded-lg">
+                    {aiSettingsLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                    ) : aiSettings?.platformKeyConfigured ||
+                      aiSettings?.hasApiKey ? (
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className="text-sm text-gray-600">
+                      {aiSettingsLoading
+                        ? "Checking AI status..."
+                        : aiSettings?.useOwnAiKey && aiSettings?.hasApiKey
+                          ? "Using client's own API key"
+                          : aiSettings?.platformKeyConfigured
+                            ? "Using platform AI (included)"
+                            : "AI mapping not available"}
+                    </span>
+                  </div>
+
+                  {/* Use Own Key Toggle */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">
+                        Use own Anthropic API key
+                      </label>
+                      <p className="text-xs text-gray-500">
+                        {canEditAiSettings
+                          ? "Enterprise clients can provide their own key"
+                          : "Contact admin to configure API key"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        canEditAiSettings && setUseOwnAiKey(!useOwnAiKey)
+                      }
+                      disabled={!canEditAiSettings}
+                      className={clsx(
+                        "relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2",
+                        useOwnAiKey ? "bg-primary-600" : "bg-gray-200",
+                        canEditAiSettings
+                          ? "cursor-pointer"
+                          : "cursor-not-allowed opacity-50",
+                      )}
+                    >
+                      <span
+                        className={clsx(
+                          "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                          useOwnAiKey ? "translate-x-5" : "translate-x-0",
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  {/* API Key Input - Only shown when toggle is on and user can edit */}
+                  {useOwnAiKey && canEditAiSettings && (
+                    <div className="space-y-3">
+                      {aiSettings?.hasApiKey && (
+                        <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
+                          <div className="flex items-center gap-2">
+                            <Key className="w-4 h-4 text-green-600" />
+                            <span className="text-sm text-green-700 font-mono">
+                              {aiSettings.apiKeyMasked}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => deleteAiKeyMutation.mutate()}
+                            disabled={deleteAiKeyMutation.isPending}
+                            className="text-xs text-red-600 hover:text-red-700 font-medium"
+                          >
+                            {deleteAiKeyMutation.isPending
+                              ? "Removing..."
+                              : "Remove"}
+                          </button>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          {aiSettings?.hasApiKey
+                            ? "Replace API Key"
+                            : "Anthropic API Key"}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showApiKey ? "text" : "password"}
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                            placeholder="sk-ant-api03-..."
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+                          >
+                            {showApiKey ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                          Get your API key from{" "}
+                          <a
+                            href="https://console.anthropic.com/settings/keys"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary-600 hover:text-primary-700"
+                          >
+                            console.anthropic.com
+                          </a>
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateAiSettingsMutation.mutate({
+                            useOwnAiKey: true,
+                            anthropicApiKey: apiKeyInput || undefined,
+                          });
+                        }}
+                        disabled={
+                          updateAiSettingsMutation.isPending ||
+                          (!apiKeyInput && !aiSettings?.hasApiKey)
+                        }
+                        className="w-full btn-secondary btn-sm"
+                      >
+                        {updateAiSettingsMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Key className="w-4 h-4 mr-2" />
+                            {apiKeyInput ? "Save API Key" : "Enable Own Key"}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Show existing key info to non-admins (read-only) */}
+                  {useOwnAiKey &&
+                    !canEditAiSettings &&
+                    aiSettings?.hasApiKey && (
+                      <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg border border-green-200">
+                        <Key className="w-4 h-4 text-green-600" />
+                        <span className="text-sm text-green-700 font-mono">
+                          {aiSettings.apiKeyMasked}
+                        </span>
+                      </div>
+                    )}
+
+                  {/* Save toggle state when turning off (admin only) */}
+                  {!useOwnAiKey &&
+                    aiSettings?.useOwnAiKey &&
+                    canEditAiSettings && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateAiSettingsMutation.mutate({
+                            useOwnAiKey: false,
+                          });
+                        }}
+                        disabled={updateAiSettingsMutation.isPending}
+                        className="w-full btn-secondary btn-sm"
+                      >
+                        {updateAiSettingsMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Switching...
+                          </>
+                        ) : (
+                          "Switch to Platform AI"
+                        )}
+                      </button>
+                    )}
                 </div>
 
                 <div className="flex justify-between pt-4">

@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -14,6 +14,7 @@ import { clsx } from "clsx";
 import { api } from "@/api/client";
 import toast from "react-hot-toast";
 import { MappingComboBox, TargetField } from "@/components/ui/MappingComboBox";
+import { ImportTypeSelector } from "@/components/ui/ImportTypeSelector";
 
 // =============================================================================
 // TYPES
@@ -50,10 +51,22 @@ interface ValidationSummary {
   sampleIssues?: string[];
 }
 
+interface ImportDetectionResult {
+  confidence: "high" | "medium" | "low";
+  inventoryMatches: number;
+  orderMatches: number;
+  ambiguousMatches: number;
+  matchedInventoryHeaders: string[];
+  matchedOrderHeaders: string[];
+}
+
 interface ImportPreview {
   importId: string;
   filename?: string;
-  detectedType: string;
+  detectedType: "inventory" | "orders" | "both";
+  selectedType?: "inventory" | "orders" | "both";
+  userOverride?: boolean;
+  detection?: ImportDetectionResult;
   rowCount: number;
   columns: ColumnMapping[];
   sampleRows: Record<string, unknown>[];
@@ -243,7 +256,77 @@ export function ImportModal({
   const [editedMappings, setEditedMappings] = useState<
     Record<string, ColumnMapping[]>
   >({});
+  const [currentImportId, setCurrentImportId] = useState<string | null>(null);
+  const [isWaitingForCompletion, setIsWaitingForCompletion] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+
+  // Poll import progress during processing
+  const { data: importProgress } = useQuery({
+    queryKey: ["import-progress", currentImportId],
+    queryFn: () =>
+      api.get<{
+        data: { processedCount: number; rowCount: number; status: string };
+      }>(`/imports/${currentImportId}`),
+    enabled:
+      (importStep === "processing" || isWaitingForCompletion) &&
+      !!currentImportId,
+    refetchInterval: 2000, // Poll every 2 seconds
+  });
+
+  // CRITICAL: Monitor polling status and handle completion
+  // This useEffect ensures we wait for the actual import to finish (Python runs async)
+  // Without this, the UI would show "complete" before data is actually imported
+  useEffect(() => {
+    const status = importProgress?.data?.data?.status;
+
+    if (status && isWaitingForCompletion) {
+      const isTerminal = [
+        "completed",
+        "completed_with_errors",
+        "failed",
+      ].includes(status);
+
+      if (isTerminal) {
+        // Import actually finished - now safe to proceed
+        setIsWaitingForCompletion(false);
+        setCurrentImportId(null);
+
+        // Invalidate all relevant queries with exact: false to match partial keys
+        queryClient.invalidateQueries({ queryKey: ["products"], exact: false });
+        queryClient.invalidateQueries({ queryKey: ["imports"], exact: false });
+        queryClient.invalidateQueries({ queryKey: ["orders"], exact: false });
+        queryClient.invalidateQueries({
+          queryKey: ["import-history"],
+          exact: false,
+        });
+
+        // Check if there are more previews to process
+        if (currentPreviewIndex < importPreviews.length - 1) {
+          setCurrentPreviewIndex((prev) => prev + 1);
+          // The next import will be triggered by handleConfirmImport
+        } else {
+          setImportStep("complete");
+          onSuccess?.();
+
+          if (status === "completed") {
+            toast.success("All imports completed successfully");
+          } else if (status === "completed_with_errors") {
+            toast.success("Imports completed with some warnings");
+          } else {
+            toast.error("Import failed - check error details");
+          }
+        }
+      }
+    }
+  }, [
+    importProgress?.data?.data?.status,
+    isWaitingForCompletion,
+    currentPreviewIndex,
+    importPreviews.length,
+    onSuccess,
+    queryClient,
+  ]);
 
   // Upload mutation (single file)
   const uploadMutation = useMutation({
@@ -363,20 +446,71 @@ export function ImportModal({
     },
     onSuccess: (data) => {
       setImportResults((prev) => [...prev, data]);
-
-      // Check if there are more previews to process
-      if (currentPreviewIndex < importPreviews.length - 1) {
-        setCurrentPreviewIndex((prev) => prev + 1);
-      } else {
-        setImportStep("complete");
-        onSuccess?.();
-        toast.success("All imports completed successfully");
-      }
+      // DON'T clear currentImportId here - let polling continue!
+      // The Python import runs async in the background after API returns.
+      // We need to keep polling until status is terminal (completed/failed).
+      setIsWaitingForCompletion(true);
+      // The useEffect above will handle completion when polling shows terminal status
     },
     onError: (error: Error) => {
+      setCurrentImportId(null);
+      setIsWaitingForCompletion(false);
       toast.error(error.message || "Failed to process import");
     },
   });
+
+  // Mutation for changing import type
+  const changeTypeMutation = useMutation({
+    mutationFn: async ({
+      importId,
+      importType,
+    }: {
+      importId: string;
+      importType: "inventory" | "orders" | "both";
+    }) => {
+      return api.patch<ImportPreview>(`/imports/${importId}`, { importType });
+    },
+    onSuccess: (data) => {
+      // Update the preview with new type and column mappings
+      setImportPreviews((prev) =>
+        prev.map((p, i) =>
+          i === currentPreviewIndex
+            ? {
+                ...p,
+                detectedType: data.detectedType,
+                selectedType: data.selectedType ?? data.detectedType,
+                columns: data.columns,
+                sampleRows: data.sampleRows,
+                validation: data.validation,
+              }
+            : p,
+        ),
+      );
+      // Clear any edited mappings for this file since columns were regenerated
+      setEditedMappings((prev) => {
+        const newMappings = { ...prev };
+        delete newMappings[currentPreviewIndex];
+        return newMappings;
+      });
+      toast.success("Import type updated. Column mappings regenerated.");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to change import type");
+    },
+  });
+
+  const handleTypeChange = (newType: "inventory" | "orders" | "both") => {
+    const currentPreview = importPreviews[currentPreviewIndex];
+    if (
+      currentPreview &&
+      newType !== (currentPreview.selectedType ?? currentPreview.detectedType)
+    ) {
+      changeTypeMutation.mutate({
+        importId: currentPreview.importId,
+        importType: newType,
+      });
+    }
+  };
 
   // File handling
   const handleFileSelect = useCallback((files: FileList | File[]) => {
@@ -436,6 +570,7 @@ export function ImportModal({
     const currentPreview = importPreviews[currentPreviewIndex];
     if (currentPreview) {
       setImportStep("processing");
+      setCurrentImportId(currentPreview.importId); // Track the import being processed
       confirmMutation.mutate(currentPreview.importId);
     }
   };
@@ -443,6 +578,7 @@ export function ImportModal({
   const handleConfirmAll = async () => {
     setImportStep("processing");
     for (const preview of importPreviews) {
+      setCurrentImportId(preview.importId); // Track each import being processed
       await confirmMutation.mutateAsync(preview.importId);
     }
   };
@@ -454,6 +590,8 @@ export function ImportModal({
     setCurrentPreviewIndex(0);
     setImportResults([]);
     setEditedMappings({});
+    setCurrentImportId(null);
+    setIsWaitingForCompletion(false);
     onClose();
   };
 
@@ -645,7 +783,7 @@ export function ImportModal({
                     </div>
                   )}
 
-                  <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="grid grid-cols-2 gap-4 text-center">
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <p className="text-2xl font-bold text-gray-900">
                         {currentPreview.rowCount}
@@ -658,13 +796,34 @@ export function ImportModal({
                       </p>
                       <p className="text-sm text-gray-500">Columns mapped</p>
                     </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-2xl font-bold text-gray-900 capitalize">
-                        {currentPreview.detectedType}
-                      </p>
-                      <p className="text-sm text-gray-500">Data type</p>
-                    </div>
                   </div>
+
+                  {/* Import Type Selection */}
+                  {currentPreview.detection && (
+                    <ImportTypeSelector
+                      detectedType={currentPreview.detectedType}
+                      detection={currentPreview.detection}
+                      selectedType={
+                        currentPreview.selectedType ??
+                        currentPreview.detectedType
+                      }
+                      onTypeChange={handleTypeChange}
+                      disabled={changeTypeMutation.isPending}
+                    />
+                  )}
+
+                  {/* Fallback for older previews without detection info */}
+                  {!currentPreview.detection && (
+                    <div className="p-4 bg-gray-50 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-gray-900 capitalize">
+                        {currentPreview.selectedType ??
+                          currentPreview.detectedType}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Data type (auto-detected)
+                      </p>
+                    </div>
+                  )}
 
                   {/* Warnings */}
                   {currentPreview.warnings.length > 0 && (
@@ -777,7 +936,8 @@ export function ImportModal({
                                         )
                                       }
                                       options={getComboBoxOptions(
-                                        currentPreview.detectedType,
+                                        currentPreview.selectedType ??
+                                          currentPreview.detectedType,
                                       )}
                                       sourceColumnName={col.source}
                                       confidence={col.confidence}
@@ -891,6 +1051,37 @@ export function ImportModal({
                       ? `Processing file ${importResults.length + 1} of ${importPreviews.length}`
                       : "This may take a few moments"}
                   </p>
+                  {importProgress?.data?.processedCount !== undefined &&
+                    importProgress?.data?.rowCount && (
+                      <div className="mt-6 max-w-xs mx-auto">
+                        <div className="flex justify-between text-sm text-gray-600 mb-1">
+                          <span>
+                            {importProgress.data.processedCount.toLocaleString()}{" "}
+                            rows
+                          </span>
+                          <span>
+                            {importProgress.data.rowCount.toLocaleString()}{" "}
+                            total
+                          </span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-primary-600 h-2 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${Math.min(100, (importProgress.data.processedCount / importProgress.data.rowCount) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {Math.round(
+                            (importProgress.data.processedCount /
+                              importProgress.data.rowCount) *
+                              100,
+                          )}
+                          % complete
+                        </p>
+                      </div>
+                    )}
                 </div>
               )}
 

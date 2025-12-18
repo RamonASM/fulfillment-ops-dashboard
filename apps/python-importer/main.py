@@ -478,10 +478,21 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     for pid_str in chunk_product_ids:
                         if pid_str not in product_lookup_chunk:
                             new_uuid = uuid.uuid4()
+                            # CRITICAL: Use snake_case keys matching database column names
+                            # bulk_insert_mappings() expects database column names, NOT Python attributes
+                            # SQLAlchemy SILENTLY IGNORES unknown keys, so camelCase keys would be dropped!
                             orphan_products_to_create.append({
-                                'id': new_uuid, 'clientId': import_batch.clientId, 'productId': pid_str, 'name': pid_str,
-                                'isOrphan': True, 'isActive': True, 'packSize': 1, 'currentStockPacks': 0,
-                                'currentStockUnits': 0, 'createdAt': datetime.now(), 'updatedAt': datetime.now()
+                                'id': new_uuid,
+                                'client_id': str(import_batch.clientId),  # snake_case (database column)
+                                'product_id': pid_str,                     # snake_case (database column)
+                                'name': pid_str,
+                                'is_orphan': True,                         # snake_case (database column)
+                                'is_active': True,                         # snake_case (database column)
+                                'pack_size': 1,                            # snake_case (database column)
+                                'current_stock_packs': 0,                  # snake_case (database column)
+                                'current_stock_units': 0,                  # snake_case (database column)
+                                'created_at': datetime.now(),              # snake_case (database column)
+                                'updated_at': datetime.now()               # snake_case (database column)
                             })
                             product_lookup_chunk[pid_str] = new_uuid
 
