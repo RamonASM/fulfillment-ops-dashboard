@@ -98,6 +98,10 @@ model Client {
   // Health scoring
   healthSnapshots        ClientHealthSnapshot[]
 
+  // AI Mapping Settings (White-Label Support)
+  anthropicApiKey  String?  @map("anthropic_api_key")  // Encrypted client API key
+  useOwnAiKey      Boolean  @default(false) @map("use_own_ai_key")
+
   @@index([code])
   @@index([isActive])
   @@map("clients")
@@ -132,7 +136,7 @@ model Product {
   currentStockPacks Int      @default(0) @map("current_stock_packs")
   currentStockUnits Int      @default(0) @map("current_stock_units")
   reorderPointPacks Int?     @map("reorder_point_packs")
-  calculationBasis  String?  @map("calculation_basis") @db.VarChar(20)
+  calculationBasis  String?  @map("calculation_basis") @db.VarChar(50) // e.g., "12 months", "6 months"
   stockStatus       String?  @map("stock_status") @db.VarChar(20)
   weeksRemaining    Int?     @map("weeks_remaining")
   avgDailyUsage     Float?   @map("avg_daily_usage")
@@ -143,12 +147,25 @@ model Product {
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   // Phase 13: Monthly Usage Intelligence fields
-  monthlyUsageUnits    Float?    @map("monthly_usage_units")
-  monthlyUsagePacks    Float?    @map("monthly_usage_packs")
-  usageDataMonths      Int?      @map("usage_data_months")
-  usageCalculationTier String?   @map("usage_calculation_tier") @db.VarChar(20) // '12_month' | '6_month' | '3_month' | 'weekly'
-  usageConfidence      String?   @map("usage_confidence") @db.VarChar(20) // 'high' | 'medium' | 'low'
-  usageLastCalculated  DateTime? @map("usage_last_calculated") @db.Timestamptz
+  monthlyUsageUnits      Float?    @map("monthly_usage_units")
+  monthlyUsagePacks      Float?    @map("monthly_usage_packs")
+  usageDataMonths        Int?      @map("usage_data_months")
+  usageCalculationTier   String?   @map("usage_calculation_tier") @db.VarChar(20) // '12_month' | '6_month' | '3_month' | 'weekly'
+  usageConfidence        String?   @map("usage_confidence") @db.VarChar(20) // 'high' | 'medium' | 'low'
+  usageLastCalculated    DateTime? @map("usage_last_calculated") @db.Timestamptz
+  usageCalculationMethod String?   @map("usage_calculation_method") @db.VarChar(30) // 'order_fulfillment' | 'snapshot_delta' | 'hybrid' | 'estimated'
+
+  // DS Analytics Intelligence fields
+  usageTrend            String?   @map("usage_trend") @db.VarChar(20) // 'increasing' | 'stable' | 'decreasing'
+  seasonalityDetected   Boolean?  @map("seasonality_detected") @default(false)
+  stockoutConfidence    Float?    @map("stockout_confidence") // 0-1 confidence in stockout prediction
+  suggestedReorderQty   Int?      @map("suggested_reorder_qty") // Optimal reorder quantity in packs
+  reorderQtyLastUpdated DateTime? @map("reorder_qty_last_updated") @db.Timestamptz
+
+  // Reserved inventory tracking
+  reservedQuantity     Int?      @map("reserved_quantity") // Reserved packs (allocated/committed)
+  reservedUnits        Int?      @map("reserved_units") // Reserved units
+  availableQuantity    Int?      @map("available_quantity") // Actual available (stock - reserved)
 
   // Phase 13: Feedback aggregation fields
   avgQualityRating  Float? @map("avg_quality_rating")
@@ -192,6 +209,10 @@ model Product {
   totalLeadDays      Int?    @map("total_lead_days") // Computed total
   leadTimeSource     String? @map("lead_time_source") @db.VarChar(20) // 'default' | 'override' | 'imported'
 
+  // Vendor/supplier fields
+  vendorName         String? @map("vendor_name") @db.VarChar(255)
+  vendorCode         String? @map("vendor_code") @db.VarChar(50)
+
   // Cached timing calculations
   projectedStockoutDate DateTime? @map("projected_stockout_date") @db.Date
   lastOrderByDate       DateTime? @map("last_order_by_date") @db.Date
@@ -210,6 +231,7 @@ model Product {
   // Composite indexes for common query patterns
   @@index([clientId, isActive, itemType])
   @@index([clientId, isActive, stockStatus])
+  @@index([vendorName])
   @@index([clientId, stockStatus, updatedAt])
   @@map("products")
 }
@@ -1068,10 +1090,18 @@ model ClientConfiguration {
   primaryContactId    String? @map("primary_contact_id") @db.Uuid
   escalationContactId String? @map("escalation_contact_id") @db.Uuid
 
+  // Inventory intelligence settings (for DS Analytics)
+  reorderLeadDays   Int @default(14) @map("reorder_lead_days")   // Lead time for reorders in days
+  safetyStockWeeks  Int @default(2) @map("safety_stock_weeks")   // Safety stock buffer in weeks
+  criticalWeeks     Int @default(2) @map("critical_weeks")       // Threshold for "critical" status
+  lowWeeks          Int @default(4) @map("low_weeks")            // Threshold for "low" status
+  watchWeeks        Int @default(8) @map("watch_weeks")          // Threshold for "watch" status
+
   // Feature flags
-  feedbackEnabled Boolean @default(true) @map("feedback_enabled")
-  commentsEnabled Boolean @default(true) @map("comments_enabled")
-  reportsEnabled  Boolean @default(true) @map("reports_enabled")
+  feedbackEnabled    Boolean @default(true) @map("feedback_enabled")
+  commentsEnabled    Boolean @default(true) @map("comments_enabled")
+  reportsEnabled     Boolean @default(true) @map("reports_enabled")
+  dsAnalyticsEnabled Boolean @default(false) @map("ds_analytics_enabled") // Enable Python DS Analytics for this client
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
