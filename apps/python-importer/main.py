@@ -164,14 +164,14 @@ def build_product_lookup(db: Session, client_id: uuid.UUID, product_ids: list) -
 
     # Query existing products for this client
     existing_products = db.query(
-        models.Product.productId,
+        models.Product.product_id,
         models.Product.id
     ).filter(
-        models.Product.clientId == client_id,
-        models.Product.productId.in_(clean_product_ids)
+        models.Product.client_id == client_id,
+        models.Product.product_id.in_(clean_product_ids)
     ).all()
 
-    return {str(p.productId): p.id for p in existing_products}
+    return {str(p.product_id): p.id for p in existing_products}
 
 
 # =============================================================================
@@ -284,18 +284,23 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     df['created_at'] = datetime.now()  # snake_case (database column)
     df['updated_at'] = datetime.now()  # snake_case (database column)
 
-    # Handle custom fields - store in 'metadata' column (database column name)
+    # Handle custom fields - store in 'product_metadata' column
+    # Note: Model attribute is 'product_metadata', maps to database column 'metadata'
+    # SQLAlchemy bulk_insert_mappings uses attribute names, not column names
     if mapping_data and mapping_data.get('columnMappings'):
         custom_mappings = [m for m in mapping_data['columnMappings'] if m.get('isCustomField', False)]
         if custom_mappings:
-            df['metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
+            df['product_metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
         else:
-            df['metadata'] = [{} for _ in range(len(df))]
+            df['product_metadata'] = [{} for _ in range(len(df))]
     else:
-        df['metadata'] = [{} for _ in range(len(df))]
+        df['product_metadata'] = [{} for _ in range(len(df))]
 
-    # Select only columns that exist in the Product model
-    model_columns = [c.name for c in models.Product.__table__.columns]
+    # Select only columns that match Product model attribute names
+    # CRITICAL: bulk_insert_mappings uses attribute names, NOT database column names
+    from sqlalchemy.inspection import inspect
+    mapper = inspect(models.Product)
+    model_columns = [attr.key for attr in mapper.column_attrs]
 
     # Validate required columns exist before reindex (use snake_case)
     required_for_model = ['product_id', 'name']  # snake_case database column names
@@ -309,6 +314,29 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
         )
 
     df = df.reindex(columns=model_columns, fill_value=None)
+
+    # Set defaults for columns after reindex (to handle NaN/None values)
+    # Boolean columns need proper True/False, not NaN
+    if 'is_active' in df.columns:
+        df['is_active'] = df['is_active'].fillna(True)
+    if 'is_orphan' in df.columns:
+        df['is_orphan'] = df['is_orphan'].fillna(False)
+
+    # Integer columns that need defaults
+    if 'feedback_count' in df.columns:
+        df['feedback_count'] = df['feedback_count'].fillna(0).astype(int)
+    if 'current_stock_packs' in df.columns:
+        df['current_stock_packs'] = df['current_stock_packs'].fillna(0).astype(int)
+    if 'current_stock_units' in df.columns:
+        df['current_stock_units'] = df['current_stock_units'].fillna(0).astype(int)
+    if 'pack_size' in df.columns:
+        df['pack_size'] = df['pack_size'].fillna(1).astype(int)
+
+    # Replace remaining NaN with None for proper SQL NULL handling
+    # pandas.where doesn't always work properly, so we use a more explicit approach
+    for col in df.columns:
+        # Convert NaN to None for each column
+        df[col] = df[col].apply(lambda x: None if pd.isna(x) else x)
 
     return df
 
@@ -412,8 +440,11 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
     df['created_at'] = datetime.now()  # snake_case (database column)
     df['import_batch_id'] = None  # snake_case (database column) - Will be set by the main process
 
-    # Select only columns that exist in the Transaction model
-    model_columns = [c.name for c in models.Transaction.__table__.columns]
+    # Select only columns that match Transaction model attribute names
+    # CRITICAL: bulk_insert_mappings uses attribute names, NOT database column names
+    from sqlalchemy.inspection import inspect
+    mapper = inspect(models.Transaction)
+    model_columns = [attr.key for attr in mapper.column_attrs]
     df = df.reindex(columns=model_columns, fill_value=None)
 
     return df
@@ -476,10 +507,10 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     product_ids_in_chunk = [pid for pid in cleaned_chunk['product_id'].unique() if pd.notna(pid)]
 
                     existing_products_query = db.query(models.Product).filter(
-                        models.Product.clientId == import_batch.clientId,
-                        models.Product.productId.in_(product_ids_in_chunk)
+                        models.Product.client_id == import_batch.clientId,
+                        models.Product.product_id.in_(product_ids_in_chunk)
                     )
-                    existing_products_map = {p.productId: p for p in existing_products_query.all()}
+                    existing_products_map = {p.product_id: p for p in existing_products_query.all()}
 
                     to_update = []
                     to_insert = []
@@ -528,11 +559,11 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                         print("  Chunk contains no valid product IDs. Skipping.")
                         continue
 
-                    existing_products_query = db.query(models.Product.productId, models.Product.id).filter(
-                        models.Product.clientId == import_batch.clientId,
-                        models.Product.productId.in_(chunk_product_ids)
+                    existing_products_query = db.query(models.Product.product_id, models.Product.id).filter(
+                        models.Product.client_id == import_batch.clientId,
+                        models.Product.product_id.in_(chunk_product_ids)
                     )
-                    product_lookup_chunk = {p.productId: p.id for p in existing_products_query.all()}
+                    product_lookup_chunk = {p.product_id: p.id for p in existing_products_query.all()}
 
                     orphan_products_to_create = []
                     for pid_str in chunk_product_ids:

@@ -28,6 +28,17 @@ import {
   getCustomFieldStats,
 } from "../services/custom-field.service.js";
 
+/**
+ * Calculate the monorepo root path from this file's location.
+ * This file is at: apps/api/src/routes/import.routes.ts
+ * Monorepo root is 4 directories up.
+ */
+function getMonorepoRoot(): string {
+  const fileUrl = import.meta.url;
+  const filePath = fileUrl.startsWith("file://") ? fileUrl.slice(7) : fileUrl;
+  return path.resolve(path.dirname(filePath), "..", "..", "..", "..");
+}
+
 const router = Router();
 
 // Ensure uploads directory exists
@@ -618,14 +629,26 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
     }
 
+    // Helper to convert camelCase to snake_case
+    const toSnakeCase = (str: string): string =>
+      str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+    // Convert camelCase mapsTo values to snake_case for Python (database column names)
+    const normalizedMappings = (columnMapping || []).map(
+      (m: { source: string; mapsTo: string; isCustomField?: boolean }) => ({
+        ...m,
+        mapsTo: toSnakeCase(m.mapsTo),
+      }),
+    );
+
     // Write column mappings to JSON sidecar file for Python importer
     const mappingFilePath = `${importBatch.filePath}.mapping.json`;
     const mappingData = {
       importId,
       clientId: importBatch.clientId,
       importType: importBatch.importType,
-      columnMappings: columnMapping || [],
-      customFields: (columnMapping || []).filter(
+      columnMappings: normalizedMappings,
+      customFields: normalizedMappings.filter(
         (m: { isCustomField?: boolean }) => m.isCustomField,
       ),
       createdAt: new Date().toISOString(),
@@ -667,18 +690,26 @@ router.post("/:importId/confirm", async (req, res, next) => {
     let stdoutOutput = "";
     let stderrOutput = "";
 
+    // Calculate monorepo root for correct path to python-importer
+    const monorepoRoot = getMonorepoRoot();
+    const apiDir = path.join(monorepoRoot, "apps", "api");
+
+    // File paths are stored relative to API directory, make them absolute
+    const absoluteFilePath = path.join(apiDir, importBatch.filePath!);
+    const absoluteMappingFilePath = path.join(apiDir, mappingFilePath);
+
     const pythonProcess = spawn(
       pythonCmd,
       [
-        path.join(process.cwd(), "apps", "python-importer", "main.py"),
+        path.join(monorepoRoot, "apps", "python-importer", "main.py"),
         process.env.DATABASE_URL,
         importId,
-        importBatch.filePath!,
+        absoluteFilePath,
         importBatch.importType!,
-        mappingFilePath,
+        absoluteMappingFilePath,
       ],
       {
-        cwd: process.cwd(),
+        cwd: monorepoRoot,
         env: {
           ...process.env,
           PYTHONUNBUFFERED: "1", // Ensure real-time output
@@ -1210,21 +1241,17 @@ function getPythonCommand(): string {
   // 2. Local venv on Unix (macOS/Linux)
   // 3. Local venv on Windows
   // 4. System Python (python3/python)
+
+  const monorepoRoot = getMonorepoRoot();
+
   const possiblePaths = [
     // Docker container - Python installed system-wide
     "/usr/bin/python3",
-    // Local venv on Unix (macOS/Linux)
+    // Local venv on Unix (macOS/Linux) - relative to monorepo root
+    path.join(monorepoRoot, "apps", "python-importer", "venv", "bin", "python"),
+    // Local venv on Windows - relative to monorepo root
     path.join(
-      process.cwd(),
-      "apps",
-      "python-importer",
-      "venv",
-      "bin",
-      "python",
-    ),
-    // Local venv on Windows
-    path.join(
-      process.cwd(),
+      monorepoRoot,
       "apps",
       "python-importer",
       "venv",
