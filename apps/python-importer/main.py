@@ -233,22 +233,30 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.strip()
 
+    # Define required column mappings for orders
+    required_mappings = {
+        'Product ID': 'productId',
+        'Order ID': 'orderId',
+        'Quantity': 'quantityPacks',
+        'Total Quantity': 'quantityUnits',
+        'Date Submitted': 'dateSubmitted',
+        'Order Status': 'orderStatus',
+        'Ship To Location': 'shipToLocation',
+        'Ship To Company': 'shipToCompany',
+    }
+
     # Determine rename map - use intelligent mapping if provided, else fallback to hard-coded
     if mapping_data and mapping_data.get('columnMappings'):
         rename_map = build_rename_map(mapping_data['columnMappings'])
         print(f"Using intelligent column mapping with {len(rename_map)} mappings")
+
+        # Fill in missing required mappings from fallback
+        for source, target in required_mappings.items():
+            if target not in rename_map.values() and source in df.columns:
+                rename_map[source] = target
+                print(f"  Added fallback mapping: {source} -> {target}")
     else:
-        # Fallback to hard-coded mapping for backwards compatibility
-        rename_map = {
-            'Product ID': 'productId',
-            'Order ID': 'orderId',
-            'Quantity': 'quantityPacks',
-            'Total Quantity': 'quantityUnits',
-            'Date Submitted': 'dateSubmitted',
-            'Order Status': 'orderStatus',
-            'Ship To Location': 'shipToLocation',
-            'Ship To Company': 'shipToCompany',
-        }
+        rename_map = required_mappings
         print("Using fallback hard-coded column mapping")
 
     # Clean 'Unit Price' and 'Extended Price' if they exist
@@ -275,6 +283,16 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
 
     # Apply the rename mapping
     df.rename(columns=rename_map, inplace=True)
+
+    # Validate required columns exist
+    required_columns = ['productId', 'dateSubmitted']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+
+    if missing_columns:
+        raise ValueError(
+            f"Required columns missing after mapping: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
 
     # Generate UUID for each transaction
     df['id'] = [uuid.uuid4() for _ in range(len(df))]
@@ -370,7 +388,17 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     cleaned_chunk = clean_orders_data(chunk, str(import_batch.clientId), mapping_data)
 
                     # === Correct Chunk-Based Lookup Logic ===
-                    chunk_product_ids = [str(pid).strip() for pid in cleaned_chunk['productId'].unique() if pd.notna(pid) and str(pid).strip()]
+                    try:
+                        chunk_product_ids = [str(pid).strip() for pid in cleaned_chunk['productId'].unique() if pd.notna(pid) and str(pid).strip()]
+                    except KeyError as e:
+                        error_msg = f"Column {e} not found. Available columns: {list(cleaned_chunk.columns)}"
+                        print(f"FATAL ERROR in chunk {i+1}: {error_msg}", file=sys.stderr)
+                        batch_errors.append({
+                            'chunk': i + 1,
+                            'error': error_msg,
+                            'type': 'KeyError'
+                        })
+                        continue  # Skip this chunk
 
                     if not chunk_product_ids:
                         print("  Chunk contains no valid product IDs. Skipping.")
