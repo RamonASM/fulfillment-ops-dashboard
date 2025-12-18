@@ -17,6 +17,7 @@
     "db:seed:everstory": "tsx prisma/seed-everstory.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@inventory/shared": "*",
     "@prisma/client": "^5.7.1",
     "axios": "^1.13.2",
@@ -32,6 +33,7 @@
     "helmet": "^7.1.0",
     "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.2",
+    "lru-cache": "^11.2.4",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^7.0.11",
     "papaparse": "^5.5.3",

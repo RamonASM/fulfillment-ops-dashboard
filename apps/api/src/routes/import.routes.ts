@@ -29,14 +29,12 @@ import {
 } from "../services/custom-field.service.js";
 
 /**
- * Calculate the monorepo root path from this file's location.
- * This file is at: apps/api/src/routes/import.routes.ts
- * Monorepo root is 4 directories up.
+ * Get the monorepo root path.
+ * In production (PM2), cwd is set to /var/www/inventory (monorepo root).
+ * In development, run from monorepo root: npm run dev:api
  */
 function getMonorepoRoot(): string {
-  const fileUrl = import.meta.url;
-  const filePath = fileUrl.startsWith("file://") ? fileUrl.slice(7) : fileUrl;
-  return path.resolve(path.dirname(filePath), "..", "..", "..", "..");
+  return process.cwd();
 }
 
 const router = Router();
