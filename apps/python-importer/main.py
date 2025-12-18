@@ -412,7 +412,8 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     cleaned_chunk = clean_inventory_data(chunk, str(import_batch.clientId), mapping_data)
 
                     # === Correct Upsert Logic for Inventory ===
-                    product_ids_in_chunk = [pid for pid in cleaned_chunk['productId'].unique() if pd.notna(pid)]
+                    # NOTE: Using snake_case column names after reindex (product_id, not productId)
+                    product_ids_in_chunk = [pid for pid in cleaned_chunk['product_id'].unique() if pd.notna(pid)]
 
                     existing_products_query = db.query(models.Product).filter(
                         models.Product.clientId == import_batch.clientId,
@@ -424,7 +425,7 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     to_insert = []
 
                     for record in cleaned_chunk.to_dict(orient="records"):
-                        pid = record.get('productId')
+                        pid = record.get('product_id')
                         if pid in existing_products_map:
                             # This product exists, prepare for update
                             update_record = {**record, 'id': existing_products_map[pid].id}
@@ -449,8 +450,10 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     cleaned_chunk = clean_orders_data(chunk, str(import_batch.clientId), mapping_data)
 
                     # === Correct Chunk-Based Lookup Logic ===
+                    # NOTE: After df.reindex() with model columns, DataFrame uses snake_case column names
+                    # from the database (product_id, not productId)
                     try:
-                        chunk_product_ids = [str(pid).strip() for pid in cleaned_chunk['productId'].unique() if pd.notna(pid) and str(pid).strip()]
+                        chunk_product_ids = [str(pid).strip() for pid in cleaned_chunk['product_id'].unique() if pd.notna(pid) and str(pid).strip()]
                     except KeyError as e:
                         error_msg = f"Column {e} not found. Available columns: {list(cleaned_chunk.columns)}"
                         print(f"FATAL ERROR in chunk {i+1}: {error_msg}", file=sys.stderr)
@@ -487,11 +490,12 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                         db.bulk_insert_mappings(models.Product, orphan_products_to_create)
                         db.flush()
 
-                    resolved_product_ids = [product_lookup_chunk.get(str(pid).strip()) for pid in cleaned_chunk['productId']]
-                    cleaned_chunk['productId'] = resolved_product_ids
-                    cleaned_chunk['importBatchId'] = batch_uuid
+                    # NOTE: Using snake_case column names after reindex
+                    resolved_product_ids = [product_lookup_chunk.get(str(pid).strip()) for pid in cleaned_chunk['product_id']]
+                    cleaned_chunk['product_id'] = resolved_product_ids
+                    cleaned_chunk['import_batch_id'] = batch_uuid
 
-                    valid_rows = cleaned_chunk[cleaned_chunk['productId'].notna()]
+                    valid_rows = cleaned_chunk[cleaned_chunk['product_id'].notna()]
                     if not valid_rows.empty:
                         print(f"  Inserting {len(valid_rows)} transaction records...")
                         db.bulk_insert_mappings(models.Transaction, valid_rows.to_dict(orient="records"))
