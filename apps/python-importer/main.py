@@ -13,19 +13,8 @@ _package_dir = os.path.dirname(os.path.abspath(__file__))
 if _package_dir not in sys.path:
     sys.path.insert(0, _package_dir)
 
-from database import SessionLocal, engine
+from database import initialize_database, get_db, engine
 import models
-
-# Ensure tables are created (idempotent)
-models.Base.metadata.create_all(bind=engine)
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # =============================================================================
@@ -305,18 +294,13 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
 def process_import_cli(import_batch_id: str, file_path: str, import_type: str, mapping_file: Optional[str] = None):
     """
     Main CLI entry point for processing imports.
-
-    Args:
-        import_batch_id: UUID of the import batch
-        file_path: Path to the CSV/Excel file
-        import_type: 'inventory' or 'orders'
-        mapping_file: Optional path to JSON sidecar file with column mappings
+    This version is corrected for performance and scalability.
+    It DOES NOT load the entire product catalog into memory.
     """
-    chunk_size = 1000
+    chunk_size = 2000  # Increased chunk size for better performance
     total_rows_processed = 0
     errors_encountered = []
 
-    # Load column mapping if provided
     mapping_data = load_column_mapping(mapping_file)
     if mapping_data:
         print(f"Loaded mapping configuration from {mapping_file}")
@@ -324,154 +308,174 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
     db: Session = next(get_db())
 
     try:
-        # Convert import_batch_id to UUID for query
-        batch_uuid = uuid.UUID(import_batch_id) if isinstance(import_batch_id, str) else import_batch_id
-
-        import_batch = db.query(models.ImportBatch).filter(
-            models.ImportBatch.id == batch_uuid
-        ).first()
+        batch_uuid = uuid.UUID(import_batch_id)
+        import_batch = db.query(models.ImportBatch).filter(models.ImportBatch.id == batch_uuid).first()
 
         if not import_batch:
             print(f"Error: Import batch {import_batch_id} not found.", file=sys.stderr)
             sys.exit(1)
 
-        # Validate client exists before processing
-        try:
-            validate_client_exists(db, str(import_batch.clientId))
-        except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            import_batch.status = 'failed'
-            import_batch.errors = [{"message": str(e)}]
-            db.commit()
-            sys.exit(1)
-
+        validate_client_exists(db, str(import_batch.clientId))
         import_batch.status = 'processing'
         import_batch.startedAt = datetime.now()
         db.commit()
 
-        # Update the file path to be absolute
         absolute_file_path = os.path.abspath(file_path)
 
-        # For orders, pre-fetch all products for this client for FK resolution
-        product_lookup = {}
-        if import_type == 'orders':
-            all_products = db.query(
-                models.Product.productId,
-                models.Product.id
-            ).filter(
-                models.Product.clientId == import_batch.clientId
-            ).all()
-            product_lookup = {str(p.productId): p.id for p in all_products}
-            print(f"Pre-loaded {len(product_lookup)} products for FK resolution")
+        print(f"Starting import for type '{import_type}'...")
 
+        # Process file in chunks
         for i, chunk in enumerate(pd.read_csv(absolute_file_path, chunksize=chunk_size, on_bad_lines='warn', encoding='utf-8', encoding_errors='replace')):
             try:
                 if import_type == 'inventory':
+                    print(f"Processing inventory chunk {i+1}...")
                     cleaned_chunk = clean_inventory_data(chunk, str(import_batch.clientId), mapping_data)
-                    db.bulk_insert_mappings(models.Product, cleaned_chunk.to_dict(orient="records"))
-                    db.commit()
+
+                    # === Correct Upsert Logic for Inventory ===
+                    product_ids_in_chunk = [pid for pid in cleaned_chunk['productId'].unique() if pd.notna(pid)]
+
+                    existing_products_query = db.query(models.Product).filter(
+                        models.Product.clientId == import_batch.clientId,
+                        models.Product.productId.in_(product_ids_in_chunk)
+                    )
+                    existing_products_map = {p.productId: p for p in existing_products_query.all()}
+
+                    to_update = []
+                    to_insert = []
+
+                    for record in cleaned_chunk.to_dict(orient="records"):
+                        pid = record.get('productId')
+                        if pid in existing_products_map:
+                            # This product exists, prepare for update
+                            update_record = {**record, 'id': existing_products_map[pid].id}
+                            to_update.append(update_record)
+                        else:
+                            # This is a new product
+                            to_insert.append(record)
+
+                    if to_insert:
+                        print(f"  Inserting {len(to_insert)} new products...")
+                        db.bulk_insert_mappings(models.Product, to_insert)
+
+                    if to_update:
+                        print(f"  Updating {len(to_update)} existing products...")
+                        # NOTE: bulk_update_mappings is not standard in SQLAlchemy Core.
+                        # This requires iteration, but it's safe.
+                        for item in to_update:
+                            db.merge(models.Product(**item))
 
                 elif import_type == 'orders':
+                    print(f"Processing orders chunk {i+1}...")
                     cleaned_chunk = clean_orders_data(chunk, str(import_batch.clientId), mapping_data)
 
-                    # Resolve product foreign keys
-                    resolved_product_ids = []
+                    # === Correct Chunk-Based Lookup Logic ===
+                    chunk_product_ids = [str(pid).strip() for pid in cleaned_chunk['productId'].unique() if pd.notna(pid) and str(pid).strip()]
+
+                    if not chunk_product_ids:
+                        print("  Chunk contains no valid product IDs. Skipping.")
+                        continue
+
+                    existing_products_query = db.query(models.Product.productId, models.Product.id).filter(
+                        models.Product.clientId == import_batch.clientId,
+                        models.Product.productId.in_(chunk_product_ids)
+                    )
+                    product_lookup_chunk = {p.productId: p.id for p in existing_products_query.all()}
+
                     orphan_products_to_create = []
-
-                    for csv_product_id in cleaned_chunk['productId']:
-                        if pd.isna(csv_product_id) or str(csv_product_id).strip() == '':
-                            resolved_product_ids.append(None)
-                            continue
-
-                        csv_product_id_str = str(csv_product_id).strip()
-
-                        if csv_product_id_str in product_lookup:
-                            # Found existing product - use its UUID
-                            resolved_product_ids.append(product_lookup[csv_product_id_str])
-                        else:
-                            # Product not found - create orphan product
-                            new_product_uuid = uuid.uuid4()
+                    for pid_str in chunk_product_ids:
+                        if pid_str not in product_lookup_chunk:
+                            new_uuid = uuid.uuid4()
                             orphan_products_to_create.append({
-                                'id': new_product_uuid,
-                                'clientId': import_batch.clientId,
-                                'productId': csv_product_id_str,
-                                'name': csv_product_id_str,  # Use productId as name
-                                'isOrphan': True,
-                                'isActive': True,
-                                'packSize': 1,
-                                'currentStockPacks': 0,
-                                'currentStockUnits': 0,
-                                'createdAt': datetime.now(),
-                                'updatedAt': datetime.now(),
-                                'metadata': {}
+                                'id': new_uuid, 'clientId': import_batch.clientId, 'productId': pid_str, 'name': pid_str,
+                                'isOrphan': True, 'isActive': True, 'packSize': 1, 'currentStockPacks': 0,
+                                'currentStockUnits': 0, 'createdAt': datetime.now(), 'updatedAt': datetime.now()
                             })
-                            # Add to lookup for subsequent rows
-                            product_lookup[csv_product_id_str] = new_product_uuid
-                            resolved_product_ids.append(new_product_uuid)
+                            product_lookup_chunk[pid_str] = new_uuid
 
-                    # Create orphan products first
                     if orphan_products_to_create:
-                        print(f"Creating {len(orphan_products_to_create)} orphan products for unmatched IDs")
+                        print(f"  Creating {len(orphan_products_to_create)} new orphan products for this chunk...")
                         db.bulk_insert_mappings(models.Product, orphan_products_to_create)
                         db.flush()
 
-                    # Update productId column with resolved UUIDs
+                    resolved_product_ids = [product_lookup_chunk.get(str(pid).strip()) for pid in cleaned_chunk['productId']]
                     cleaned_chunk['productId'] = resolved_product_ids
-
-                    # Set importBatchId
                     cleaned_chunk['importBatchId'] = batch_uuid
 
-                    # Filter out rows with no resolved productId
                     valid_rows = cleaned_chunk[cleaned_chunk['productId'].notna()]
-
-                    if len(valid_rows) > 0:
+                    if not valid_rows.empty:
+                        print(f"  Inserting {len(valid_rows)} transaction records...")
                         db.bulk_insert_mappings(models.Transaction, valid_rows.to_dict(orient="records"))
 
-                    db.commit()
+                # Commit changes for the entire chunk
+                db.commit()
 
                 total_rows_processed += len(chunk)
                 import_batch.processedCount = total_rows_processed
                 db.commit()
-
-                print(f"Processed chunk {i+1}: {len(chunk)} rows (total: {total_rows_processed})")
+                print(f"  Finished chunk {i+1}. Total rows processed: {total_rows_processed}")
 
             except Exception as chunk_e:
+                db.rollback()
                 error_detail = {
-                    "row_range": f"{(i*chunk_size)+2}-{(i*chunk_size)+len(chunk)+1}",
+                    "row_range": f"{(i*chunk_size)+1}-{i*chunk_size+len(chunk)}",
                     "message": str(chunk_e),
-                    "chunk_data_sample": chunk.head(2).to_dict()
                 }
                 errors_encountered.append(error_detail)
-                print(f"Error processing chunk {i}: {chunk_e}", file=sys.stderr)
+                print(f"FATAL ERROR in chunk {i+1}: {chunk_e}", file=sys.stderr)
 
-        import_batch.status = 'completed'
+        # Finalize import status
+        import_batch.status = 'completed_with_errors' if errors_encountered else 'completed'
         import_batch.completedAt = datetime.now()
         import_batch.errorCount = len(errors_encountered)
         import_batch.errors = errors_encountered
         db.commit()
-        print(f"Import {import_batch_id} completed. Processed {total_rows_processed} rows with {len(errors_encountered)} errors.")
+        print(f"Import {import_batch_id} finished. Processed {total_rows_processed} rows with {len(errors_encountered)} errors.")
 
     except Exception as e:
-        print(f"Fatal error during import {import_batch_id}: {e}", file=sys.stderr)
-        if import_batch:
+        db.rollback()
+        print(f"Fatal error during import setup {import_batch_id}: {e}", file=sys.stderr)
+        if 'import_batch' in locals() and import_batch:
             import_batch.status = 'failed'
             import_batch.completedAt = datetime.now()
-            import_batch.errors = errors_encountered + [{"message": f"Fatal error: {e}"}]
+            import_batch.errors = errors_encountered + [{"message": f"Fatal setup error: {e}"}]
             db.commit()
         sys.exit(1)
-
     finally:
         db.close()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python -m apps.python-importer.main <import_batch_id> <file_path> <import_type> [mapping_file]", file=sys.stderr)
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m apps.python-importer.main "
+            "<database_url> <import_batch_id> <file_path> "
+            "<import_type> [mapping_file]",
+            file=sys.stderr
+        )
         sys.exit(1)
 
-    import_batch_id = sys.argv[1]
-    file_path = sys.argv[2]
-    import_type = sys.argv[3]
-    mapping_file = sys.argv[4] if len(sys.argv) > 4 else None
+    # NEW: database_url is first argument
+    database_url = sys.argv[1]
+    import_batch_id = sys.argv[2]  # Shifted from index 1
+    file_path = sys.argv[3]         # Shifted from index 2
+    import_type = sys.argv[4]       # Shifted from index 3
+    mapping_file = sys.argv[5] if len(sys.argv) > 5 else None
 
+    # Initialize database with explicit URL
+    try:
+        initialize_database(database_url)
+        print("[main.py] Database initialized successfully")
+    except Exception as e:
+        print(f"FATAL: Failed to initialize database: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Create tables after successful connection
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        print("[main.py] Database tables verified")
+    except Exception as e:
+        print(f"FATAL: Failed to create/verify tables: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Process import
     process_import_cli(import_batch_id, file_path, import_type, mapping_file)

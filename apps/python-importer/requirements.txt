@@ -1,6 +1,10 @@
-pandas
-fastapi
-uvicorn
-SQLAlchemy
-psycopg2-binary
-python-dotenv
+# Python Import Service Dependencies
+# Core dependencies with pinned versions from production (Python 3.12)
+# These versions are tested and working in production
+# Note: python-dotenv removed - DATABASE_URL now passed explicitly via CLI
+
+pandas==2.3.3
+fastapi==0.125.0
+uvicorn==0.38.0
+SQLAlchemy==2.0.45
+psycopg2-binary==2.9.11

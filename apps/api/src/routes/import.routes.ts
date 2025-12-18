@@ -9,14 +9,12 @@ import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
   parseFilePreview,
   detectFileType,
+  detectFileTypeWithConfidence,
   generateColumnMapping,
   generateColumnMappingWithLearning,
   validateImportData,
 } from "../services/import.service.js";
-import {
-  recalculateClientUsage,
-  recalculateClientMonthlyUsage,
-} from "../services/usage.service.js";
+import { recalculateClientUsage } from "../services/analytics-facade.service.js";
 import { runAlertGeneration } from "../services/alert.service.js";
 import {
   analyzeImportImpact,
@@ -143,12 +141,24 @@ router.post(
 
       // Parse file preview for header detection and column mapping
       const { headers, rows } = await parseFilePreview(req.file.path);
-      const detectedType = detectFileType(headers);
+
+      // Get detection result with confidence scoring
+      const detectionResult = detectFileTypeWithConfidence(headers);
+
+      // Allow user to override detected type via request body
+      const { importType: userSelectedType } = req.body;
+      const validTypes = ["inventory", "orders", "both"];
+      const finalType = validTypes.includes(userSelectedType)
+        ? (userSelectedType as "inventory" | "orders" | "both")
+        : detectionResult.type;
+      const userOverride =
+        userSelectedType && userSelectedType !== detectionResult.type;
+
       // Pass sample rows for better data type detection
       // Use learning-enabled mapping to incorporate past user corrections
       const columnMapping = await generateColumnMappingWithLearning(
         headers,
-        detectedType,
+        finalType,
         clientId,
         rows.slice(0, 20),
       );
@@ -157,7 +167,7 @@ router.post(
       const importBatch = await prisma.importBatch.create({
         data: {
           clientId,
-          importType: detectedType,
+          importType: finalType,
           filename: req.file.originalname,
           filePath: req.file.path,
           status: "pending",
@@ -173,12 +183,22 @@ router.post(
       const validationResult = validateImportData(
         rows.slice(0, 100),
         columnMapping,
-        detectedType,
+        finalType,
       );
 
       const preview = {
         importId: importBatch.id,
-        detectedType,
+        detectedType: detectionResult.type,
+        selectedType: finalType,
+        userOverride: !!userOverride,
+        detection: {
+          confidence: detectionResult.confidence,
+          inventoryMatches: detectionResult.inventoryMatches,
+          orderMatches: detectionResult.orderMatches,
+          ambiguousMatches: detectionResult.ambiguousMatches,
+          matchedInventoryHeaders: detectionResult.matchedInventoryHeaders,
+          matchedOrderHeaders: detectionResult.matchedOrderHeaders,
+        },
         rowCount: rows.length,
         columns: columnMapping,
         sampleRows: rows.slice(0, 5),
@@ -356,6 +376,88 @@ router.get("/history", async (req, res, next) => {
     });
 
     res.json({ data: imports });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/imports/:importId
+ * Update import type (allows user to override auto-detected type)
+ */
+router.patch("/:importId", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const { importType } = req.body;
+
+    // Validate import type
+    const validTypes = ["inventory", "orders", "both"];
+    if (!importType || !validTypes.includes(importType)) {
+      throw new ValidationError(
+        "Invalid import type. Must be 'inventory', 'orders', or 'both'",
+      );
+    }
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) {
+      throw new NotFoundError("Import");
+    }
+
+    if (importBatch.status !== "pending") {
+      throw new ValidationError("Can only update pending imports");
+    }
+
+    if (!importBatch.filePath) {
+      throw new ValidationError("Import file not found");
+    }
+
+    // Re-parse file to regenerate column mapping with new type
+    const { headers, rows } = await parseFilePreview(importBatch.filePath);
+    const columnMapping = await generateColumnMappingWithLearning(
+      headers,
+      importType as "inventory" | "orders" | "both",
+      importBatch.clientId,
+      rows.slice(0, 20),
+    );
+
+    // Update import batch with new type
+    const updatedImport = await prisma.importBatch.update({
+      where: { id: importId },
+      data: {
+        importType: importType as "inventory" | "orders" | "both",
+      },
+      include: {
+        client: {
+          select: { name: true, code: true },
+        },
+      },
+    });
+
+    // Run validation on sample data with new type
+    const validationResult = validateImportData(
+      rows.slice(0, 100),
+      columnMapping,
+      importType as "inventory" | "orders" | "both",
+    );
+
+    res.json({
+      ...updatedImport,
+      columns: columnMapping,
+      sampleRows: rows.slice(0, 5),
+      validation: {
+        isValid: validationResult.isValid,
+        totalErrors: validationResult.totalErrors,
+        totalWarnings: validationResult.totalWarnings,
+        summary: validationResult.summary,
+        sampleIssues: validationResult.rowResults
+          .filter((r) => r.errors.length > 0 || r.warnings.length > 0)
+          .slice(0, 10)
+          .flatMap((r) => [...r.errors, ...r.warnings]),
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -546,18 +648,37 @@ router.post("/:importId/confirm", async (req, res, next) => {
       throw new ValidationError("Python is not installed on the server");
     }
 
-    // Spawn the Python process with mapping file as 4th argument
+    // Validate DATABASE_URL exists before spawning Python
+    if (!process.env.DATABASE_URL) {
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [{ message: "DATABASE_URL not configured in environment" }],
+        },
+      });
+      throw new ValidationError(
+        "Server configuration error: DATABASE_URL not set",
+      );
+    }
+
+    // Spawn the Python process with DATABASE_URL as first argument
     const pythonProcess = spawn(
       pythonCmd,
       [
         path.join(process.cwd(), "apps", "python-importer", "main.py"),
-        importId,
-        importBatch.filePath!,
-        importBatch.importType!,
-        mappingFilePath,
+        process.env.DATABASE_URL, // NEW: First argument
+        importId, // Shifted position
+        importBatch.filePath!, // Shifted position
+        importBatch.importType!, // Shifted position
+        mappingFilePath, // Shifted position
       ],
       {
         cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: "1", // Ensure real-time output
+        },
       },
     );
 
@@ -612,10 +733,10 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
 
       if (code === 0) {
-        // Trigger post-import calculations
+        // Trigger post-import calculations via analytics facade
+        // The facade handles both DS Analytics and TypeScript based on client feature flag
         try {
           await recalculateClientUsage(importBatch.clientId);
-          await recalculateClientMonthlyUsage(importBatch.clientId);
           await runAlertGeneration(importBatch.clientId);
         } catch (calcError) {
           console.error("Post-import calculation error:", calcError);
@@ -725,9 +846,8 @@ router.delete("/:importId/data", async (req, res, next) => {
       },
     });
 
-    // Recalculate usage after deletion
+    // Recalculate usage after deletion via analytics facade
     await recalculateClientUsage(importBatch.clientId);
-    await recalculateClientMonthlyUsage(importBatch.clientId);
 
     res.json({
       message: "Import data deleted successfully",
@@ -871,11 +991,9 @@ router.post("/recalculate/:clientId", async (req, res, next) => {
       },
     });
 
-    // Run recalculations
+    // Run recalculations via analytics facade
+    // The facade handles both DS Analytics and TypeScript based on client feature flag
     await recalculateClientUsage(clientId);
-
-    // Calculate monthly usage for Phase 13 features
-    await recalculateClientMonthlyUsage(clientId);
 
     const alertResult = await runAlertGeneration(clientId);
 
@@ -1041,19 +1159,45 @@ router.get("/custom-fields/:clientId/stats", async (req, res, next) => {
 
 /**
  * Detect the Python command available on the system.
- * Tries 'python3' first, then falls back to 'python'.
+ * Prefers the venv Python, then falls back to system python3/python.
+ * Validates that critical dependencies are installed.
  */
 function getPythonCommand(): string {
-  const commands = ["python3", "python"];
+  // Prefer the venv Python which has all dependencies installed
+  const venvPython = path.join(
+    process.cwd(),
+    "apps",
+    "python-importer",
+    "venv",
+    "bin",
+    "python",
+  );
+  const commands = [venvPython, "python3", "python"];
+
   for (const cmd of commands) {
     try {
+      // Check Python version
       execSync(`${cmd} --version`, { stdio: "ignore" });
+
+      // Validate critical dependencies exist
+      const testImport = `${cmd} -c "import pandas, sqlalchemy, psycopg2"`;
+      execSync(testImport, { stdio: "ignore" });
+
+      console.log(`[Import] Using Python: ${cmd}`);
       return cmd;
-    } catch {
-      // Command not found, try next
+    } catch (err) {
+      console.warn(
+        `[Import] Python command ${cmd} failed validation:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      // Try next command
     }
   }
-  throw new Error("Python not found. Please install Python 3.");
+
+  throw new Error(
+    "Python not found or missing required dependencies (pandas, sqlalchemy, psycopg2). " +
+      "Please set up Python environment in apps/python-importer/venv or install dependencies globally.",
+  );
 }
 
 /** Import timeout in milliseconds (30 minutes) */
