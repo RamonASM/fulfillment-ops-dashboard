@@ -19,6 +19,10 @@ import {
   type ConfidenceLevel,
 } from "../lib/string-similarity.js";
 import {
+  aiMappingService,
+  type AIMappingResponse,
+} from "./ai-mapping.service.js";
+import {
   analyzeColumnDataType,
   validateQuantitySamples,
   validateProductIdSamples,
@@ -249,59 +253,134 @@ export async function parseFilePreview(
 // AUTO-DETECTION
 // =============================================================================
 
+// Inventory-specific signatures (no overlap with orders)
 const INVENTORY_SIGNATURES = [
   "available quantity",
-  "quantity multiplier",
   "total qty on hand",
   "notification point",
   "current notification point",
   "packs available",
   "pack size",
+  "reorder point",
+  "stock level",
+  "on hand",
+  "inventory level",
 ];
 
+// Order-specific signatures (no overlap with inventory)
 const ORDER_SIGNATURES = [
   "order id",
   "date submitted",
-  "total quantity",
   "ship to",
   "order status",
   "order number",
   "qty ordered",
   "line item",
-  "quantity multiplier",
   "extended price",
   "unit price",
   "ship to company",
   "ship to identifier",
+  "order date",
+  "ship date",
+  "tracking number",
 ];
 
+// Ambiguous signatures that appear in both types
+const AMBIGUOUS_SIGNATURES = [
+  "quantity multiplier",
+  "total quantity",
+  "quantity",
+];
+
+export interface DetectionResult {
+  type: "inventory" | "orders" | "both";
+  confidence: "high" | "medium" | "low";
+  inventoryMatches: number;
+  orderMatches: number;
+  ambiguousMatches: number;
+  matchedInventoryHeaders: string[];
+  matchedOrderHeaders: string[];
+}
+
 /**
- * Detect file type from headers
+ * Detect file type from headers with confidence scoring
+ */
+export function detectFileTypeWithConfidence(
+  headers: string[],
+): DetectionResult {
+  const normalizedHeaders = headers.map((h) => h.toLowerCase().trim());
+
+  const matchedInventoryHeaders: string[] = [];
+  const matchedOrderHeaders: string[] = [];
+
+  const inventoryMatches = normalizedHeaders.filter((h) => {
+    const match = INVENTORY_SIGNATURES.some((sig) => h.includes(sig));
+    if (match) matchedInventoryHeaders.push(h);
+    return match;
+  }).length;
+
+  const orderMatches = normalizedHeaders.filter((h) => {
+    const match = ORDER_SIGNATURES.some((sig) => h.includes(sig));
+    if (match) matchedOrderHeaders.push(h);
+    return match;
+  }).length;
+
+  const ambiguousMatches = normalizedHeaders.filter((h) =>
+    AMBIGUOUS_SIGNATURES.some((sig) => h.includes(sig)),
+  ).length;
+
+  // Determine type
+  let type: "inventory" | "orders" | "both";
+  if (inventoryMatches >= 2 && orderMatches >= 2) {
+    type = "both";
+  } else if (inventoryMatches >= 2) {
+    type = "inventory";
+  } else if (orderMatches >= 2) {
+    type = "orders";
+  } else if (inventoryMatches > orderMatches) {
+    type = "inventory";
+  } else if (orderMatches > inventoryMatches) {
+    type = "orders";
+  } else {
+    type = "inventory"; // Default fallback
+  }
+
+  // Determine confidence
+  let confidence: "high" | "medium" | "low";
+  const totalMatches = inventoryMatches + orderMatches;
+  const matchDiff = Math.abs(inventoryMatches - orderMatches);
+
+  if (totalMatches >= 4 && matchDiff >= 3 && ambiguousMatches <= 1) {
+    confidence = "high";
+  } else if (totalMatches >= 2 && matchDiff >= 1) {
+    confidence = "medium";
+  } else {
+    confidence = "low";
+  }
+
+  // If there are many ambiguous matches relative to clear matches, reduce confidence
+  if (ambiguousMatches >= totalMatches && totalMatches > 0) {
+    confidence = "low";
+  }
+
+  return {
+    type,
+    confidence,
+    inventoryMatches,
+    orderMatches,
+    ambiguousMatches,
+    matchedInventoryHeaders,
+    matchedOrderHeaders,
+  };
+}
+
+/**
+ * Detect file type from headers (legacy function for backwards compatibility)
  */
 export function detectFileType(
   headers: string[],
 ): "inventory" | "orders" | "both" {
-  const normalizedHeaders = headers.map((h) => h.toLowerCase().trim());
-
-  const inventoryMatches = normalizedHeaders.filter((h) =>
-    INVENTORY_SIGNATURES.some((sig) => h.includes(sig)),
-  ).length;
-
-  const orderMatches = normalizedHeaders.filter((h) =>
-    ORDER_SIGNATURES.some((sig) => h.includes(sig)),
-  ).length;
-
-  if (inventoryMatches >= 2 && orderMatches >= 2) {
-    return "both";
-  }
-  if (inventoryMatches >= 2) {
-    return "inventory";
-  }
-  if (orderMatches >= 2) {
-    return "orders";
-  }
-
-  return "inventory";
+  return detectFileTypeWithConfidence(headers).type;
 }
 
 // =============================================================================
@@ -789,6 +868,120 @@ const EXTENDED_FIELD_PATTERNS: FieldPattern[] = [
     ],
     mapsTo: "notes",
     expectedType: "text",
+  },
+  // =============================================================================
+  // Usage Metrics Fields
+  // These capture consumption rates and calculation methods from Everstory/DS imports
+  // =============================================================================
+  {
+    patterns: [
+      "monthly usage",
+      "monthly usage units",
+      "monthly useage", // common misspelling
+      "monthly useage units",
+      "usage units",
+      "units per month",
+      "monthly consumption",
+      "burn rate",
+      "usage rate",
+      "avg monthly usage",
+      "average monthly usage",
+      "monthly burn",
+      "consumption rate",
+      "monthly volume",
+      "usage per month",
+    ],
+    mapsTo: "monthlyUsageUnits",
+    expectedType: "numeric_positive",
+  },
+  {
+    patterns: [
+      "based on",
+      "calculation basis",
+      "calculated from",
+      "data period",
+      "usage period",
+      "calculation period",
+      "based on data",
+      "basis",
+      "time period",
+      "reporting period",
+      "usage based on",
+    ],
+    mapsTo: "calculationBasis",
+    expectedType: "text",
+  },
+  // =============================================================================
+  // Reserved Inventory Fields
+  // These track allocated/committed inventory not available for general use
+  // =============================================================================
+  {
+    patterns: [
+      "reserved quantity",
+      "reserved qty",
+      "reserved",
+      "allocated",
+      "allocated quantity",
+      "allocated qty",
+      "committed",
+      "committed quantity",
+      "committed qty",
+      "on hold",
+      "hold quantity",
+      "held",
+      "held quantity",
+      "earmarked",
+      "set aside",
+    ],
+    mapsTo: "reservedQuantity",
+    expectedType: "numeric_positive",
+  },
+  {
+    patterns: [
+      "reserved units",
+      "allocated units",
+      "committed units",
+      "units reserved",
+      "units allocated",
+      "units on hold",
+    ],
+    mapsTo: "reservedUnits",
+    expectedType: "numeric_positive",
+  },
+  {
+    patterns: [
+      "available quantity",
+      "available qty",
+      "qty available",
+      "quantity available",
+      "available",
+      "free stock",
+      "unreserved quantity",
+      "unreserved qty",
+      "sellable quantity",
+      "sellable qty",
+      "available to sell",
+      "ats",
+    ],
+    mapsTo: "availableQuantity",
+    expectedType: "numeric_positive",
+  },
+  // =============================================================================
+  // Notification/Reorder Point Fields
+  // Keep these separate from reserved quantities to prevent mis-mapping
+  // =============================================================================
+  {
+    patterns: [
+      "notification point",
+      "current notification point",
+      "new notification point",
+      "alert threshold",
+      "notification threshold",
+      "notify at",
+      "notification level",
+    ],
+    mapsTo: "notificationPoint",
+    expectedType: "numeric_positive",
   },
 ];
 
@@ -1899,8 +2092,81 @@ export async function generateColumnMappingWithLearning(
   // Get learned boosts for this client
   const learnedBoosts = await getLearnedBoosts(clientId, headers);
 
-  // Generate base mappings
+  // ==========================================================================
+  // HYBRID AI + JARO-WINKLER MAPPING STRATEGY
+  // ==========================================================================
+  // 1. Try AI mapping first (if enabled and API key available)
+  // 2. For high-confidence AI results (≥70%), use them
+  // 3. For low-confidence or unmapped, fall back to Jaro-Winkler
+  // ==========================================================================
+
+  let aiMappings: Map<
+    string,
+    { targetField: string; confidence: number; reasoning: string }
+  > = new Map();
+
+  // Try AI mapping first
+  if (aiMappingService.isEnabled() && sampleRows && sampleRows.length > 0) {
+    try {
+      const aiFileType = fileType === "orders" ? "order" : "inventory";
+      const sampleData = sampleRows
+        .slice(0, 5)
+        .map((row) => headers.map((h) => String(row[h] ?? "")));
+
+      console.log(
+        `[Import] Attempting AI mapping for ${headers.length} headers...`,
+      );
+
+      const aiResponse = await aiMappingService.getMappings({
+        headers,
+        sampleData,
+        fileType: aiFileType,
+        clientId,
+      });
+
+      if (aiResponse.aiUsed && aiResponse.mappings.length > 0) {
+        console.log(
+          `[Import] AI mapping returned ${aiResponse.mappings.length} results (cached: ${aiResponse.cached})`,
+        );
+
+        for (const mapping of aiResponse.mappings) {
+          // Only use AI mappings with confidence >= 0.7
+          if (mapping.targetField && mapping.confidence >= 0.7) {
+            aiMappings.set(mapping.sourceHeader, {
+              targetField: mapping.targetField,
+              confidence: mapping.confidence,
+              reasoning: mapping.reasoning,
+            });
+          }
+        }
+
+        console.log(
+          `[Import] Using ${aiMappings.size} high-confidence AI mappings`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[Import] AI mapping failed, falling back to Jaro-Winkler:",
+        error,
+      );
+    }
+  }
+
+  // Generate base mappings using Jaro-Winkler
   const mappings = generateColumnMapping(headers, fileType, sampleRows);
+
+  // Apply AI mappings where available (override Jaro-Winkler results)
+  for (const mapping of mappings) {
+    const aiMapping = aiMappings.get(mapping.source);
+    if (aiMapping) {
+      // AI mapping available - use it
+      mapping.mapsTo = aiMapping.targetField;
+      mapping.confidence = aiMapping.confidence;
+      mapping.confidenceLevel = getConfidenceLevel(aiMapping.confidence);
+      mapping.warnings = mapping.warnings || [];
+      mapping.warnings.push(`AI-mapped: ${aiMapping.reasoning}`);
+    }
+  }
 
   // Apply learned boosts to each mapping
   for (const mapping of mappings) {
@@ -2431,6 +2697,8 @@ const CORE_PRODUCT_FIELDS = new Set([
   "packSize",
   "notificationPoint",
   "currentStockPacks",
+  "vendorName",
+  "vendorCode",
 ]);
 
 /** Core fields that map directly to Transaction table columns */
