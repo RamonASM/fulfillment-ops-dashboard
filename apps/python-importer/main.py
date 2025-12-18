@@ -13,7 +13,8 @@ _package_dir = os.path.dirname(os.path.abspath(__file__))
 if _package_dir not in sys.path:
     sys.path.insert(0, _package_dir)
 
-from database import initialize_database, get_db, engine
+from database import initialize_database, get_db
+import database
 import models
 
 
@@ -471,7 +472,7 @@ if __name__ == "__main__":
 
     # Create tables after successful connection
     try:
-        models.Base.metadata.create_all(bind=engine)
+        models.Base.metadata.create_all(bind=database.engine)
         print("[main.py] Database tables verified")
     except Exception as e:
         print(f"FATAL: Failed to create/verify tables: {e}", file=sys.stderr)
