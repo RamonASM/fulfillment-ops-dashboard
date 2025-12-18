@@ -111,6 +111,9 @@ export interface Product {
   isActive: boolean;
   isOrphan: boolean;
   metadata: Record<string, unknown>;
+  // Vendor/supplier fields
+  vendorName?: string;
+  vendorCode?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -233,9 +236,21 @@ export interface ImportError {
   value?: string;
 }
 
+export interface ImportDetectionResult {
+  confidence: "high" | "medium" | "low";
+  inventoryMatches: number;
+  orderMatches: number;
+  ambiguousMatches: number;
+  matchedInventoryHeaders: string[];
+  matchedOrderHeaders: string[];
+}
+
 export interface ImportPreview {
   importId: string;
   detectedType: ImportType;
+  selectedType: ImportType;
+  userOverride: boolean;
+  detection: ImportDetectionResult;
   rowCount: number;
   columns: ColumnMapping[];
   sampleRows: Record<string, unknown>[];
