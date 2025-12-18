@@ -534,6 +534,12 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
         db.commit()
         print(f"Import {import_batch_id} finished. Processed {total_rows_processed} rows with {len(errors_encountered)} errors.")
 
+        # Exit with error code if import failed (errors exist or 0 rows processed)
+        # This signals to Node.js that the import failed, triggering proper error handling
+        if errors_encountered or total_rows_processed == 0:
+            print(f"Import failed - exiting with error code", file=sys.stderr)
+            sys.exit(1)
+
     except Exception as e:
         db.rollback()
         print(f"Fatal error during import setup {import_batch_id}: {e}", file=sys.stderr)
