@@ -209,15 +209,15 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     df['createdAt'] = datetime.now()
     df['updatedAt'] = datetime.now()
 
-    # Handle custom fields - store in metadata
+    # Handle custom fields - store in product_metadata (matches model column name)
     if mapping_data and mapping_data.get('columnMappings'):
         custom_mappings = [m for m in mapping_data['columnMappings'] if m.get('isCustomField', False)]
         if custom_mappings:
-            df['metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
+            df['product_metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
         else:
-            df['metadata'] = [{} for _ in range(len(df))]
+            df['product_metadata'] = [{} for _ in range(len(df))]
     else:
-        df['metadata'] = [{} for _ in range(len(df))]
+        df['product_metadata'] = [{} for _ in range(len(df))]
 
     # Select only columns that exist in the Product model
     model_columns = [c.name for c in models.Product.__table__.columns]
@@ -252,7 +252,11 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
 
         # Fill in missing required mappings from fallback
         for source, target in required_mappings.items():
-            if target not in rename_map.values() and source in df.columns:
+            # Only add if:
+            # 1. Target column doesn't already exist (wasn't already renamed)
+            # 2. Source column exists in CSV
+            # 3. Source hasn't already been mapped to something else
+            if target not in rename_map.values() and source in df.columns and source not in rename_map:
                 rename_map[source] = target
                 print(f"  Added fallback mapping: {source} -> {target}")
     else:
@@ -393,10 +397,10 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     except KeyError as e:
                         error_msg = f"Column {e} not found. Available columns: {list(cleaned_chunk.columns)}"
                         print(f"FATAL ERROR in chunk {i+1}: {error_msg}", file=sys.stderr)
-                        batch_errors.append({
-                            'chunk': i + 1,
-                            'error': error_msg,
-                            'type': 'KeyError'
+                        errors_encountered.append({
+                            "row_range": f"{(i*chunk_size)+1}-{i*chunk_size+len(chunk)}",
+                            "message": error_msg,
+                            "type": "KeyError"
                         })
                         continue  # Skip this chunk
 
