@@ -45,8 +45,12 @@ export interface StockoutPrediction {
 // =============================================================================
 
 export class MLClientService {
+  // UNIFIED: Use DS_ANALYTICS_URL (same as ds-analytics.service.ts)
+  // ML_SERVICE_URL kept for backwards compatibility
   private static baseURL =
-    process.env.ML_SERVICE_URL || "http://localhost:8000";
+    process.env.DS_ANALYTICS_URL ||
+    process.env.ML_SERVICE_URL ||
+    "http://localhost:8000";
   private static timeout = 30000; // 30 seconds
 
   /**

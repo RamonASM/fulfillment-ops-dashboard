@@ -19,6 +19,43 @@ import models
 
 
 # =============================================================================
+# FILE READING UTILITIES
+# =============================================================================
+
+def read_file(file_path: str, chunksize: Optional[int] = None, **kwargs):
+    """
+    Read CSV or Excel file based on extension.
+    Supports .csv, .xlsx, and .xls files.
+
+    Args:
+        file_path: Path to the file
+        chunksize: Optional chunk size for reading large files
+        **kwargs: Additional arguments passed to pandas read function
+
+    Returns:
+        DataFrame or TextFileReader (if chunksize is specified)
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext in ['.xlsx', '.xls']:
+        # Excel files - openpyxl required for .xlsx
+        print(f"Detected Excel file ({ext}), using openpyxl engine")
+        # For Excel, we need to read the entire file first, then chunk manually
+        df = pd.read_excel(file_path, engine='openpyxl')
+        if chunksize:
+            # Yield chunks for Excel files to match CSV chunking behavior
+            def excel_chunker(dataframe, chunk_size):
+                for i in range(0, len(dataframe), chunk_size):
+                    yield dataframe.iloc[i:i + chunk_size].copy()
+            return excel_chunker(df, chunksize)
+        return df
+    else:
+        # CSV files (default)
+        print(f"Detected CSV file ({ext}), using pandas read_csv")
+        return pd.read_csv(file_path, chunksize=chunksize, **kwargs)
+
+
+# =============================================================================
 # MAPPING FILE UTILITIES
 # =============================================================================
 
@@ -142,26 +179,33 @@ def build_product_lookup(db: Session, client_id: uuid.UUID, product_ids: list) -
 # =============================================================================
 
 def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[dict] = None) -> pd.DataFrame:
-    """Cleans and transforms data for inventory imports."""
+    """
+    Cleans and transforms data for inventory imports.
+
+    CRITICAL: All column names must use snake_case to match database column names.
+    bulk_insert_mappings() uses database column names (from __table__.columns.name),
+    NOT Python attribute names. SQLAlchemy SILENTLY IGNORES unknown keys!
+    """
     # Ensure all string operations are on string type
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.strip()
 
-    # Determine rename map - use intelligent mapping if provided, else fallback to hard-coded
+    # CRITICAL: Use snake_case targets to match database column names
+    # Database columns are: product_id, name, item_type, pack_size, current_stock_packs, notification_point
     if mapping_data and mapping_data.get('columnMappings'):
         rename_map = build_rename_map(mapping_data['columnMappings'])
         print(f"Using intelligent column mapping with {len(rename_map)} mappings")
 
         # Fill in missing required mappings from fallback (case-insensitive)
-        # This handles the case where user corrects intelligent mappings and leaves gaps
+        # NOTE: All targets use snake_case to match database column names
         required_mappings = {
-            'Product ID': 'productId',
+            'Product ID': 'product_id',
             'Product Name': 'name',
-            'Item Type': 'itemType',
-            'Quantity Multiplier': 'packSize',
-            'Available Quantity': 'currentStockPacks',
-            'New Notification Point': 'notificationPoint',
+            'Item Type': 'item_type',
+            'Quantity Multiplier': 'pack_size',
+            'Available Quantity': 'current_stock_packs',
+            'New Notification Point': 'notification_point',
         }
 
         for fallback_source, target in required_mappings.items():
@@ -183,23 +227,22 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
                 print(f"  Added fallback mapping: {matching_col} -> {target}")
     else:
         # Fallback to hard-coded mapping for backwards compatibility
+        # NOTE: All targets use snake_case to match database column names
         rename_map = {
-            'Product ID': 'productId',
+            'Product ID': 'product_id',
             'Product Name': 'name',
-            'Item Type': 'itemType',
-            'Quantity Multiplier': 'packSize',
-            'Available Quantity': 'currentStockPacks',
-            # Note: Both 'Current Notification Point' and 'New Notification Point' map to 'notificationPoint'
-            # The logic at line 170-173 handles finding whichever exists in the CSV
-            'New Notification Point': 'notificationPoint',
-            'Current Notification Point': 'notificationPoint',  # Fallback if 'New' doesn't exist
+            'Item Type': 'item_type',
+            'Quantity Multiplier': 'pack_size',
+            'Available Quantity': 'current_stock_packs',
+            'New Notification Point': 'notification_point',
+            'Current Notification Point': 'notification_point',  # Fallback if 'New' doesn't exist
         }
         print("Using fallback hard-coded column mapping")
 
     # Clean 'New Notification Point' or mapped equivalent before renaming
     notification_col = None
     for source, target in rename_map.items():
-        if target == 'notificationPoint' and source in df.columns:
+        if target == 'notification_point' and source in df.columns:
             notification_col = source
             break
 
@@ -209,11 +252,11 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
         )
         df[notification_col] = pd.to_numeric(df[notification_col], errors='coerce').fillna(0).astype(int)
 
-    # Clean numeric columns before renaming
+    # Clean numeric columns before renaming (use snake_case targets)
     for source, target in rename_map.items():
         if source in df.columns:
-            if target in ['currentStockPacks', 'packSize']:
-                df[source] = pd.to_numeric(df[source], errors='coerce').fillna(0 if target == 'currentStockPacks' else 1).astype(int)
+            if target in ['current_stock_packs', 'pack_size']:
+                df[source] = pd.to_numeric(df[source], errors='coerce').fillna(0 if target == 'current_stock_packs' else 1).astype(int)
 
     # Apply the rename mapping
     df.rename(columns=rename_map, inplace=True)
@@ -222,39 +265,40 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     client_uuid = uuid.UUID(client_id) if isinstance(client_id, str) else client_id
 
     # Add/Ensure required columns and types with proper UUID
+    # CRITICAL: Use snake_case column names to match database columns
     df['id'] = [uuid.uuid4() for _ in range(len(df))]
-    df['clientId'] = client_uuid
+    df['client_id'] = client_uuid  # snake_case (database column)
 
-    # Ensure packSize exists and has a default
-    if 'packSize' not in df.columns:
-        df['packSize'] = 1
-    df['packSize'] = df['packSize'].fillna(1).astype(int)
+    # Ensure pack_size exists and has a default (snake_case)
+    if 'pack_size' not in df.columns:
+        df['pack_size'] = 1
+    df['pack_size'] = df['pack_size'].fillna(1).astype(int)
 
-    # Ensure currentStockPacks exists
-    if 'currentStockPacks' not in df.columns:
-        df['currentStockPacks'] = 0
+    # Ensure current_stock_packs exists (snake_case)
+    if 'current_stock_packs' not in df.columns:
+        df['current_stock_packs'] = 0
 
-    # Calculate currentStockUnits
-    df['currentStockUnits'] = df['currentStockPacks'] * df['packSize']
+    # Calculate current_stock_units (snake_case)
+    df['current_stock_units'] = df['current_stock_packs'] * df['pack_size']
 
-    df['createdAt'] = datetime.now()
-    df['updatedAt'] = datetime.now()
+    df['created_at'] = datetime.now()  # snake_case (database column)
+    df['updated_at'] = datetime.now()  # snake_case (database column)
 
-    # Handle custom fields - store in product_metadata (matches model column name)
+    # Handle custom fields - store in 'metadata' column (database column name)
     if mapping_data and mapping_data.get('columnMappings'):
         custom_mappings = [m for m in mapping_data['columnMappings'] if m.get('isCustomField', False)]
         if custom_mappings:
-            df['product_metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
+            df['metadata'] = df.apply(lambda row: extract_custom_fields(row, custom_mappings), axis=1)
         else:
-            df['product_metadata'] = [{} for _ in range(len(df))]
+            df['metadata'] = [{} for _ in range(len(df))]
     else:
-        df['product_metadata'] = [{} for _ in range(len(df))]
+        df['metadata'] = [{} for _ in range(len(df))]
 
     # Select only columns that exist in the Product model
     model_columns = [c.name for c in models.Product.__table__.columns]
 
-    # Validate required columns exist before reindex
-    required_for_model = ['productId', 'name']  # Required for Product model
+    # Validate required columns exist before reindex (use snake_case)
+    required_for_model = ['product_id', 'name']  # snake_case database column names
     existing_columns = set(df.columns)
     missing_required = [col for col in required_for_model if col not in existing_columns]
 
@@ -270,22 +314,29 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
 
 
 def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[dict] = None) -> pd.DataFrame:
-    """Cleans and transforms data for orders imports."""
+    """
+    Cleans and transforms data for orders imports.
+
+    CRITICAL: All column names must use snake_case to match database column names.
+    bulk_insert_mappings() uses database column names (from __table__.columns.name),
+    NOT Python attribute names. SQLAlchemy SILENTLY IGNORES unknown keys!
+    """
     # Ensure all string operations are on string type
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].astype(str).str.strip()
 
-    # Define required column mappings for orders
+    # CRITICAL: Use snake_case targets to match database column names
+    # Database columns are: product_id, order_id, quantity_packs, quantity_units, date_submitted, etc.
     required_mappings = {
-        'Product ID': 'productId',
-        'Order ID': 'orderId',
-        'Quantity': 'quantityPacks',
-        'Total Quantity': 'quantityUnits',
-        'Date Submitted': 'dateSubmitted',
-        'Order Status': 'orderStatus',
-        'Ship To Location': 'shipToLocation',
-        'Ship To Company': 'shipToCompany',
+        'Product ID': 'product_id',
+        'Order ID': 'order_id',
+        'Quantity': 'quantity_packs',
+        'Total Quantity': 'quantity_units',
+        'Date Submitted': 'date_submitted',
+        'Order Status': 'order_status',
+        'Ship To Location': 'ship_to_location',
+        'Ship To Company': 'ship_to_company',
     }
 
     # Determine rename map - use intelligent mapping if provided, else fallback to hard-coded
@@ -321,10 +372,10 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
     if 'Extended Price' in df.columns:
         df['Extended Price'] = df['Extended Price'].astype(str).str.replace(r'[$,]', '', regex=True).astype(float)
 
-    # Find and clean date column before renaming
+    # Find and clean date column before renaming (snake_case target)
     date_col = None
     for source, target in rename_map.items():
-        if target == 'dateSubmitted' and source in df.columns:
+        if target == 'date_submitted' and source in df.columns:
             date_col = source
             break
 
@@ -337,16 +388,16 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
         if rows_after < rows_before:
             print(f"  Warning: Dropped {rows_before - rows_after} rows with invalid dates", file=sys.stderr)
 
-    # Clean quantity columns before renaming
+    # Clean quantity columns before renaming (snake_case targets)
     for source, target in rename_map.items():
-        if source in df.columns and target in ['quantityPacks', 'quantityUnits']:
+        if source in df.columns and target in ['quantity_packs', 'quantity_units']:
             df[source] = pd.to_numeric(df[source], errors='coerce').fillna(0).astype(int)
 
     # Apply the rename mapping
     df.rename(columns=rename_map, inplace=True)
 
-    # Validate required columns exist
-    required_columns = ['productId', 'dateSubmitted']
+    # Validate required columns exist (snake_case)
+    required_columns = ['product_id', 'date_submitted']
     missing_columns = [col for col in required_columns if col not in df.columns]
 
     if missing_columns:
@@ -356,9 +407,10 @@ def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[d
         )
 
     # Generate UUID for each transaction
+    # CRITICAL: Use snake_case column names to match database columns
     df['id'] = [uuid.uuid4() for _ in range(len(df))]
-    df['createdAt'] = datetime.now()
-    df['importBatchId'] = None  # Will be set by the main process
+    df['created_at'] = datetime.now()  # snake_case (database column)
+    df['import_batch_id'] = None  # snake_case (database column) - Will be set by the main process
 
     # Select only columns that exist in the Transaction model
     model_columns = [c.name for c in models.Transaction.__table__.columns]
@@ -404,8 +456,16 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
         print(f"Starting import for type '{import_type}'...")
 
-        # Process file in chunks
-        for i, chunk in enumerate(pd.read_csv(absolute_file_path, chunksize=chunk_size, on_bad_lines='warn', encoding='utf-8', encoding_errors='replace')):
+        # Process file in chunks - supports both CSV and Excel files
+        file_reader = read_file(
+            absolute_file_path,
+            chunksize=chunk_size,
+            on_bad_lines='warn',
+            encoding='utf-8',
+            encoding_errors='replace'
+        )
+
+        for i, chunk in enumerate(file_reader):
             try:
                 if import_type == 'inventory':
                     print(f"Processing inventory chunk {i+1}...")

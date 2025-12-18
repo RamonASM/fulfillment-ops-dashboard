@@ -8,3 +8,4 @@ fastapi==0.125.0
 uvicorn==0.38.0
 SQLAlchemy==2.0.45
 psycopg2-binary==2.9.11
+openpyxl>=3.1.0  # Required for Excel (.xlsx/.xls) file support

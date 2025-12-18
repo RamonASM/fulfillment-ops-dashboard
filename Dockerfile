@@ -112,8 +112,9 @@ RUN apt-get update && apt-get install -y \
 # Copy python-importer code
 COPY apps/python-importer /app/apps/python-importer
 
-# Install Python dependencies
-RUN python3 -m pip install --no-cache-dir -r apps/python-importer/requirements.txt --user --break-system-packages
+# Install Python dependencies system-wide (NOT --user, which would install to /root/.local/)
+# Container runs as 'api' user, so system-wide install ensures packages are accessible
+RUN python3 -m pip install --no-cache-dir -r apps/python-importer/requirements.txt --break-system-packages
 
 # Create non-root user BEFORE copying files with ownership
 RUN addgroup --system --gid 1001 nodejs && \

@@ -1201,28 +1201,49 @@ router.get("/custom-fields/:clientId/stats", async (req, res, next) => {
 
 /**
  * Detect the Python command available on the system.
- * Prefers the venv Python, then falls back to system python3/python.
- * Validates that critical dependencies are installed.
+ * Supports multiple platforms: Docker containers, Unix (macOS/Linux), and Windows.
+ * Validates that critical dependencies (including openpyxl for Excel support) are installed.
  */
 function getPythonCommand(): string {
-  // Prefer the venv Python which has all dependencies installed
-  const venvPython = path.join(
-    process.cwd(),
-    "apps",
-    "python-importer",
-    "venv",
-    "bin",
+  // Multi-platform Python paths in priority order:
+  // 1. Docker container system Python (installed globally in Dockerfile)
+  // 2. Local venv on Unix (macOS/Linux)
+  // 3. Local venv on Windows
+  // 4. System Python (python3/python)
+  const possiblePaths = [
+    // Docker container - Python installed system-wide
+    "/usr/bin/python3",
+    // Local venv on Unix (macOS/Linux)
+    path.join(
+      process.cwd(),
+      "apps",
+      "python-importer",
+      "venv",
+      "bin",
+      "python",
+    ),
+    // Local venv on Windows
+    path.join(
+      process.cwd(),
+      "apps",
+      "python-importer",
+      "venv",
+      "Scripts",
+      "python.exe",
+    ),
+    // System Python (works on all platforms)
+    "python3",
     "python",
-  );
-  const commands = [venvPython, "python3", "python"];
+  ];
 
-  for (const cmd of commands) {
+  for (const cmd of possiblePaths) {
     try {
       // Check Python version
       execSync(`${cmd} --version`, { stdio: "ignore" });
 
-      // Validate critical dependencies exist
-      const testImport = `${cmd} -c "import pandas, sqlalchemy, psycopg2"`;
+      // Validate ALL critical dependencies exist, including openpyxl for Excel support
+      // CRITICAL: openpyxl is required for .xlsx/.xls file imports
+      const testImport = `${cmd} -c "import pandas, sqlalchemy, psycopg2, openpyxl"`;
       execSync(testImport, { stdio: "ignore" });
 
       console.log(`[Import] Using Python: ${cmd}`);
@@ -1237,8 +1258,9 @@ function getPythonCommand(): string {
   }
 
   throw new Error(
-    "Python not found or missing required dependencies (pandas, sqlalchemy, psycopg2). " +
-      "Please set up Python environment in apps/python-importer/venv or install dependencies globally.",
+    "Python not found or missing required dependencies (pandas, sqlalchemy, psycopg2, openpyxl). " +
+      "Please set up Python environment in apps/python-importer/venv or install dependencies globally. " +
+      "Note: openpyxl is required for Excel (.xlsx/.xls) file support.",
   );
 }
 

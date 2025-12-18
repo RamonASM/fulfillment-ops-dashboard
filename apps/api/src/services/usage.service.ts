@@ -1,5 +1,13 @@
-import { prisma } from '../lib/prisma.js';
-import { subMonths, subWeeks, differenceInMonths, differenceInWeeks, format, startOfMonth, endOfMonth } from 'date-fns';
+import { prisma } from "../lib/prisma.js";
+import {
+  subMonths,
+  subWeeks,
+  differenceInMonths,
+  differenceInWeeks,
+  format,
+  startOfMonth,
+  endOfMonth,
+} from "date-fns";
 
 // =============================================================================
 // TYPES
@@ -7,18 +15,22 @@ import { subMonths, subWeeks, differenceInMonths, differenceInWeeks, format, sta
 
 interface UsageCalculation {
   productId: string;
-  calculationBasis: '12-mo' | '3-mo' | 'weekly';
+  calculationBasis: "12-mo" | "3-mo" | "weekly";
   avgMonthlyUnits: number;
   avgDailyUnits: number;
   avgWeeklyUnits: number;
   dataPointCount: number;
-  confidenceLevel: 'high' | 'medium' | 'low';
+  confidenceLevel: "high" | "medium" | "low";
   calculatedAt: Date;
 }
 
 // Phase 13: Enhanced Monthly Usage Types
-export type UsageCalculationTier = '12_month' | '6_month' | '3_month' | 'weekly';
-export type UsageConfidence = 'high' | 'medium' | 'low';
+export type UsageCalculationTier =
+  | "12_month"
+  | "6_month"
+  | "3_month"
+  | "weekly";
+export type UsageConfidence = "high" | "medium" | "low";
 
 export interface MonthlyUsageResult {
   productId: string;
@@ -75,7 +87,9 @@ interface Transaction {
  * - 3-12 months → 3-month average
  * - < 3 months → weekly rate
  */
-export async function calculateUsage(productId: string): Promise<UsageCalculation> {
+export async function calculateUsage(
+  productId: string,
+): Promise<UsageCalculation> {
   const now = new Date();
   const twelveMonthsAgo = subMonths(now, 12);
   const threeMonthsAgo = subMonths(now, 3);
@@ -84,27 +98,30 @@ export async function calculateUsage(productId: string): Promise<UsageCalculatio
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: 'completed',
+      orderStatus: "completed",
     },
-    orderBy: { dateSubmitted: 'asc' },
+    orderBy: { dateSubmitted: "asc" },
   });
 
   if (transactions.length === 0) {
     return {
       productId,
-      calculationBasis: 'weekly',
+      calculationBasis: "weekly",
       avgMonthlyUnits: 0,
       avgDailyUnits: 0,
       avgWeeklyUnits: 0,
       dataPointCount: 0,
-      confidenceLevel: 'low',
+      confidenceLevel: "low",
       calculatedAt: now,
     };
   }
 
   // Determine data age
   const oldestTransaction = transactions[0];
-  const dataAgeMonths = differenceInMonths(now, oldestTransaction.dateSubmitted);
+  const dataAgeMonths = differenceInMonths(
+    now,
+    oldestTransaction.dateSubmitted,
+  );
 
   if (dataAgeMonths >= 12) {
     return calculate12MonthAverage(productId, transactions, twelveMonthsAgo);
@@ -121,17 +138,17 @@ export async function calculateUsage(productId: string): Promise<UsageCalculatio
 function calculate12MonthAverage(
   productId: string,
   transactions: Transaction[],
-  startDate: Date
+  startDate: Date,
 ): UsageCalculation {
   const now = new Date();
   const relevantTransactions = transactions.filter(
-    (t) => t.dateSubmitted >= startDate
+    (t) => t.dateSubmitted >= startDate,
   );
 
   // Group by month
   const monthlyTotals = new Map<string, number>();
   for (const txn of relevantTransactions) {
-    const monthKey = format(txn.dateSubmitted, 'yyyy-MM');
+    const monthKey = format(txn.dateSubmitted, "yyyy-MM");
     const current = monthlyTotals.get(monthKey) || 0;
     monthlyTotals.set(monthKey, current + txn.quantityUnits);
   }
@@ -142,24 +159,24 @@ function calculate12MonthAverage(
   if (monthCount === 0) {
     return {
       productId,
-      calculationBasis: '12-mo',
+      calculationBasis: "12-mo",
       avgMonthlyUnits: 0,
       avgDailyUnits: 0,
       avgWeeklyUnits: 0,
       dataPointCount: 0,
-      confidenceLevel: 'low',
+      confidenceLevel: "low",
       calculatedAt: now,
     };
   }
 
   // Weighted average: last 3 months get 1.5x weight
   const weights = monthlyValues.map((_, i) =>
-    i >= monthCount - 3 ? 1.5 : 1.0
+    i >= monthCount - 3 ? 1.5 : 1.0,
   );
 
   const weightedSum = monthlyValues.reduce(
     (sum, val, i) => sum + val * weights[i],
-    0
+    0,
   );
   const weightTotal = weights.reduce((sum, w) => sum + w, 0);
   const avgMonthlyUnits = weightedSum / weightTotal;
@@ -169,12 +186,12 @@ function calculate12MonthAverage(
 
   return {
     productId,
-    calculationBasis: '12-mo',
+    calculationBasis: "12-mo",
     avgMonthlyUnits,
     avgDailyUnits,
     avgWeeklyUnits,
     dataPointCount: relevantTransactions.length,
-    confidenceLevel: 'high',
+    confidenceLevel: "high",
     calculatedAt: now,
   };
 }
@@ -185,20 +202,20 @@ function calculate12MonthAverage(
 function calculate3MonthAverage(
   productId: string,
   transactions: Transaction[],
-  startDate: Date
+  startDate: Date,
 ): UsageCalculation {
   const now = new Date();
   const relevantTransactions = transactions.filter(
-    (t) => t.dateSubmitted >= startDate
+    (t) => t.dateSubmitted >= startDate,
   );
 
   const totalUnits = relevantTransactions.reduce(
     (sum, t) => sum + t.quantityUnits,
-    0
+    0,
   );
   // FIX: Calculate actual months with data, not hardcoded 3
   const monthsWithData = new Set(
-    relevantTransactions.map(t => format(t.dateSubmitted, 'yyyy-MM'))
+    relevantTransactions.map((t) => format(t.dateSubmitted, "yyyy-MM")),
   ).size;
   const avgMonthlyUnits = totalUnits / Math.max(1, monthsWithData);
   const avgDailyUnits = avgMonthlyUnits / 30.44;
@@ -206,12 +223,12 @@ function calculate3MonthAverage(
 
   return {
     productId,
-    calculationBasis: '3-mo',
+    calculationBasis: "3-mo",
     avgMonthlyUnits,
     avgDailyUnits,
     avgWeeklyUnits,
     dataPointCount: relevantTransactions.length,
-    confidenceLevel: 'medium',
+    confidenceLevel: "medium",
     calculatedAt: now,
   };
 }
@@ -221,19 +238,19 @@ function calculate3MonthAverage(
  */
 function calculateWeeklyRate(
   productId: string,
-  transactions: Transaction[]
+  transactions: Transaction[],
 ): UsageCalculation {
   const now = new Date();
 
   if (transactions.length === 0) {
     return {
       productId,
-      calculationBasis: 'weekly',
+      calculationBasis: "weekly",
       avgMonthlyUnits: 0,
       avgDailyUnits: 0,
       avgWeeklyUnits: 0,
       dataPointCount: 0,
-      confidenceLevel: 'low',
+      confidenceLevel: "low",
       calculatedAt: now,
     };
   }
@@ -242,7 +259,7 @@ function calculateWeeklyRate(
   const newest = transactions[transactions.length - 1];
   const weeksOfData = Math.max(
     1,
-    differenceInWeeks(newest.dateSubmitted, oldest.dateSubmitted)
+    differenceInWeeks(newest.dateSubmitted, oldest.dateSubmitted),
   );
 
   const totalUnits = transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
@@ -252,12 +269,12 @@ function calculateWeeklyRate(
 
   return {
     productId,
-    calculationBasis: 'weekly',
+    calculationBasis: "weekly",
     avgMonthlyUnits,
     avgDailyUnits,
     avgWeeklyUnits,
     dataPointCount: transactions.length,
-    confidenceLevel: 'low',
+    confidenceLevel: "low",
     calculatedAt: now,
   };
 }
@@ -270,7 +287,7 @@ function calculateWeeklyRate(
  * Z-score lookup for service level targets
  */
 const Z_SCORES: Record<number, number> = {
-  0.90: 1.28,
+  0.9: 1.28,
   0.95: 1.65,
   0.975: 1.96,
   0.99: 2.33,
@@ -283,7 +300,7 @@ const Z_SCORES: Record<number, number> = {
 export function calculateReorderPoint(
   avgDailyUnits: number,
   config: ReorderPointConfig,
-  demandStdDev?: number
+  demandStdDev?: number,
 ): number {
   // Base demand during lead time
   const leadTimeDemand = avgDailyUnits * config.leadTimeDays;
@@ -313,7 +330,7 @@ export function calculateDemandStdDev(transactions: Transaction[]): number {
   // Group by month
   const monthlyTotals = new Map<string, number>();
   for (const txn of transactions) {
-    const monthKey = format(txn.dateSubmitted, 'yyyy-MM');
+    const monthKey = format(txn.dateSubmitted, "yyyy-MM");
     const current = monthlyTotals.get(monthKey) || 0;
     monthlyTotals.set(monthKey, current + txn.quantityUnits);
   }
@@ -336,15 +353,19 @@ export function calculateDemandStdDev(transactions: Transaction[]): number {
 
 /**
  * Recalculate usage metrics for all products of a client
+ *
+ * OPTIMIZED: Uses batch loading to avoid N+1 query problem
+ * Previous implementation: ~4000 queries for 1000 products
+ * New implementation: ~3 queries + batch operations
  */
 export async function recalculateClientUsage(clientId: string): Promise<void> {
-  // Get client settings
+  // Get client with settings (1 query)
   const client = await prisma.client.findUnique({
     where: { id: clientId },
   });
 
   if (!client) {
-    throw new Error('Client not found');
+    throw new Error("Client not found");
   }
 
   const settings = client.settings as {
@@ -359,7 +380,7 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
     serviceLevelTarget: settings.serviceLevelTarget || 0.95,
   };
 
-  // Get all active products
+  // Get all active products (1 query)
   const products = await prisma.product.findMany({
     where: {
       clientId,
@@ -367,64 +388,98 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
     },
   });
 
-  // Recalculate for each product
-  for (const product of products) {
-    const usage = await calculateUsage(product.id);
+  if (products.length === 0) {
+    return;
+  }
 
-    // Get transactions for std dev calculation
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        productId: product.id,
-        orderStatus: 'completed',
-      },
+  const productIds = products.map((p) => p.id);
+
+  // OPTIMIZATION: Load ALL transactions for ALL products in ONE query
+  const allTransactions = await prisma.transaction.findMany({
+    where: {
+      productId: { in: productIds },
+      orderStatus: "completed",
+    },
+    orderBy: { dateSubmitted: "asc" },
+  });
+
+  // Group transactions by product ID for O(1) lookup
+  const transactionsByProductId = new Map<string, Transaction[]>();
+  for (const txn of allTransactions) {
+    const existing = transactionsByProductId.get(txn.productId) || [];
+    existing.push({
+      id: txn.id,
+      quantityUnits: txn.quantityUnits,
+      dateSubmitted: txn.dateSubmitted,
+      orderStatus: txn.orderStatus,
     });
+    transactionsByProductId.set(txn.productId, existing);
+  }
+
+  const now = new Date();
+  const twelveMonthsAgo = subMonths(now, 12);
+  const threeMonthsAgo = subMonths(now, 3);
+
+  // Prepare batch updates
+  const productUpdates: Array<{
+    id: string;
+    reorderPointPacks: number;
+    calculationBasis: string;
+  }> = [];
+
+  const metricsUpserts: Array<{
+    productId: string;
+    periodType: string;
+    periodStart: Date;
+    data: {
+      periodEnd: Date;
+      totalConsumedUnits: number;
+      avgDailyUnits: number;
+      avgDailyPacks: number;
+      transactionCount: number;
+      calculatedAt: Date;
+    };
+  }> = [];
+
+  // Process all products in memory (no additional queries)
+  for (const product of products) {
+    const transactions = transactionsByProductId.get(product.id) || [];
+
+    // Calculate usage in memory
+    const usage = calculateUsageFromTransactions(
+      product.id,
+      transactions,
+      twelveMonthsAgo,
+      threeMonthsAgo,
+    );
 
     const demandStdDev =
-      usage.calculationBasis === '12-mo'
+      usage.calculationBasis === "12-mo"
         ? calculateDemandStdDev(transactions)
         : undefined;
 
-    // Calculate reorder point
     const reorderPointUnits = calculateReorderPoint(
       usage.avgDailyUnits,
       config,
-      demandStdDev
+      demandStdDev,
     );
     const reorderPointPacks = Math.ceil(reorderPointUnits / product.packSize);
 
-    // Update product with new metrics
-    await prisma.product.update({
-      where: { id: product.id },
-      data: {
-        reorderPointPacks,
-        calculationBasis: usage.calculationBasis,
-      },
+    productUpdates.push({
+      id: product.id,
+      reorderPointPacks,
+      calculationBasis: usage.calculationBasis,
     });
 
-    // Store usage metrics history
-    const now = new Date();
-    const periodStart = subMonths(now, usage.calculationBasis === '12-mo' ? 12 : 3);
-
-    await prisma.usageMetric.upsert({
-      where: {
-        productId_periodType_periodStart: {
-          productId: product.id,
-          periodType: usage.calculationBasis,
-          periodStart,
-        },
-      },
-      update: {
-        periodEnd: now,
-        totalConsumedUnits: Math.round(usage.avgMonthlyUnits * 12),
-        avgDailyUnits: usage.avgDailyUnits,
-        avgDailyPacks: usage.avgDailyUnits / product.packSize,
-        transactionCount: usage.dataPointCount,
-        calculatedAt: now,
-      },
-      create: {
-        productId: product.id,
-        periodType: usage.calculationBasis,
-        periodStart,
+    const periodStart = subMonths(
+      now,
+      usage.calculationBasis === "12-mo" ? 12 : 3,
+    );
+    metricsUpserts.push({
+      productId: product.id,
+      periodType: usage.calculationBasis,
+      periodStart,
+      data: {
         periodEnd: now,
         totalConsumedUnits: Math.round(usage.avgMonthlyUnits * 12),
         avgDailyUnits: usage.avgDailyUnits,
@@ -434,19 +489,98 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
       },
     });
   }
+
+  // OPTIMIZATION: Batch update all products in a transaction
+  await prisma.$transaction(
+    productUpdates.map((update) =>
+      prisma.product.update({
+        where: { id: update.id },
+        data: {
+          reorderPointPacks: update.reorderPointPacks,
+          calculationBasis: update.calculationBasis,
+        },
+      }),
+    ),
+  );
+
+  // OPTIMIZATION: Batch upsert all metrics
+  // Note: Prisma doesn't support bulk upsert, but batching in a transaction is still faster
+  await prisma.$transaction(
+    metricsUpserts.map((metric) =>
+      prisma.usageMetric.upsert({
+        where: {
+          productId_periodType_periodStart: {
+            productId: metric.productId,
+            periodType: metric.periodType,
+            periodStart: metric.periodStart,
+          },
+        },
+        update: metric.data,
+        create: {
+          productId: metric.productId,
+          periodType: metric.periodType,
+          periodStart: metric.periodStart,
+          ...metric.data,
+        },
+      }),
+    ),
+  );
+}
+
+/**
+ * Helper function to calculate usage from pre-loaded transactions
+ * Avoids additional database queries by operating on in-memory data
+ */
+function calculateUsageFromTransactions(
+  productId: string,
+  transactions: Transaction[],
+  twelveMonthsAgo: Date,
+  threeMonthsAgo: Date,
+): UsageCalculation {
+  const now = new Date();
+
+  if (transactions.length === 0) {
+    return {
+      productId,
+      calculationBasis: "weekly",
+      avgMonthlyUnits: 0,
+      avgDailyUnits: 0,
+      avgWeeklyUnits: 0,
+      dataPointCount: 0,
+      confidenceLevel: "low",
+      calculatedAt: now,
+    };
+  }
+
+  // Determine data age
+  const oldestTransaction = transactions[0];
+  const dataAgeMonths = differenceInMonths(
+    now,
+    oldestTransaction.dateSubmitted,
+  );
+
+  if (dataAgeMonths >= 12) {
+    return calculate12MonthAverage(productId, transactions, twelveMonthsAgo);
+  } else if (dataAgeMonths >= 3) {
+    return calculate3MonthAverage(productId, transactions, threeMonthsAgo);
+  } else {
+    return calculateWeeklyRate(productId, transactions);
+  }
 }
 
 /**
  * Recalculate usage for a single product
  */
-export async function recalculateProductUsage(productId: string): Promise<UsageCalculation> {
+export async function recalculateProductUsage(
+  productId: string,
+): Promise<UsageCalculation> {
   const product = await prisma.product.findUnique({
     where: { id: productId },
     include: { client: true },
   });
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new Error("Product not found");
   }
 
   const usage = await calculateUsage(productId);
@@ -467,19 +601,19 @@ export async function recalculateProductUsage(productId: string): Promise<UsageC
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: 'completed',
+      orderStatus: "completed",
     },
   });
 
   const demandStdDev =
-    usage.calculationBasis === '12-mo'
+    usage.calculationBasis === "12-mo"
       ? calculateDemandStdDev(transactions)
       : undefined;
 
   const reorderPointUnits = calculateReorderPoint(
     usage.avgDailyUnits,
     config,
-    demandStdDev
+    demandStdDev,
   );
   const reorderPointPacks = Math.ceil(reorderPointUnits / product.packSize);
 
@@ -510,7 +644,9 @@ export async function recalculateProductUsage(productId: string): Promise<UsageC
  * - 3_month: 3-5 months of data → MEDIUM confidence
  * - weekly: <3 months of data → LOW confidence (extrapolated from weekly rate)
  */
-export async function calculateMonthlyUsage(productId: string): Promise<MonthlyUsageResult> {
+export async function calculateMonthlyUsage(
+  productId: string,
+): Promise<MonthlyUsageResult> {
   const now = new Date();
 
   // Get product with pack size
@@ -520,24 +656,30 @@ export async function calculateMonthlyUsage(productId: string): Promise<MonthlyU
   });
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new Error("Product not found");
   }
 
   // Get all completed transactions for this product
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: 'completed',
+      orderStatus: "completed",
     },
-    orderBy: { dateSubmitted: 'asc' },
+    orderBy: { dateSubmitted: "asc" },
   });
 
   // Group transactions by month
-  const monthlyData = new Map<string, { units: number; transactionCount: number }>();
+  const monthlyData = new Map<
+    string,
+    { units: number; transactionCount: number }
+  >();
 
   for (const txn of transactions) {
-    const monthKey = format(txn.dateSubmitted, 'yyyy-MM');
-    const existing = monthlyData.get(monthKey) || { units: 0, transactionCount: 0 };
+    const monthKey = format(txn.dateSubmitted, "yyyy-MM");
+    const existing = monthlyData.get(monthKey) || {
+      units: 0,
+      transactionCount: 0,
+    };
     monthlyData.set(monthKey, {
       units: existing.units + txn.quantityUnits,
       transactionCount: existing.transactionCount + 1,
@@ -561,8 +703,8 @@ export async function calculateMonthlyUsage(productId: string): Promise<MonthlyU
       productId,
       monthlyUsageUnits: 0,
       monthlyUsagePacks: 0,
-      calculationTier: 'weekly',
-      confidence: 'low',
+      calculationTier: "weekly",
+      confidence: "low",
       dataMonths: 0,
       monthlyBreakdown: [],
       calculatedAt: now,
@@ -576,43 +718,54 @@ export async function calculateMonthlyUsage(productId: string): Promise<MonthlyU
 
   if (dataMonths >= 12) {
     // Use 12-month weighted average (recent months get more weight)
-    calculationTier = '12_month';
-    confidence = 'high';
+    calculationTier = "12_month";
+    confidence = "high";
     const recentMonths = monthlyBreakdown.slice(-12);
 
     // Weight: last 3 months get 1.5x weight
-    const weights = recentMonths.map((_, i) => i >= recentMonths.length - 3 ? 1.5 : 1.0);
-    const weightedSum = recentMonths.reduce((sum, m, i) => sum + m.units * weights[i], 0);
+    const weights = recentMonths.map((_, i) =>
+      i >= recentMonths.length - 3 ? 1.5 : 1.0,
+    );
+    const weightedSum = recentMonths.reduce(
+      (sum, m, i) => sum + m.units * weights[i],
+      0,
+    );
     const weightTotal = weights.reduce((sum, w) => sum + w, 0);
     monthlyUsageUnits = weightedSum / weightTotal;
   } else if (dataMonths >= 6) {
     // Use 6-month average
-    calculationTier = '6_month';
-    confidence = 'medium';
+    calculationTier = "6_month";
+    confidence = "medium";
     const recentMonths = monthlyBreakdown.slice(-6);
     const totalUnits = recentMonths.reduce((sum, m) => sum + m.units, 0);
     // FIX: Divide by actual month count, not hardcoded 6
     monthlyUsageUnits = totalUnits / recentMonths.length;
   } else if (dataMonths >= 3) {
     // Use 3-month average
-    calculationTier = '3_month';
-    confidence = 'medium';
+    calculationTier = "3_month";
+    confidence = "medium";
     const recentMonths = monthlyBreakdown.slice(-3);
     const totalUnits = recentMonths.reduce((sum, m) => sum + m.units, 0);
     // FIX: Divide by actual month count, not hardcoded 3
     monthlyUsageUnits = totalUnits / recentMonths.length;
   } else {
     // Less than 3 months - extrapolate from weekly rate
-    calculationTier = 'weekly';
-    confidence = 'low';
+    calculationTier = "weekly";
+    confidence = "low";
 
     if (transactions.length === 0) {
       monthlyUsageUnits = 0;
     } else {
       const oldest = transactions[0];
       const newest = transactions[transactions.length - 1];
-      const weeksOfData = Math.max(1, differenceInWeeks(newest.dateSubmitted, oldest.dateSubmitted));
-      const totalUnits = transactions.reduce((sum, t) => sum + t.quantityUnits, 0);
+      const weeksOfData = Math.max(
+        1,
+        differenceInWeeks(newest.dateSubmitted, oldest.dateSubmitted),
+      );
+      const totalUnits = transactions.reduce(
+        (sum, t) => sum + t.quantityUnits,
+        0,
+      );
       const weeklyRate = totalUnits / weeksOfData;
       monthlyUsageUnits = weeklyRate * 4.33; // Average weeks per month
     }
@@ -636,31 +789,39 @@ export async function calculateMonthlyUsage(productId: string): Promise<MonthlyU
  * Store monthly usage snapshots for historical tracking.
  * Creates/updates MonthlyUsageSnapshot records for each month with data.
  */
-export async function storeMonthlyUsageSnapshots(productId: string): Promise<void> {
+export async function storeMonthlyUsageSnapshots(
+  productId: string,
+): Promise<void> {
   const product = await prisma.product.findUnique({
     where: { id: productId },
     select: { packSize: true },
   });
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new Error("Product not found");
   }
 
   // Get all completed transactions grouped by month
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: 'completed',
+      orderStatus: "completed",
     },
-    orderBy: { dateSubmitted: 'asc' },
+    orderBy: { dateSubmitted: "asc" },
   });
 
   // Group by month
-  const monthlyData = new Map<string, { units: number; transactionCount: number }>();
+  const monthlyData = new Map<
+    string,
+    { units: number; transactionCount: number }
+  >();
 
   for (const txn of transactions) {
-    const monthKey = format(txn.dateSubmitted, 'yyyy-MM');
-    const existing = monthlyData.get(monthKey) || { units: 0, transactionCount: 0 };
+    const monthKey = format(txn.dateSubmitted, "yyyy-MM");
+    const existing = monthlyData.get(monthKey) || {
+      units: 0,
+      transactionCount: 0,
+    };
     monthlyData.set(monthKey, {
       units: existing.units + txn.quantityUnits,
       transactionCount: existing.transactionCount + 1,
@@ -696,7 +857,9 @@ export async function storeMonthlyUsageSnapshots(productId: string): Promise<voi
  * Update product with calculated monthly usage fields.
  * This should be called after calculateMonthlyUsage.
  */
-export async function updateProductMonthlyUsage(productId: string): Promise<void> {
+export async function updateProductMonthlyUsage(
+  productId: string,
+): Promise<void> {
   const usageResult = await calculateMonthlyUsage(productId);
 
   await prisma.product.update({
@@ -739,7 +902,9 @@ export async function recalculateClientMonthlyUsage(clientId: string): Promise<{
       await updateProductMonthlyUsage(product.id);
       processed++;
     } catch (error) {
-      errors.push(`${product.productId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      errors.push(
+        `${product.productId}: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
     }
   }
 
@@ -750,7 +915,9 @@ export async function recalculateClientMonthlyUsage(clientId: string): Promise<{
  * Get monthly usage data for display in both admin and portal dashboards.
  * Returns product with usage tier badge information.
  */
-export async function getProductWithMonthlyUsage(productId: string): Promise<ProductMonthlyUsage | null> {
+export async function getProductWithMonthlyUsage(
+  productId: string,
+): Promise<ProductMonthlyUsage | null> {
   const product = await prisma.product.findUnique({
     where: { id: productId },
     select: {
@@ -775,7 +942,8 @@ export async function getProductWithMonthlyUsage(productId: string): Promise<Pro
 
   return {
     ...product,
-    usageCalculationTier: product.usageCalculationTier as UsageCalculationTier | null,
+    usageCalculationTier:
+      product.usageCalculationTier as UsageCalculationTier | null,
     usageConfidence: product.usageConfidence as UsageConfidence | null,
   };
 }
@@ -785,20 +953,29 @@ export async function getProductWithMonthlyUsage(productId: string): Promise<Pro
  */
 export async function getMonthlyUsageBreakdown(
   productId: string,
-  months: number = 12
-): Promise<Array<{ month: string; units: number; packs: number; transactionCount: number }>> {
+  months: number = 12,
+): Promise<
+  Array<{
+    month: string;
+    units: number;
+    packs: number;
+    transactionCount: number;
+  }>
+> {
   const snapshots = await prisma.monthlyUsageSnapshot.findMany({
     where: { productId },
-    orderBy: { yearMonth: 'desc' },
+    orderBy: { yearMonth: "desc" },
     take: months,
   });
 
-  return snapshots.map((s) => ({
-    month: s.yearMonth,
-    units: s.consumedUnits,
-    packs: s.consumedPacks,
-    transactionCount: s.transactionCount,
-  })).reverse();
+  return snapshots
+    .map((s) => ({
+      month: s.yearMonth,
+      units: s.consumedUnits,
+      packs: s.consumedPacks,
+      transactionCount: s.transactionCount,
+    }))
+    .reverse();
 }
 
 /**
@@ -807,38 +984,42 @@ export async function getMonthlyUsageBreakdown(
 export function getUsageTierDisplay(tier: UsageCalculationTier | null): {
   label: string;
   shortLabel: string;
-  color: 'green' | 'blue' | 'amber' | 'gray';
+  color: "green" | "blue" | "amber" | "gray";
   tooltip: string;
 } {
   switch (tier) {
-    case '12_month':
+    case "12_month":
       return {
-        label: '12-month average',
-        shortLabel: '12-mo avg',
-        color: 'green',
-        tooltip: 'Calculated from 12+ months of transaction data. High confidence.',
+        label: "12-month average",
+        shortLabel: "12-mo avg",
+        color: "green",
+        tooltip:
+          "Calculated from 12+ months of transaction data. High confidence.",
       };
-    case '6_month':
+    case "6_month":
       return {
-        label: '6-month average',
-        shortLabel: '6-mo avg',
-        color: 'blue',
-        tooltip: 'Calculated from 6-11 months of transaction data. Medium confidence.',
+        label: "6-month average",
+        shortLabel: "6-mo avg",
+        color: "blue",
+        tooltip:
+          "Calculated from 6-11 months of transaction data. Medium confidence.",
       };
-    case '3_month':
+    case "3_month":
       return {
-        label: '3-month average',
-        shortLabel: '3-mo avg',
-        color: 'amber',
-        tooltip: 'Calculated from 3-5 months of transaction data. Medium confidence.',
+        label: "3-month average",
+        shortLabel: "3-mo avg",
+        color: "amber",
+        tooltip:
+          "Calculated from 3-5 months of transaction data. Medium confidence.",
       };
-    case 'weekly':
+    case "weekly":
     default:
       return {
-        label: 'Less than 3 months',
-        shortLabel: '< 3 mo',
-        color: 'gray',
-        tooltip: 'Less than 3 months of data. Extrapolated from weekly rate. Low confidence.',
+        label: "Less than 3 months",
+        shortLabel: "< 3 mo",
+        color: "gray",
+        tooltip:
+          "Less than 3 months of data. Extrapolated from weekly rate. Low confidence.",
       };
   }
 }
@@ -851,7 +1032,7 @@ export function calculateSuggestedReorderQuantity(
   currentStockUnits: number,
   packSize: number,
   targetWeeksOfStock: number = 8, // Default 2 months
-  leadTimeWeeks: number = 2
+  leadTimeWeeks: number = 2,
 ): { suggestedPacks: number; suggestedUnits: number; weeksRemaining: number } {
   if (monthlyUsageUnits <= 0) {
     return {
@@ -862,7 +1043,8 @@ export function calculateSuggestedReorderQuantity(
   }
 
   const weeklyUsage = monthlyUsageUnits / 4.33;
-  const weeksRemaining = weeklyUsage > 0 ? currentStockUnits / weeklyUsage : 999;
+  const weeksRemaining =
+    weeklyUsage > 0 ? currentStockUnits / weeklyUsage : 999;
 
   // Calculate how much we need to reach target weeks of stock
   const targetUnits = weeklyUsage * (targetWeeksOfStock + leadTimeWeeks);
