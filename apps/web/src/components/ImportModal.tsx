@@ -262,11 +262,15 @@ export function ImportModal({
   const queryClient = useQueryClient();
 
   // Poll import progress during processing
+  // NOTE: Backend returns ImportBatch directly (not wrapped in { data: ... })
   const { data: importProgress } = useQuery({
     queryKey: ["import-progress", currentImportId],
     queryFn: () =>
       api.get<{
-        data: { processedCount: number; rowCount: number; status: string };
+        id: string;
+        status: string;
+        processedCount: number;
+        rowCount: number;
       }>(`/imports/${currentImportId}`),
     enabled:
       (importStep === "processing" || isWaitingForCompletion) &&
@@ -278,7 +282,7 @@ export function ImportModal({
   // This useEffect ensures we wait for the actual import to finish (Python runs async)
   // Without this, the UI would show "complete" before data is actually imported
   useEffect(() => {
-    const status = importProgress?.data?.status;
+    const status = importProgress?.status;
 
     if (status && isWaitingForCompletion) {
       const isTerminal = [
@@ -320,7 +324,7 @@ export function ImportModal({
       }
     }
   }, [
-    importProgress?.data?.status,
+    importProgress?.status,
     isWaitingForCompletion,
     currentPreviewIndex,
     importPreviews.length,
@@ -1051,31 +1055,30 @@ export function ImportModal({
                       ? `Processing file ${importResults.length + 1} of ${importPreviews.length}`
                       : "This may take a few moments"}
                   </p>
-                  {importProgress?.data?.processedCount !== undefined &&
-                    importProgress?.data?.rowCount && (
+                  {importProgress?.processedCount !== undefined &&
+                    importProgress?.rowCount && (
                       <div className="mt-6 max-w-xs mx-auto">
                         <div className="flex justify-between text-sm text-gray-600 mb-1">
                           <span>
-                            {importProgress.data.processedCount.toLocaleString()}{" "}
+                            {importProgress.processedCount.toLocaleString()}{" "}
                             rows
                           </span>
                           <span>
-                            {importProgress.data.rowCount.toLocaleString()}{" "}
-                            total
+                            {importProgress.rowCount.toLocaleString()} total
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-primary-600 h-2 rounded-full transition-all duration-300"
                             style={{
-                              width: `${Math.min(100, (importProgress.data.processedCount / importProgress.data.rowCount) * 100)}%`,
+                              width: `${Math.min(100, (importProgress.processedCount / importProgress.rowCount) * 100)}%`,
                             }}
                           />
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
                           {Math.round(
-                            (importProgress.data.processedCount /
-                              importProgress.data.rowCount) *
+                            (importProgress.processedCount /
+                              importProgress.rowCount) *
                               100,
                           )}
                           % complete

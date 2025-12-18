@@ -785,14 +785,7 @@ router.post("/:importId/confirm", async (req, res, next) => {
       clearTimeout(timeout);
       console.log(`Python Importer process exited with code ${code}`);
 
-      // Clean up mapping file after processing
-      try {
-        if (fs.existsSync(mappingFilePath)) {
-          fs.unlinkSync(mappingFilePath);
-        }
-      } catch (cleanupError) {
-        console.warn("Failed to clean up mapping file:", cleanupError);
-      }
+      // NOTE: Mapping file cleanup moved to AFTER post-processing to avoid race condition
 
       if (code === 0) {
         // SUCCESS: Trigger post-import calculations
@@ -803,10 +796,25 @@ router.post("/:importId/confirm", async (req, res, next) => {
             data: { status: "post_processing" },
           });
 
+          // Post-processing with timeout to prevent hangs
+          const POST_PROCESSING_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
           let postProcessingError: Error | null = null;
           try {
-            await recalculateClientUsage(importBatch.clientId);
-            await runAlertGeneration(importBatch.clientId);
+            await Promise.race([
+              (async () => {
+                await recalculateClientUsage(importBatch.clientId);
+                await runAlertGeneration(importBatch.clientId);
+              })(),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () =>
+                    reject(
+                      new Error("Post-processing timed out after 5 minutes"),
+                    ),
+                  POST_PROCESSING_TIMEOUT,
+                ),
+              ),
+            ]);
           } catch (calcError) {
             console.error("Post-import calculation error:", calcError);
             postProcessingError = calcError as Error;
@@ -859,6 +867,15 @@ router.post("/:importId/confirm", async (req, res, next) => {
             );
             // At this point, the import will be stuck - but at least we logged the error
           }
+        }
+
+        // Clean up mapping file AFTER all post-processing is complete
+        try {
+          if (fs.existsSync(mappingFilePath)) {
+            fs.unlinkSync(mappingFilePath);
+          }
+        } catch (cleanupError) {
+          console.warn("Failed to clean up mapping file:", cleanupError);
         }
       } else {
         // FAILURE: Save the complete stderr output to database

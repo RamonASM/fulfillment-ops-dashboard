@@ -58,7 +58,7 @@ module.exports = {
 
       // Advanced options
       listen_timeout: 10000,     // Time to wait for listen event
-      kill_timeout: 5000,        // Time to wait before force kill
+      kill_timeout: 60000,       // Time to wait before force kill (60s for long imports)
       shutdown_with_message: true,
 
       // Process management

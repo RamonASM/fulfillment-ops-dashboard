@@ -64,14 +64,21 @@ def load_column_mapping(mapping_file_path: Optional[str]) -> Optional[dict]:
     Load column mapping from JSON sidecar file.
     Returns None if no mapping file provided or file doesn't exist.
     """
-    if not mapping_file_path or not os.path.exists(mapping_file_path):
+    if not mapping_file_path:
+        print("WARNING: No mapping file path provided, using default column mappings", file=sys.stderr)
+        return None
+
+    if not os.path.exists(mapping_file_path):
+        print(f"WARNING: Mapping file not found at {mapping_file_path}, using default column mappings", file=sys.stderr)
         return None
 
     try:
         with open(mapping_file_path, 'r') as f:
-            return json.load(f)
+            mapping_data = json.load(f)
+            print(f"Loaded mapping configuration from {mapping_file_path}")
+            return mapping_data
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Warning: Failed to load mapping file {mapping_file_path}: {e}", file=sys.stderr)
+        print(f"WARNING: Failed to load mapping file {mapping_file_path}: {e}, using default column mappings", file=sys.stderr)
         return None
 
 
