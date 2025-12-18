@@ -662,16 +662,20 @@ router.post("/:importId/confirm", async (req, res, next) => {
       );
     }
 
-    // Spawn the Python process with DATABASE_URL as first argument
+    // === ROBUST ERROR HANDLING IMPLEMENTATION ===
+    // Initialize variables to capture ALL output (not just lines with keywords)
+    let stdoutOutput = "";
+    let stderrOutput = "";
+
     const pythonProcess = spawn(
       pythonCmd,
       [
         path.join(process.cwd(), "apps", "python-importer", "main.py"),
-        process.env.DATABASE_URL, // NEW: First argument
-        importId, // Shifted position
-        importBatch.filePath!, // Shifted position
-        importBatch.importType!, // Shifted position
-        mappingFilePath, // Shifted position
+        process.env.DATABASE_URL,
+        importId,
+        importBatch.filePath!,
+        importBatch.importType!,
+        mappingFilePath,
       ],
       {
         cwd: process.cwd(),
@@ -684,41 +688,41 @@ router.post("/:importId/confirm", async (req, res, next) => {
 
     // Set up timeout to kill process if it runs too long
     const timeout = setTimeout(async () => {
-      pythonProcess.kill("SIGTERM");
-      console.error(
-        `Python Importer timed out after ${IMPORT_TIMEOUT_MS / 1000}s`,
-      );
-      await prisma.importBatch.update({
-        where: { id: importId },
-        data: {
-          status: "failed",
-          errors: [{ message: "Import timed out after 30 minutes" }],
-        },
-      });
-    }, IMPORT_TIMEOUT_MS);
-
-    pythonProcess.stdout.on("data", (data) => {
-      console.log(`Python Importer stdout: ${data}`);
-    });
-
-    pythonProcess.stderr.on("data", async (data) => {
-      console.error(`Python Importer stderr: ${data}`);
-      // Only update status for actual errors, not warnings
-      const output = data.toString();
-      if (
-        output.toLowerCase().includes("error:") ||
-        output.toLowerCase().includes("fatal")
-      ) {
+      if (!pythonProcess.killed) {
+        pythonProcess.kill("SIGTERM");
+        console.error(
+          `Python Importer timed out after ${IMPORT_TIMEOUT_MS / 1000}s`,
+        );
         await prisma.importBatch.update({
           where: { id: importId },
           data: {
             status: "failed",
-            errors: [{ message: `Python process error: ${output}` }],
+            errors: [
+              {
+                message: "Import timed out after 30 minutes.",
+                details: stderrOutput,
+              },
+            ],
           },
         });
       }
+    }, IMPORT_TIMEOUT_MS);
+
+    // Capture all stdout data (accumulated for debugging)
+    pythonProcess.stdout.on("data", (data) => {
+      const output = data.toString();
+      stdoutOutput += output;
+      console.log(`Python Importer stdout: ${output}`);
     });
 
+    // Capture all stderr data (accumulated for error reporting)
+    pythonProcess.stderr.on("data", (data) => {
+      const output = data.toString();
+      stderrOutput += output;
+      console.error(`Python Importer stderr: ${output}`);
+    });
+
+    // Use 'close' event as the single source of truth for success or failure
     pythonProcess.on("close", async (code) => {
       clearTimeout(timeout);
       console.log(`Python Importer process exited with code ${code}`);
@@ -733,14 +737,31 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
 
       if (code === 0) {
-        // Trigger post-import calculations via analytics facade
-        // The facade handles both DS Analytics and TypeScript based on client feature flag
+        // SUCCESS: Trigger post-import calculations
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: { status: "post_processing" },
+        });
         try {
           await recalculateClientUsage(importBatch.clientId);
           await runAlertGeneration(importBatch.clientId);
         } catch (calcError) {
           console.error("Post-import calculation error:", calcError);
         }
+      } else {
+        // FAILURE: Save the complete stderr output to database
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            status: "failed",
+            errors: [
+              {
+                message: "The import script failed to execute.",
+                details: stderrOutput || "No error output was captured.",
+              },
+            ],
+          },
+        });
       }
     });
 
