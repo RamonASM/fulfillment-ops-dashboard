@@ -84,6 +84,12 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      - name: Push database schema
+        working-directory: apps/api
+        run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
+
       - name: Run unit tests
         run: npm run test
         env:

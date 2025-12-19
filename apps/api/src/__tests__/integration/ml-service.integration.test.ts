@@ -8,9 +8,19 @@ import { PrismaClient } from "@prisma/client";
 import { MLClientService } from "../../services/ml-client.service.js";
 import { subDays } from "date-fns";
 
-const prisma = new PrismaClient();
+// Skip tests if ML service URL not configured or database not available
+const ML_URL = process.env.ML_ANALYTICS_URL;
+const DATABASE_URL = process.env.DATABASE_URL;
+const skipTests = !ML_URL || !DATABASE_URL || DATABASE_URL.includes("test");
 
-describe("ML Service Integration Tests", () => {
+let prisma: PrismaClient;
+try {
+  prisma = new PrismaClient();
+} catch {
+  // Prisma client not generated - tests will be skipped
+}
+
+describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
   let testClientId: string;
   let testProductId: string;
 

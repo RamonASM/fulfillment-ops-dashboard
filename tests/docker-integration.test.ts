@@ -3,14 +3,27 @@
 // Tests containerized services working together
 // =============================================================================
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import axios from "axios";
 import { exec } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
-describe("Docker Integration Tests", () => {
+// Check if Docker is available by trying to run docker ps
+async function isDockerAvailable(): Promise<boolean> {
+  try {
+    await execAsync("docker ps");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Skip all tests if Docker is not running
+const dockerAvailable = await isDockerAvailable().catch(() => false);
+
+describe.skipIf(!dockerAvailable)("Docker Integration Tests", () => {
   const API_URL = process.env.API_URL || "http://localhost:3001";
   const ML_URL = process.env.ML_ANALYTICS_URL || "http://localhost:8000";
 

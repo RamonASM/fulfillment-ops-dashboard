@@ -156,7 +156,8 @@ describe("Portal Analytics Routes", () => {
             ? "decreasing"
             : "stable";
 
-      expect(changePercent).toBe(2);
+      // Use toBeCloseTo for floating point comparison
+      expect(changePercent).toBeCloseTo(2, 5);
       expect(trend).toBe("stable");
     });
 
@@ -224,16 +225,19 @@ describe("Portal Analytics Routes", () => {
       );
 
       // Should group by date and aggregate
-      const dateMap = new Map();
+      const dateMap = new Map<string, { units: number; packs: number }>();
       for (const txn of mockTransactions) {
-        const dateKey = "2024-01-15"; // Simplified for test
+        const dateKey = txn.dateSubmitted.toISOString().split("T")[0];
         const existing = dateMap.get(dateKey) || { units: 0, packs: 0 };
         existing.units += txn.quantityUnits;
         existing.packs += txn.quantityPacks;
         dateMap.set(dateKey, existing);
       }
 
+      // Jan 15 should have 2 transactions summed (10+5=15 units, 2+1=3 packs)
       expect(dateMap.get("2024-01-15")).toEqual({ units: 15, packs: 3 });
+      // Jan 16 should have 1 transaction (8 units, 2 packs)
+      expect(dateMap.get("2024-01-16")).toEqual({ units: 8, packs: 2 });
     });
 
     it("should respect custom days parameter", async () => {
@@ -356,19 +360,19 @@ describe("Portal Analytics Routes", () => {
         {
           id: "prod-1",
           name: "Product A",
-          currentStockPacks: 10,
-          currentStockUnits: 100,
+          currentStockPacks: 5,
+          currentStockUnits: 50, // Very low stock
           packSize: 10,
-          monthlyUsageUnits: 200,
+          monthlyUsageUnits: 400, // High usage - weeksRemaining = 50 / (400/4.33) = ~0.54 (critical)
           stockStatus: "CRITICAL",
         },
         {
           id: "prod-2",
           name: "Product B",
-          currentStockPacks: 50,
-          currentStockUnits: 500,
+          currentStockPacks: 30,
+          currentStockUnits: 300, // Moderate stock
           packSize: 10,
-          monthlyUsageUnits: 100,
+          monthlyUsageUnits: 100, // weeksRemaining = 300 / (100/4.33) = ~13 (healthy, between 8-16)
           stockStatus: "HEALTHY",
         },
       ];
