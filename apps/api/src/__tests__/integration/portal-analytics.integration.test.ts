@@ -4,22 +4,26 @@
 // =============================================================================
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { PrismaClient } from "@prisma/client";
-import { subDays, format } from "date-fns";
+import type { PrismaClient } from "@prisma/client";
 
 // Skip tests if database is not available (e.g., in CI without seeded data)
 const DATABASE_URL = process.env.DATABASE_URL;
 const isCI = process.env.CI === "true";
 const skipTests = isCI || !DATABASE_URL || DATABASE_URL.includes("test");
 
-// Initialize prisma lazily within tests
+// Lazy loaded dependencies
 let prisma: PrismaClient | null = null;
+let subDays: any = null;
+let format: any = null;
 
-function getPrisma(): PrismaClient {
-  if (!prisma) {
-    prisma = new PrismaClient();
+async function loadDependencies() {
+  if (!prisma && !skipTests) {
+    const { PrismaClient: PC } = await import("@prisma/client");
+    prisma = new PC();
+    const dateFns = await import("date-fns");
+    subDays = dateFns.subDays;
+    format = dateFns.format;
   }
-  return prisma;
 }
 
 describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
@@ -28,8 +32,11 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
   let testUserId: string;
 
   beforeAll(async () => {
+    await loadDependencies();
+    if (!prisma) throw new Error("Prisma not available");
+
     // Create test client
-    const client = await getPrisma().client.create({
+    const client = await prisma.client.create({
       data: {
         name: "Test Client Portal Analytics",
         code: "TEST-PA",
@@ -39,7 +46,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     testClientId = client.id;
 
     // Create test user with portal access
-    const user = await getPrisma().user.create({
+    const user = await prisma.user.create({
       data: {
         email: `test-portal-${Date.now()}@test.com`,
         passwordHash: "test-hash",
@@ -56,7 +63,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
 
     // Create test products with realistic data
     const products = await Promise.all([
-      getPrisma().product.create({
+      prisma.product.create({
         data: {
           clientId: testClientId,
           productId: "SKU-001-PA",
@@ -69,7 +76,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
           isActive: true,
         },
       }),
-      getPrisma().product.create({
+      prisma.product.create({
         data: {
           clientId: testClientId,
           productId: "SKU-002-PA",
@@ -82,7 +89,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
           isActive: true,
         },
       }),
-      getPrisma().product.create({
+      prisma.product.create({
         data: {
           clientId: testClientId,
           productId: "SKU-003-PA",
@@ -124,12 +131,12 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
       }
     }
 
-    await getPrisma().transaction.createMany({
+    await prisma.transaction.createMany({
       data: transactions,
     });
 
     // Create usage metrics for stock velocity
-    await getPrisma().usageMetric.createMany({
+    await prisma.usageMetric.createMany({
       data: [
         {
           productId: testProductIds[0],
@@ -153,26 +160,26 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
 
   afterAll(async () => {
     // Cleanup test data
-    await getPrisma().transaction.deleteMany({
+    await prisma.transaction.deleteMany({
       where: { productId: { in: testProductIds } },
     });
-    await getPrisma().usageMetric.deleteMany({
+    await prisma.usageMetric.deleteMany({
       where: { productId: { in: testProductIds } },
     });
-    await getPrisma().product.deleteMany({
+    await prisma.product.deleteMany({
       where: { id: { in: testProductIds } },
     });
-    await getPrisma().userClient.deleteMany({
+    await prisma.userClient.deleteMany({
       where: { userId: testUserId },
     });
-    await getPrisma().user.delete({
+    await prisma.user.delete({
       where: { id: testUserId },
     });
-    await getPrisma().client.delete({
+    await prisma.client.delete({
       where: { id: testClientId },
     });
 
-    await getPrisma().$disconnect();
+    await prisma.$disconnect();
   });
 
   // ===========================================================================
@@ -181,7 +188,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
 
   describe("Stock Velocity Endpoint", () => {
     it("should return stock velocity data for all client products", async () => {
-      const products = await getPrisma().product.findMany({
+      const products = await prisma.product.findMany({
         where: { clientId: testClientId, isActive: true },
         select: {
           id: true,
@@ -202,7 +209,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     });
 
     it("should calculate trend from usage metrics", async () => {
-      const product = await getPrisma().product.findFirst({
+      const product = await prisma.product.findFirst({
         where: { id: testProductIds[0] },
         include: {
           usageMetrics: {
@@ -232,7 +239,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
       const days = 30;
       const startDate = subDays(new Date(), days);
 
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           dateSubmitted: { gte: startDate },
@@ -268,7 +275,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
 
   describe("Summary Endpoint", () => {
     it("should calculate stock health distribution", async () => {
-      const products = await getPrisma().product.findMany({
+      const products = await prisma.product.findMany({
         where: { clientId: testClientId, isActive: true },
         select: {
           id: true,
@@ -314,7 +321,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
       const oneWeekAgo = subDays(now, 7);
       const twoWeeksAgo = subDays(now, 14);
 
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           dateSubmitted: { gte: twoWeeksAgo },
@@ -342,7 +349,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     it("should identify top products by usage", async () => {
       const threeMonthsAgo = subDays(new Date(), 90);
 
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           dateSubmitted: { gte: threeMonthsAgo },
@@ -379,7 +386,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
       const months = 3;
       const startDate = subDays(new Date(), months * 30);
 
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           dateSubmitted: { gte: startDate },
@@ -425,7 +432,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     it("should group transactions by location", async () => {
       const twelveMonthsAgo = subDays(new Date(), 365);
 
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           dateSubmitted: { gte: twelveMonthsAgo },
@@ -455,7 +462,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     });
 
     it("should calculate location metrics", async () => {
-      const transactions = await getPrisma().transaction.findMany({
+      const transactions = await prisma.transaction.findMany({
         where: {
           product: { clientId: testClientId },
           shipToLocation: "Warehouse A",
@@ -484,7 +491,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     it("should calculate reorder suggestions for low stock products", async () => {
       const threeMonthsAgo = subDays(new Date(), 90);
 
-      const products = await getPrisma().product.findMany({
+      const products = await prisma.product.findMany({
         where: { clientId: testClientId, isActive: true },
         include: {
           transactions: {
@@ -549,7 +556,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
     it("should retrieve stock velocity data in under 500ms", async () => {
       const startTime = Date.now();
 
-      await getPrisma().product.findMany({
+      await prisma.product.findMany({
         where: { clientId: testClientId, isActive: true },
         select: {
           id: true,
@@ -571,7 +578,7 @@ describe.skipIf(skipTests)("Portal Analytics Integration Tests", () => {
 
     it("should retrieve summary data in under 1000ms", async () => {
       const startTime = Date.now();
-      const db = getPrisma();
+      const db = prisma;
 
       const [products, transactions] = await Promise.all([
         db.product.findMany({
