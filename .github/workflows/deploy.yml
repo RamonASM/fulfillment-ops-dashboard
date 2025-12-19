@@ -107,6 +107,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
 
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
       - name: Run E2E tests
         run: npm run test:e2e
         env:
