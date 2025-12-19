@@ -566,6 +566,14 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
             try:
                 chunk_rows_committed = 0  # Track actual committed rows in this chunk
 
+                # Emit import started event on first chunk
+                if i == 0:
+                    emit_progress("import_started", {
+                        "import_id": str(batch_uuid),
+                        "filename": import_batch.filename,
+                        "import_type": import_type
+                    })
+
                 if import_type == 'inventory':
                     print(f"Processing inventory chunk {i+1}...")
                     cleaned_chunk = clean_inventory_data(chunk, str(import_batch.clientId), mapping_data)

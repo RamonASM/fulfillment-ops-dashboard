@@ -203,6 +203,8 @@ router.post(
       );
 
       // Create import batch
+      // Note: rowCount set to 0 initially (preview is inaccurate)
+      // Python will update with actual row count in first progress event
       const importBatch = await prisma.importBatch.create({
         data: {
           clientId,
@@ -210,7 +212,7 @@ router.post(
           filename: req.file.originalname,
           filePath: req.file.path,
           status: "pending",
-          rowCount: rows.length,
+          rowCount: 0, // Will be updated by Python when actual count is known
           importedBy: req.user!.userId,
         },
       });
@@ -323,6 +325,8 @@ router.post(
         );
 
         // Create import batch
+        // Note: rowCount set to 0 initially (preview is inaccurate)
+        // Python will update with actual row count in progress events
         const importBatch = await prisma.importBatch.create({
           data: {
             clientId,
@@ -330,7 +334,7 @@ router.post(
             filename: file.originalname,
             filePath: file.path,
             status: "pending",
-            rowCount: rows.length,
+            rowCount: 0, // Will be updated by Python when actual count is known
             importedBy: req.user!.userId,
           },
         });
@@ -779,15 +783,23 @@ router.post("/:importId/confirm", async (req, res, next) => {
             const event = JSON.parse(line);
             if (event.type === "chunk_completed" && event.data) {
               // Update database with real-time progress
+              // Also update rowCount to match processedCount (streaming means we don't know total upfront)
               await prisma.importBatch
                 .update({
                   where: { id: event.data.import_id },
-                  data: { processedCount: event.data.total_processed },
+                  data: {
+                    processedCount: event.data.total_processed,
+                    rowCount: event.data.total_processed, // Keep rowCount in sync
+                  },
                 })
                 .catch((err) => logger.warn("Failed to update progress:", err));
 
               logger.info(
                 `Import progress: ${event.data.total_processed} rows`,
+              );
+            } else if (event.type === "import_started" && event.data) {
+              logger.info(
+                `Import started: ${event.data.filename} (type: ${event.data.import_type})`,
               );
             }
           } catch (e) {
