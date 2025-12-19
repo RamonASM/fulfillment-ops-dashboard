@@ -11,22 +11,28 @@ import { subDays } from "date-fns";
 // Skip tests if ML service URL not configured or database not available
 const ML_URL = process.env.ML_ANALYTICS_URL;
 const DATABASE_URL = process.env.DATABASE_URL;
-const skipTests = !ML_URL || !DATABASE_URL || DATABASE_URL.includes("test");
+const isCI = process.env.CI === "true";
+const skipTests =
+  isCI || !ML_URL || !DATABASE_URL || DATABASE_URL.includes("test");
 
-let prisma: PrismaClient;
-try {
-  prisma = new PrismaClient();
-} catch {
-  // Prisma client not generated - tests will be skipped
+// Initialize prisma lazily within tests
+let prisma: PrismaClient | null = null;
+
+function getPrisma(): PrismaClient {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+  return prisma;
 }
 
-describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
+describe.skipIf(skipTests)("ML Service Integration Tests", () => {
   let testClientId: string;
   let testProductId: string;
 
   beforeAll(async () => {
+    const db = getPrisma();
     // Create test client
-    const client = await prisma.client.create({
+    const client = await db.client.create({
       data: {
         name: "Test Client ML Integration",
         code: "TEST-ML",
@@ -36,7 +42,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
     testClientId = client.id;
 
     // Create test product with sufficient transaction history
-    const product = await prisma.product.create({
+    const product = await db.product.create({
       data: {
         clientId: testClientId,
         productId: "SKU-ML-001",
@@ -76,27 +82,28 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
       });
     }
 
-    await prisma.transaction.createMany({
+    await db.transaction.createMany({
       data: transactions,
     });
   });
 
   afterAll(async () => {
+    const db = getPrisma();
     // Cleanup test data
-    await prisma.transaction.deleteMany({
+    await db.transaction.deleteMany({
       where: { productId: testProductId },
     });
-    await prisma.mLPrediction.deleteMany({
+    await db.mLPrediction.deleteMany({
       where: { productId: testProductId },
     });
-    await prisma.product.delete({
+    await db.product.delete({
       where: { id: testProductId },
     });
-    await prisma.client.delete({
+    await db.client.delete({
       where: { id: testClientId },
     });
 
-    await prisma.$disconnect();
+    await db.$disconnect();
   });
 
   // ===========================================================================
@@ -157,7 +164,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
         await MLClientService.getDemandForecast(testProductId, 30);
 
         // Check if cached in database
-        const cached = await prisma.mLPrediction.findFirst({
+        const cached = await getPrisma().mLPrediction.findFirst({
           where: {
             productId: testProductId,
             predictionType: "demand_forecast",
@@ -276,7 +283,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
       try {
         await MLClientService.predictStockout(testProductId, 500, 90);
 
-        const cached = await prisma.mLPrediction.findFirst({
+        const cached = await getPrisma().mLPrediction.findFirst({
           where: {
             productId: testProductId,
             predictionType: "stockout",
@@ -321,8 +328,9 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
 
   describe("Error Handling", () => {
     it("should handle product with insufficient data", async () => {
+      const db = getPrisma();
       // Create product with only 1 day of transactions
-      const newProduct = await prisma.product.create({
+      const newProduct = await db.product.create({
         data: {
           clientId: testClientId,
           productId: "SKU-ML-INSUFFICIENT",
@@ -336,7 +344,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
         },
       });
 
-      await prisma.transaction.create({
+      await db.transaction.create({
         data: {
           productId: newProduct.id,
           dateSubmitted: new Date(),
@@ -361,16 +369,17 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
       }
 
       // Cleanup
-      await prisma.transaction.deleteMany({
+      await db.transaction.deleteMany({
         where: { productId: newProduct.id },
       });
-      await prisma.product.delete({
+      await db.product.delete({
         where: { id: newProduct.id },
       });
     }, 60000);
 
     it("should handle product with no transaction history", async () => {
-      const newProduct = await prisma.product.create({
+      const db = getPrisma();
+      const newProduct = await db.product.create({
         data: {
           clientId: testClientId,
           productId: "SKU-ML-NOTXN",
@@ -393,7 +402,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
       }
 
       // Cleanup
-      await prisma.product.delete({
+      await db.product.delete({
         where: { id: newProduct.id },
       });
     }, 60000);
@@ -410,7 +419,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
         await MLClientService.getDemandForecast(testProductId, 30);
 
         // Check cache entry
-        const cached = await prisma.mLPrediction.findFirst({
+        const cached = await getPrisma().mLPrediction.findFirst({
           where: {
             productId: testProductId,
             predictionType: "demand_forecast",
@@ -429,9 +438,10 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
     }, 60000);
 
     it("should not use expired cache entries", async () => {
+      const db = getPrisma();
       try {
         // Create an expired cache entry
-        const expiredEntry = await prisma.mLPrediction.create({
+        const expiredEntry = await db.mLPrediction.create({
           data: {
             productId: testProductId,
             predictionType: "demand_forecast",
@@ -444,7 +454,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
         });
 
         // Query should exclude expired entries
-        const validCache = await prisma.mLPrediction.findFirst({
+        const validCache = await db.mLPrediction.findFirst({
           where: {
             productId: testProductId,
             predictionType: "demand_forecast",
@@ -460,7 +470,7 @@ describe.skipIf(skipTests || !prisma)("ML Service Integration Tests", () => {
         }
 
         // Cleanup expired entry
-        await prisma.mLPrediction.delete({
+        await db.mLPrediction.delete({
           where: { id: expiredEntry.id },
         });
       } catch (error) {

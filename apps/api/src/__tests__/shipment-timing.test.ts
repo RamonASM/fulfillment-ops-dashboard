@@ -1,30 +1,24 @@
 // =============================================================================
 // SHIPMENT TRACKING & ORDER TIMING COMPREHENSIVE TEST SUITE
 // Tests all endpoints, calculations, and authorization
+// NOTE: These are integration tests that require a real database connection
+// They are skipped in CI environments
 // =============================================================================
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { prisma } from "../lib/prisma.js";
+import * as ShipmentService from "../services/shipment.service.js";
+import type { CarrierType } from "../services/shipment.service.js";
+import * as OrderTimingService from "../services/order-timing.service.js";
 
-// Skip tests in CI environment or when database is not available
+// Skip tests in CI environment or when using test database
 const DATABASE_URL = process.env.DATABASE_URL;
 const isCI = process.env.CI === "true";
 const isTestDatabase = DATABASE_URL?.includes("test");
 const skipTests = isCI || isTestDatabase || !DATABASE_URL;
 
-// Only import prisma and services if we're running tests
-let prisma: any;
-let ShipmentService: any;
-let OrderTimingService: any;
-
-if (!skipTests) {
-  const prismaModule = await import("../lib/prisma.js");
-  prisma = prismaModule.prisma;
-  ShipmentService = await import("../services/shipment.service.js");
-  OrderTimingService = await import("../services/order-timing.service.js");
-}
-
-// Database availability flag (set in beforeAll)
-let databaseAvailable = !skipTests;
+// Database availability flag
+let databaseAvailable = false;
 
 // =============================================================================
 // TEST DATA SETUP
@@ -284,12 +278,7 @@ describe.skipIf(skipTests)("Shipment Tracking Service", () => {
     });
 
     it("should generate correct tracking URLs for different carriers", async () => {
-      const carriers: Array<ShipmentService.CarrierType> = [
-        "ups",
-        "fedex",
-        "usps",
-        "dhl",
-      ];
+      const carriers: Array<CarrierType> = ["ups", "fedex", "usps", "dhl"];
       const trackingNumbers = ["TEST123", "FEDEX456", "USPS789", "DHL000"];
 
       for (let i = 0; i < carriers.length; i++) {
