@@ -98,8 +98,12 @@ jobs:
           NODE_ENV: test
           CI: true
 
-      - name: Build API for E2E tests
-        run: npm run build:api
+      - name: Build packages for E2E tests
+        run: |
+          npm run build:shared --if-present
+          npm run build:api
+          npm run build:web
+          npm run build:portal
         env:
           DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
 
