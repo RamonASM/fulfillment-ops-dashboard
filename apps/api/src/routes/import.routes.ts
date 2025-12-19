@@ -5,6 +5,7 @@ import fs from "fs";
 import { spawn, execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
@@ -765,11 +766,38 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
     }, IMPORT_TIMEOUT_MS);
 
-    // Capture all stdout data (accumulated for debugging)
-    pythonProcess.stdout.on("data", (data) => {
+    // Capture all stdout data (accumulated for debugging) and parse JSON progress events
+    pythonProcess.stdout.on("data", async (data) => {
       const output = data.toString();
       stdoutOutput += output;
-      console.log(`Python Importer stdout: ${output}`);
+
+      // Parse JSON progress events
+      const lines = output.split("\n");
+      for (const line of lines) {
+        if (line.trim().startsWith("{")) {
+          try {
+            const event = JSON.parse(line);
+            if (event.type === "chunk_completed" && event.data) {
+              // Update database with real-time progress
+              await prisma.importBatch
+                .update({
+                  where: { id: event.data.import_id },
+                  data: { processedCount: event.data.total_processed },
+                })
+                .catch((err) => logger.warn("Failed to update progress:", err));
+
+              logger.info(
+                `Import progress: ${event.data.total_processed} rows`,
+              );
+            }
+          } catch (e) {
+            // Not JSON, regular log line
+            logger.info(`Python: ${line}`);
+          }
+        } else if (line.trim()) {
+          logger.info(`Python: ${line}`);
+        }
+      }
     });
 
     // Capture all stderr data (accumulated for error reporting)
@@ -827,9 +855,10 @@ router.post("/:importId/confirm", async (req, res, next) => {
                   ),
                 ),
               ]);
-            } catch (calcError) {
-              logger.error("Post-import calculation error:", calcError);
-              postProcessingError = calcError as Error;
+            } catch (calcError: unknown) {
+              const error = calcError as Error;
+              logger.error("Post-import calculation error:", error);
+              postProcessingError = error;
             }
 
             // CRITICAL: Restore Python's status after post-processing
@@ -847,7 +876,9 @@ router.post("/:importId/confirm", async (req, res, next) => {
                 completedAt: new Date(),
                 ...(postProcessingError && {
                   errors: [
-                    ...(pythonBatch.errors || []),
+                    ...(Array.isArray(pythonBatch.errors)
+                      ? pythonBatch.errors
+                      : []),
                     {
                       message: "Post-processing failed",
                       details: String(postProcessingError),
@@ -897,8 +928,13 @@ router.post("/:importId/confirm", async (req, res, next) => {
               fs.unlinkSync(absoluteMappingPath);
               logger.info(`Cleaned up mapping file: ${absoluteMappingPath}`);
             }
-          } catch (cleanupError) {
-            logger.warn("Failed to clean up mapping file:", cleanupError);
+          } catch (cleanupError: unknown) {
+            logger.warn("Failed to clean up mapping file", {
+              error:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
+            });
           }
         }
       } else {

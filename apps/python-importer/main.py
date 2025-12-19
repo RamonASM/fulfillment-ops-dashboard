@@ -85,6 +85,16 @@ def read_file(file_path: str, chunksize: Optional[int] = None, **kwargs):
         return pd.read_csv(file_path, chunksize=chunksize, **kwargs)
 
 
+def emit_progress(event_type: str, data: dict):
+    """Emit structured progress events to stdout for Node.js parsing."""
+    progress_event = {
+        "type": event_type,
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    }
+    print(json.dumps(progress_event), file=sys.stdout, flush=True)
+
+
 # =============================================================================
 # MAPPING FILE UTILITIES
 # =============================================================================
@@ -590,11 +600,9 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
                     if to_update:
                         print(f"  Updating {len(to_update)} existing products...")
+                        # Use bulk_update_mappings for 10-100x faster updates
+                        db.bulk_update_mappings(models.Product, to_update)
                         chunk_rows_committed += len(to_update)
-                        # NOTE: bulk_update_mappings is not standard in SQLAlchemy Core.
-                        # This requires iteration, but it's safe.
-                        for item in to_update:
-                            db.merge(models.Product(**item))
 
                 elif import_type == 'orders':
                     print(f"Processing orders chunk {i+1}...")
@@ -670,6 +678,15 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 total_rows_processed += chunk_rows_committed
                 import_batch.processedCount = total_rows_processed
                 db.commit()
+
+                # Emit progress update for Node.js real-time tracking
+                emit_progress("chunk_completed", {
+                    "import_id": str(batch_uuid),
+                    "chunk_number": i + 1,
+                    "chunk_rows": chunk_rows_committed,
+                    "total_processed": total_rows_processed
+                })
+
                 print(f"  Finished chunk {i+1}. Committed {chunk_rows_committed} rows. Total rows processed: {total_rows_processed}")
 
             except ValueError as ve:
