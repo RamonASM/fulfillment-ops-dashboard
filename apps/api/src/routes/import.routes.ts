@@ -719,11 +719,10 @@ router.post("/:importId/confirm", async (req, res, next) => {
 
     // Calculate monorepo root for correct path to python-importer
     const monorepoRoot = getMonorepoRoot();
-    const apiDir = path.join(monorepoRoot, "apps", "api");
 
-    // File paths are stored relative to API directory, make them absolute
-    const absoluteFilePath = path.join(apiDir, importBatch.filePath!);
-    const absoluteMappingFilePath = path.join(apiDir, mappingFilePath);
+    // File paths are stored relative to monorepo root (uploads/filename), make them absolute
+    const absoluteFilePath = path.join(monorepoRoot, importBatch.filePath!);
+    const absoluteMappingFilePath = path.join(monorepoRoot, mappingFilePath);
 
     const pythonProcess = spawn(
       pythonCmd,
@@ -783,99 +782,124 @@ router.post("/:importId/confirm", async (req, res, next) => {
     // Use 'close' event as the single source of truth for success or failure
     pythonProcess.on("close", async (code) => {
       clearTimeout(timeout);
-      console.log(`Python Importer process exited with code ${code}`);
+      logger.info(`Python Importer process exited with code ${code}`);
 
       // NOTE: Mapping file cleanup moved to AFTER post-processing to avoid race condition
 
       if (code === 0) {
-        // SUCCESS: Trigger post-import calculations
-        // Outer try/catch ensures imports never get stuck in post_processing state
-        try {
-          await prisma.importBatch.update({
-            where: { id: importId },
-            data: { status: "post_processing" },
-          });
+        // SUCCESS: Python handled the import - check its status from database
+        const pythonBatch = await prisma.importBatch.findUnique({
+          where: { id: importId },
+        });
 
-          // Post-processing with timeout to prevent hangs
-          const POST_PROCESSING_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
-          let postProcessingError: Error | null = null;
-          try {
-            await Promise.race([
-              (async () => {
-                await recalculateClientUsage(importBatch.clientId);
-                await runAlertGeneration(importBatch.clientId);
-              })(),
-              new Promise<never>((_, reject) =>
-                setTimeout(
-                  () =>
-                    reject(
-                      new Error("Post-processing timed out after 5 minutes"),
-                    ),
-                  POST_PROCESSING_TIMEOUT,
-                ),
-              ),
-            ]);
-          } catch (calcError) {
-            console.error("Post-import calculation error:", calcError);
-            postProcessingError = calcError as Error;
-          }
+        if (!pythonBatch) {
+          logger.error(`Import batch ${importId} not found after Python exit`);
+          return;
+        }
 
-          // CRITICAL: Finalize status after post-processing completes
-          // Without this, imports stay stuck at "post_processing" forever!
-          await prisma.importBatch.update({
-            where: { id: importId },
-            data: {
-              status: postProcessingError
-                ? "completed_with_errors"
-                : "completed",
-              completedAt: new Date(),
-              ...(postProcessingError && {
-                errors: [
-                  {
-                    message: "Post-processing failed",
-                    details: String(postProcessingError),
-                  },
-                ],
-              }),
-            },
-          });
-        } catch (finalizeError) {
-          // Outer catch: Handle failures in the finalization process itself
-          console.error(
-            "CRITICAL: Failed to finalize import status:",
-            finalizeError,
-          );
-          // Last-ditch attempt to mark as failed so import doesn't stay stuck
+        // Only run post-processing if Python marked it as completed or completed_with_errors
+        if (
+          pythonBatch.status === "completed" ||
+          pythonBatch.status === "completed_with_errors"
+        ) {
           try {
             await prisma.importBatch.update({
               where: { id: importId },
+              data: { status: "post_processing" },
+            });
+
+            // Post-processing with timeout to prevent hangs
+            const POST_PROCESSING_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
+            let postProcessingError: Error | null = null;
+            try {
+              await Promise.race([
+                (async () => {
+                  await recalculateClientUsage(importBatch.clientId);
+                  await runAlertGeneration(importBatch.clientId);
+                })(),
+                new Promise<never>((_, reject) =>
+                  setTimeout(
+                    () =>
+                      reject(
+                        new Error("Post-processing timed out after 5 minutes"),
+                      ),
+                    POST_PROCESSING_TIMEOUT,
+                  ),
+                ),
+              ]);
+            } catch (calcError) {
+              logger.error("Post-import calculation error:", calcError);
+              postProcessingError = calcError as Error;
+            }
+
+            // CRITICAL: Restore Python's status after post-processing
+            // Preserve completed_with_errors if Python set it, or upgrade to it if post-processing failed
+            const finalStatus =
+              postProcessingError ||
+              pythonBatch.status === "completed_with_errors"
+                ? "completed_with_errors"
+                : "completed";
+
+            await prisma.importBatch.update({
+              where: { id: importId },
               data: {
-                status: "completed_with_errors",
+                status: finalStatus,
                 completedAt: new Date(),
-                errors: [
-                  {
-                    message: "Failed to finalize import",
-                    details: String(finalizeError),
-                  },
-                ],
+                ...(postProcessingError && {
+                  errors: [
+                    ...(pythonBatch.errors || []),
+                    {
+                      message: "Post-processing failed",
+                      details: String(postProcessingError),
+                    },
+                  ],
+                }),
               },
             });
-          } catch (fatalError) {
+          } catch (finalizeError) {
+            // Outer catch: Handle failures in the finalization process itself
             console.error(
-              "FATAL: Could not update import status at all:",
-              fatalError,
+              "CRITICAL: Failed to finalize import status:",
+              finalizeError,
             );
-            // At this point, the import will be stuck - but at least we logged the error
+            // Last-ditch attempt to mark as failed so import doesn't stay stuck
+            try {
+              await prisma.importBatch.update({
+                where: { id: importId },
+                data: {
+                  status: "completed_with_errors",
+                  completedAt: new Date(),
+                  errors: [
+                    {
+                      message: "Failed to finalize import",
+                      details: String(finalizeError),
+                    },
+                  ],
+                },
+              });
+            } catch (fatalError) {
+              console.error(
+                "FATAL: Could not update import status at all:",
+                fatalError,
+              );
+              // At this point, the import will be stuck - but at least we logged the error
+            }
           }
-        }
 
-        // Clean up mapping file AFTER all post-processing is complete
-        try {
-          if (fs.existsSync(mappingFilePath)) {
-            fs.unlinkSync(mappingFilePath);
+          // Clean up mapping file AFTER all post-processing is complete
+          try {
+            // Use the same absolute path we passed to Python
+            const absoluteMappingPath = path.join(
+              getMonorepoRoot(),
+              mappingFilePath,
+            );
+            if (fs.existsSync(absoluteMappingPath)) {
+              fs.unlinkSync(absoluteMappingPath);
+              logger.info(`Cleaned up mapping file: ${absoluteMappingPath}`);
+            }
+          } catch (cleanupError) {
+            logger.warn("Failed to clean up mapping file:", cleanupError);
           }
-        } catch (cleanupError) {
-          console.warn("Failed to clean up mapping file:", cleanupError);
         }
       } else {
         // FAILURE: Save the complete stderr output to database
@@ -1314,17 +1338,15 @@ router.get("/custom-fields/:clientId/stats", async (req, res, next) => {
  */
 function getPythonCommand(): string {
   // Multi-platform Python paths in priority order:
-  // 1. Docker container system Python (installed globally in Dockerfile)
-  // 2. Local venv on Unix (macOS/Linux)
-  // 3. Local venv on Windows
+  // 1. Local venv on Unix (macOS/Linux) - preferred for consistent dependencies
+  // 2. Local venv on Windows
+  // 3. Docker container system Python (installed globally in Dockerfile)
   // 4. System Python (python3/python)
 
   const monorepoRoot = getMonorepoRoot();
 
   const possiblePaths = [
-    // Docker container - Python installed system-wide
-    "/usr/bin/python3",
-    // Local venv on Unix (macOS/Linux) - relative to monorepo root
+    // Local venv on Unix (macOS/Linux) - PREFERRED to avoid dependency validation noise
     path.join(monorepoRoot, "apps", "python-importer", "venv", "bin", "python"),
     // Local venv on Windows - relative to monorepo root
     path.join(
@@ -1335,6 +1357,8 @@ function getPythonCommand(): string {
       "Scripts",
       "python.exe",
     ),
+    // Docker container - Python installed system-wide
+    "/usr/bin/python3",
     // System Python (works on all platforms)
     "python3",
     "python",

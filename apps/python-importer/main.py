@@ -26,6 +26,7 @@ def read_file(file_path: str, chunksize: Optional[int] = None, **kwargs):
     """
     Read CSV or Excel file based on extension.
     Supports .csv, .xlsx, and .xls files.
+    Uses streaming for Excel to avoid loading entire file into memory.
 
     Args:
         file_path: Path to the file
@@ -33,25 +34,54 @@ def read_file(file_path: str, chunksize: Optional[int] = None, **kwargs):
         **kwargs: Additional arguments passed to pandas read function
 
     Returns:
-        DataFrame or TextFileReader (if chunksize is specified)
+        DataFrame or generator yielding DataFrames (if chunksize is specified)
     """
     ext = os.path.splitext(file_path)[1].lower()
 
     if ext in ['.xlsx', '.xls']:
-        # Excel files - openpyxl required for .xlsx
-        print(f"Detected Excel file ({ext}), using openpyxl engine")
-        # For Excel, we need to read the entire file first, then chunk manually
-        df = pd.read_excel(file_path, engine='openpyxl')
+        # Excel files - stream rows to avoid memory issues with large files
+        print(f"Detected Excel file ({ext}), using openpyxl streaming engine")
         if chunksize:
-            # Yield chunks for Excel files to match CSV chunking behavior
-            def excel_chunker(dataframe, chunk_size):
-                for i in range(0, len(dataframe), chunk_size):
-                    yield dataframe.iloc[i:i + chunk_size].copy()
-            return excel_chunker(df, chunksize)
-        return df
+            # Stream Excel file in chunks using openpyxl read_only mode
+            import openpyxl
+
+            def excel_stream_chunker(path, chunk_size):
+                """Generator that yields chunks from Excel file without loading it all into memory."""
+                wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+                ws = wb.active
+
+                # Get header row
+                rows_iter = ws.iter_rows(values_only=True)
+                header = next(rows_iter, None)
+
+                if not header:
+                    print("Warning: Excel file appears to be empty")
+                    return
+
+                # Read rows in batches
+                batch = []
+                for row in rows_iter:
+                    batch.append(row)
+                    if len(batch) >= chunk_size:
+                        # Convert batch to DataFrame
+                        df = pd.DataFrame(batch, columns=header)
+                        yield df
+                        batch = []
+
+                # Yield remaining rows
+                if batch:
+                    df = pd.DataFrame(batch, columns=header)
+                    yield df
+
+                wb.close()
+
+            return excel_stream_chunker(file_path, chunksize)
+        else:
+            # Read entire Excel file (only for preview or small files)
+            return pd.read_excel(file_path, engine='openpyxl')
     else:
-        # CSV files (default)
-        print(f"Detected CSV file ({ext}), using pandas read_csv")
+        # CSV files (default) - pandas natively supports chunked reading
+        print(f"Detected CSV file ({ext}), using pandas read_csv with chunking")
         return pd.read_csv(file_path, chunksize=chunksize, **kwargs)
 
 
@@ -524,6 +554,8 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
         for i, chunk in enumerate(file_reader):
             try:
+                chunk_rows_committed = 0  # Track actual committed rows in this chunk
+
                 if import_type == 'inventory':
                     print(f"Processing inventory chunk {i+1}...")
                     cleaned_chunk = clean_inventory_data(chunk, str(import_batch.clientId), mapping_data)
@@ -554,9 +586,11 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     if to_insert:
                         print(f"  Inserting {len(to_insert)} new products...")
                         db.bulk_insert_mappings(models.Product, to_insert)
+                        chunk_rows_committed += len(to_insert)
 
                     if to_update:
                         print(f"  Updating {len(to_update)} existing products...")
+                        chunk_rows_committed += len(to_update)
                         # NOTE: bulk_update_mappings is not standard in SQLAlchemy Core.
                         # This requires iteration, but it's safe.
                         for item in to_update:
@@ -627,14 +661,16 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     if not valid_rows.empty:
                         print(f"  Inserting {len(valid_rows)} transaction records...")
                         db.bulk_insert_mappings(models.Transaction, valid_rows.to_dict(orient="records"))
+                        chunk_rows_committed += len(valid_rows)
 
                 # Commit changes for the entire chunk
                 db.commit()
 
-                total_rows_processed += len(chunk)
+                # Count only successfully committed rows, not raw chunk size
+                total_rows_processed += chunk_rows_committed
                 import_batch.processedCount = total_rows_processed
                 db.commit()
-                print(f"  Finished chunk {i+1}. Total rows processed: {total_rows_processed}")
+                print(f"  Finished chunk {i+1}. Committed {chunk_rows_committed} rows. Total rows processed: {total_rows_processed}")
 
             except ValueError as ve:
                 # Validation error from cleaning functions (required columns missing, etc.)
@@ -659,18 +695,23 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 print(f"FATAL ERROR in chunk {i+1}: {chunk_e}", file=sys.stderr)
 
         # Finalize import status
-        import_batch.status = 'completed_with_errors' if errors_encountered else 'completed'
+        if total_rows_processed == 0:
+            import_batch.status = 'failed'
+            import_batch.error = 'No valid rows to process'
+        elif errors_encountered:
+            import_batch.status = 'completed_with_errors'
+        else:
+            import_batch.status = 'completed'
+
         import_batch.completedAt = datetime.now()
         import_batch.errorCount = len(errors_encountered)
         import_batch.errors = errors_encountered
         db.commit()
-        print(f"Import {import_batch_id} finished. Processed {total_rows_processed} rows with {len(errors_encountered)} errors.")
+        print(f"Import {import_batch_id} finished. Status: {import_batch.status}. Processed {total_rows_processed} rows with {len(errors_encountered)} errors.")
 
-        # Exit with error code if import failed (errors exist or 0 rows processed)
-        # This signals to Node.js that the import failed, triggering proper error handling
-        if errors_encountered or total_rows_processed == 0:
-            print(f"Import failed - exiting with error code", file=sys.stderr)
-            sys.exit(1)
+        # Exit 0 for all handled statuses - Node.js will read status from database
+        # Only exit non-zero for fatal setup errors (caught in except block)
+        sys.exit(0)
 
     except Exception as e:
         db.rollback()
