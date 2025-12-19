@@ -6,10 +6,8 @@
 // =============================================================================
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { prisma } from "../lib/prisma.js";
-import * as ShipmentService from "../services/shipment.service.js";
+import type { PrismaClient } from "@prisma/client";
 import type { CarrierType } from "../services/shipment.service.js";
-import * as OrderTimingService from "../services/order-timing.service.js";
 
 // Skip tests in CI environment or when using test database
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -17,8 +15,21 @@ const isCI = process.env.CI === "true";
 const isTestDatabase = DATABASE_URL?.includes("test");
 const skipTests = isCI || isTestDatabase || !DATABASE_URL;
 
-// Database availability flag
+// Lazy loaded dependencies
+let prisma: PrismaClient | null = null;
+let ShipmentService: any = null;
+let OrderTimingService: any = null;
 let databaseAvailable = false;
+
+async function loadDependencies() {
+  if (!prisma && !skipTests) {
+    const prismaModule = await import("../lib/prisma.js");
+    prisma = prismaModule.prisma;
+    ShipmentService = await import("../services/shipment.service.js");
+    OrderTimingService = await import("../services/order-timing.service.js");
+    databaseAvailable = true;
+  }
+}
 
 // =============================================================================
 // TEST DATA SETUP
@@ -33,6 +44,8 @@ let testShipmentId: string;
 let testPortalUserId: string;
 
 async function setupTestData() {
+  await loadDependencies();
+  if (!prisma) throw new Error("Prisma not available");
   console.log("Setting up test data...");
 
   // Create test clients

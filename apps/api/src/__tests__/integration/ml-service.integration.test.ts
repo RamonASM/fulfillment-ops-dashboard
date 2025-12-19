@@ -4,25 +4,27 @@
 // =============================================================================
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { PrismaClient } from "@prisma/client";
-import { MLClientService } from "../../services/ml-client.service.js";
+import type { PrismaClient } from "@prisma/client";
 import { subDays } from "date-fns";
 
-// Skip tests if ML service URL not configured or database not available
+// Skip tests in CI - these require database and ML service
+const isCI = process.env.CI === "true";
 const ML_URL = process.env.ML_ANALYTICS_URL;
 const DATABASE_URL = process.env.DATABASE_URL;
-const isCI = process.env.CI === "true";
 const skipTests =
   isCI || !ML_URL || !DATABASE_URL || DATABASE_URL.includes("test");
 
-// Initialize prisma lazily within tests
+// Lazy imports to avoid module loading errors in CI
 let prisma: PrismaClient | null = null;
+let MLClientService: any = null;
 
-function getPrisma(): PrismaClient {
-  if (!prisma) {
-    prisma = new PrismaClient();
+async function loadDependencies() {
+  if (!prisma && !skipTests) {
+    const { PrismaClient: PC } = await import("@prisma/client");
+    prisma = new PC();
+    const ml = await import("../../services/ml-client.service.js");
+    MLClientService = ml.MLClientService;
   }
-  return prisma;
 }
 
 describe.skipIf(skipTests)("ML Service Integration Tests", () => {
@@ -30,7 +32,9 @@ describe.skipIf(skipTests)("ML Service Integration Tests", () => {
   let testProductId: string;
 
   beforeAll(async () => {
-    const db = getPrisma();
+    await loadDependencies();
+    if (!prisma) throw new Error("Prisma not available");
+    const db = prisma;
     // Create test client
     const client = await db.client.create({
       data: {
