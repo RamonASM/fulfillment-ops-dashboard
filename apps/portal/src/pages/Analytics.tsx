@@ -169,9 +169,13 @@ export default function Analytics() {
           </>
         ) : (
           <>
-            <StockHealthDonut data={summary.stockHealth} />
+            <div data-testid="stock-health-widget">
+              <StockHealthDonut data={summary.stockHealth} />
+            </div>
             {!trendsLoading && trends.labels.length > 0 && (
-              <MonthlyTrendsChart data={trends} height={300} />
+              <div data-testid="usage-trends-chart">
+                <MonthlyTrendsChart data={trends} height={300} />
+              </div>
             )}
           </>
         )}
@@ -194,7 +198,9 @@ export default function Analytics() {
               products={upcomingStockoutsFormatted}
               limit={5}
             />
-            <SmartReorderWidget limit={5} />
+            <div data-testid="reorder-suggestions">
+              <SmartReorderWidget limit={5} />
+            </div>
           </>
         )}
       </div>

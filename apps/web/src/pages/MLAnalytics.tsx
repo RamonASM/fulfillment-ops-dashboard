@@ -300,6 +300,7 @@ export default function MLAnalytics() {
         variants={staggerContainer}
         initial="hidden"
         animate="visible"
+        data-testid="ml-stats"
       >
         <StatCard
           title="Total Forecasts"
@@ -363,6 +364,7 @@ export default function MLAnalytics() {
         <motion.div
           variants={fadeInUp}
           className="bg-white rounded-lg border border-gray-200 p-6"
+          data-testid="recent-predictions"
         >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">
