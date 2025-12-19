@@ -1,5 +1,5 @@
-import { useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 
 type ShortcutHandler = () => void;
 
@@ -34,12 +34,12 @@ export function useKeyboardShortcuts() {
     // Don't trigger shortcuts when typing in inputs
     const target = e.target as HTMLElement;
     if (
-      target.tagName === 'INPUT' ||
-      target.tagName === 'TEXTAREA' ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
       target.isContentEditable
     ) {
       // Allow Escape to work in inputs
-      if (e.key !== 'Escape') return;
+      if (e.key !== "Escape") return;
     }
 
     for (const shortcut of shortcuts) {
@@ -58,8 +58,8 @@ export function useKeyboardShortcuts() {
   }, []);
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 }
 
@@ -75,14 +75,14 @@ export function useNavigationShortcuts() {
       // Don't trigger in inputs
       const target = e.target as HTMLElement;
       if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) {
         return;
       }
 
-      if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey) {
+      if (e.key.toLowerCase() === "g" && !e.ctrlKey && !e.metaKey) {
         setGPressed(true);
         timeout = setTimeout(() => setGPressed(false), 1000);
         return;
@@ -93,11 +93,12 @@ export function useNavigationShortcuts() {
         clearTimeout(timeout);
 
         const routes: Record<string, string> = {
-          h: '/',           // Home/Dashboard
-          a: '/alerts',     // Alerts
-          c: '/clients',    // Clients
-          r: '/reports',    // Reports
-          s: '/settings',   // Settings
+          h: "/", // Home/Dashboard
+          a: "/alerts", // Alerts
+          c: "/clients", // Clients
+          r: "/reports", // Reports
+          s: "/settings", // Settings
+          m: "/ml-analytics", // ML Analytics
         };
 
         const route = routes[e.key.toLowerCase()];
@@ -108,16 +109,16 @@ export function useNavigationShortcuts() {
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timeout);
     };
   }, [gPressed, navigate]);
 }
 
 // Missing import
-import { useState } from 'react';
+import { useState } from "react";
 
 // Predefined app shortcuts
 export function useAppShortcuts(callbacks: {
@@ -132,11 +133,11 @@ export function useAppShortcuts(callbacks: {
     if (callbacks.onOpenCommandPalette) {
       unregister.push(
         registerShortcut({
-          key: 'k',
+          key: "k",
           meta: true,
           handler: callbacks.onOpenCommandPalette,
-          description: 'Open command palette',
-        })
+          description: "Open command palette",
+        }),
       );
     }
 
@@ -144,12 +145,12 @@ export function useAppShortcuts(callbacks: {
     if (callbacks.onRefresh) {
       unregister.push(
         registerShortcut({
-          key: 'r',
+          key: "r",
           meta: true,
           shift: true,
           handler: callbacks.onRefresh,
-          description: 'Refresh data',
-        })
+          description: "Refresh data",
+        }),
       );
     }
 
@@ -157,11 +158,11 @@ export function useAppShortcuts(callbacks: {
     if (callbacks.onToggleSidebar) {
       unregister.push(
         registerShortcut({
-          key: 'b',
+          key: "b",
           meta: true,
           handler: callbacks.onToggleSidebar,
-          description: 'Toggle sidebar',
-        })
+          description: "Toggle sidebar",
+        }),
       );
     }
 
@@ -182,44 +183,44 @@ export function useTableNavigation(config: {
       // Don't trigger in inputs
       const target = e.target as HTMLElement;
       if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) {
         return;
       }
 
       switch (e.key) {
-        case 'ArrowDown':
-        case 'j':
+        case "ArrowDown":
+        case "j":
           e.preventDefault();
           setSelectedIndex((i) => Math.min(i + 1, config.rowCount - 1));
           break;
-        case 'ArrowUp':
-        case 'k':
+        case "ArrowUp":
+        case "k":
           e.preventDefault();
           setSelectedIndex((i) => Math.max(i - 1, 0));
           break;
-        case 'Enter':
+        case "Enter":
           if (selectedIndex >= 0 && config.onAction) {
             e.preventDefault();
             config.onAction(selectedIndex);
           }
           break;
-        case ' ':
+        case " ":
           if (selectedIndex >= 0 && config.onSelect) {
             e.preventDefault();
             config.onSelect(selectedIndex);
           }
           break;
-        case 'Escape':
+        case "Escape":
           setSelectedIndex(-1);
           break;
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [selectedIndex, config]);
 
   return {

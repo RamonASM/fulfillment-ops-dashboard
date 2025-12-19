@@ -13,7 +13,7 @@ import {
   ShoppingCart,
   Filter,
 } from "lucide-react";
-import { api } from "@/api/client";
+import { portalApi } from "@/api/client";
 
 interface ReorderSuggestion {
   productId: string;
@@ -44,8 +44,8 @@ export function SmartReorderWidget({
   const { data: suggestionsData, isLoading } = useQuery({
     queryKey: ["portal-reorder-suggestions"],
     queryFn: () =>
-      api.get<{ data: ReorderSuggestion[] }>(
-        "/portal/analytics/reorder-suggestions",
+      portalApi.get<{ data: ReorderSuggestion[] }>(
+        "/analytics/reorder-suggestions",
       ),
     staleTime: 60000, // 1 minute
   });
