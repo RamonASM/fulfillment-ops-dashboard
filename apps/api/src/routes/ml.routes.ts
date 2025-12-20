@@ -99,6 +99,17 @@ router.get("/forecast/:productId", async (req, res) => {
       },
     });
   } catch (error) {
+    const errorDetails = {
+      timestamp: new Date().toISOString(),
+      endpoint: "forecast",
+      productId: req.params.productId,
+      error: (error as Error).message,
+      stack: (error as Error).stack,
+    };
+
+    // Log detailed error
+    console.error("[ML Forecast Error]", errorDetails);
+
     const message = (error as Error).message;
     res.status(500).json({
       success: false,
@@ -107,6 +118,12 @@ router.get("/forecast/:productId", async (req, res) => {
         message.includes("Insufficient data")
           ? message
           : "Failed to generate forecast",
+      diagnostics: {
+        message: (error as Error).message,
+        serviceAvailable: await MLClientService.healthCheck().catch(
+          () => false,
+        ),
+      },
     });
   }
 });
@@ -193,9 +210,26 @@ router.post("/forecast/batch", async (req, res) => {
       },
     });
   } catch (error) {
+    const errorDetails = {
+      timestamp: new Date().toISOString(),
+      endpoint: "forecast/batch",
+      productIds: req.body.productIds,
+      error: (error as Error).message,
+      stack: (error as Error).stack,
+    };
+
+    // Log detailed error
+    console.error("[ML Batch Forecast Error]", errorDetails);
+
     res.status(500).json({
       success: false,
       error: "Failed to generate batch forecasts",
+      diagnostics: {
+        message: (error as Error).message,
+        serviceAvailable: await MLClientService.healthCheck().catch(
+          () => false,
+        ),
+      },
     });
   }
 });
@@ -209,12 +243,13 @@ router.post("/forecast/batch", async (req, res) => {
  * Predict when a product will stock out
  */
 router.get("/stockout/:productId", async (req, res) => {
+  let product: any = null; // Declare outside try block for error handler access
   try {
     const { productId } = req.params;
     const { horizonDays = 90 } = req.query;
 
     // Get product with current stock
-    const product = await prisma.product.findUnique({
+    product = await prisma.product.findUnique({
       where: { id: productId },
       select: {
         clientId: true,
@@ -270,6 +305,20 @@ router.get("/stockout/:productId", async (req, res) => {
       },
     });
   } catch (error) {
+    const errorDetails = {
+      timestamp: new Date().toISOString(),
+      endpoint: "stockout",
+      productId: req.params.productId,
+      currentStock: product?.currentStockPacks
+        ? product.currentStockPacks * product.packSize
+        : 0,
+      error: (error as Error).message,
+      stack: (error as Error).stack,
+    };
+
+    // Log detailed error
+    console.error("[ML Stockout Error]", errorDetails);
+
     const message = (error as Error).message;
     res.status(500).json({
       success: false,
@@ -278,6 +327,12 @@ router.get("/stockout/:productId", async (req, res) => {
         message.includes("Insufficient data")
           ? message
           : "Failed to predict stockout",
+      diagnostics: {
+        message: (error as Error).message,
+        serviceAvailable: await MLClientService.healthCheck().catch(
+          () => false,
+        ),
+      },
     });
   }
 });

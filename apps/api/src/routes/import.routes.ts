@@ -2,10 +2,10 @@ import { Router } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import readline from "readline";
+import xlsx from "xlsx";
 import { spawn, execSync } from "child_process";
-import { fileURLToPath } from "url";
 import { prisma } from "../lib/prisma.js";
-import { logger } from "../lib/logger.js";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
@@ -30,24 +30,21 @@ import {
   getCustomFieldStats,
 } from "../services/custom-field.service.js";
 
+// Type for import types
+type ImportType = "inventory" | "orders" | "both";
+
 /**
- * Get the monorepo root path by walking up from the current file's directory.
+ * Get the monorepo root path by walking up from the current directory.
  * This works regardless of how the API is started (PM2, npm workspace, direct).
- *
- * Detection method: Find directory containing package.json with name "inventory-intelligence-platform"
  */
 function getMonorepoRoot(): string {
-  // Start from __dirname (works in compiled CommonJS)
-  // In dev with tsx, this also works
-  let currentDir = __dirname;
+  let currentDir = process.cwd();
 
-  // Walk up the directory tree looking for monorepo root marker
   for (let i = 0; i < 10; i++) {
     const pkgPath = path.join(currentDir, "package.json");
     if (fs.existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        // Found the monorepo root package.json
         if (pkg.name === "inventory-intelligence-platform") {
           return currentDir;
         }
@@ -56,21 +53,144 @@ function getMonorepoRoot(): string {
       }
     }
     const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) break; // Reached filesystem root
+    if (parentDir === currentDir) break;
     currentDir = parentDir;
   }
 
-  // Fallback: assume cwd is correct (for PM2 which explicitly sets cwd)
   console.warn(
-    "[Import] Could not detect monorepo root from __dirname, falling back to process.cwd()",
+    "[Import] Could not detect monorepo root from cwd, using process.cwd()",
   );
   return process.cwd();
 }
 
 const router = Router();
 
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
+const IMPORT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const monorepoRoot = getMonorepoRoot();
+const uploadsDir = path.join(monorepoRoot, "uploads");
+
+async function countFileRows(filePath: string): Promise<number | null> {
+  const ext = path.extname(filePath).toLowerCase();
+
+  if (ext === ".csv" || ext === ".tsv") {
+    return new Promise<number>((resolve, reject) => {
+      let count = -1; // discount header
+      const rl = readline.createInterface({
+        input: fs.createReadStream(filePath),
+        crlfDelay: Infinity,
+      });
+
+      rl.on("line", () => {
+        count += 1;
+      });
+      rl.on("close", () => resolve(Math.max(0, count)));
+      rl.on("error", (err) => reject(err));
+    }).catch(() => null);
+  }
+
+  if (ext === ".xlsx" || ext === ".xls") {
+    try {
+      const workbook = xlsx.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet || !sheet["!ref"]) return null;
+      const range = xlsx.utils.decode_range(sheet["!ref"]);
+      const totalRows = range.e.r - range.s.r; // exclude header row
+      return Math.max(0, totalRows);
+    } catch (err) {
+      console.warn(
+        "[Import] Failed to count Excel rows:",
+        (err as Error).message,
+      );
+      return null;
+    }
+  }
+
+  return null;
+}
+
+const toSnakeCase = (str: string): string =>
+  str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+async function createImportPreview(params: {
+  filePath: string;
+  originalName: string;
+  clientId: string;
+  userSelectedType?: string;
+  importedBy?: string;
+}) {
+  const { filePath, originalName, clientId, userSelectedType, importedBy } =
+    params;
+
+  const { headers, rows } = await parseFilePreview(filePath);
+  const detectionResult = detectFileTypeWithConfidence(headers);
+  const validTypes: ImportType[] = ["inventory", "orders", "both"];
+  const finalType: ImportType = validTypes.includes(
+    userSelectedType as ImportType,
+  )
+    ? (userSelectedType as ImportType)
+    : detectionResult.type;
+
+  const columnMapping = await generateColumnMappingWithLearning(
+    headers,
+    finalType,
+    clientId,
+    rows.slice(0, 20),
+  );
+
+  const totalRows = await countFileRows(filePath);
+  const relativeFilePath = path.relative(monorepoRoot, filePath);
+
+  const importBatch = await prisma.importBatch.create({
+    data: {
+      clientId,
+      importType: finalType,
+      filename: originalName,
+      filePath: relativeFilePath,
+      status: "pending",
+      rowCount: totalRows ?? rows.length,
+      importedBy,
+    },
+  });
+
+  const warnings = generateWarnings(headers, rows);
+  const validationResult = validateImportData(
+    rows.slice(0, 100),
+    columnMapping,
+    finalType,
+  );
+
+  const preview = {
+    importId: importBatch.id,
+    detectedType: detectionResult.type,
+    selectedType: finalType,
+    userOverride: !!(
+      userSelectedType && userSelectedType !== detectionResult.type
+    ),
+    detection: detectionResult,
+    rowCount: totalRows ?? rows.length,
+    columns: columnMapping,
+    sampleRows: rows.slice(0, 5),
+    warnings,
+    validation: {
+      isValid: validationResult.isValid,
+      totalErrors: validationResult.totalErrors,
+      totalWarnings: validationResult.totalWarnings,
+      summary: validationResult.summary,
+      sampleIssues: validationResult.rowResults
+        .filter((r) => r.errors.length > 0 || r.warnings.length > 0)
+        .slice(0, 10)
+        .flatMap((r) => [...r.errors, ...r.warnings]),
+    },
+  };
+
+  return { importBatch, preview };
+}
+
 // Ensure uploads directory exists
-const uploadsDir = "./uploads";
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -80,10 +200,8 @@ const storage = multer.diskStorage({
   destination: uploadsDir,
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
-    );
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, file.fieldname + "-" + uniqueSuffix + ext);
   },
 });
 
@@ -91,7 +209,7 @@ const upload = multer({
   storage,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB limit
-    fieldSize: 50 * 1024 * 1024, // 50MB field size limit
+    fieldSize: 50 * 1024 * 1024,
   },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = [
@@ -99,11 +217,11 @@ const upload = multer({
       "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "text/tab-separated-values",
-      "application/octet-stream", // Some systems send files with generic type
+      "application/octet-stream",
     ];
     const allowedExtensions = [".csv", ".xlsx", ".xls", ".tsv"];
-
     const ext = path.extname(file.originalname).toLowerCase();
+
     if (
       allowedTypes.includes(file.mimetype) ||
       allowedExtensions.includes(ext)
@@ -119,21 +237,19 @@ const upload = multer({
   },
 });
 
-// Multer error handler middleware
+// Multer error handler
 const handleMulterError = (err: any, req: any, res: any, next: any) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
         error: "File too large",
-        message:
-          "File size exceeds the 50MB limit. Please upload a smaller file.",
+        message: "File size exceeds the 50MB limit.",
         maxSize: "50MB",
       });
     }
-    return res.status(400).json({
-      error: "Upload error",
-      message: err.message,
-    });
+    return res
+      .status(400)
+      .json({ error: "Upload error", message: err.message });
   } else if (err) {
     return res.status(400).json({
       error: "Upload error",
@@ -143,11 +259,302 @@ const handleMulterError = (err: any, req: any, res: any, next: any) => {
   next();
 };
 
-// Apply authentication
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+function getPythonCommand(): string {
+  const possiblePaths = [
+    path.join(monorepoRoot, "apps", "python-importer", "venv", "bin", "python"),
+    "python3",
+    "python",
+  ];
+  const requiredDependencies = ["pandas", "sqlalchemy", "psycopg2", "openpyxl"];
+
+  for (const cmd of possiblePaths) {
+    try {
+      execSync(`${cmd} --version`, { stdio: "ignore" });
+      for (const dep of requiredDependencies) {
+        try {
+          execSync(`${cmd} -c "import ${dep}"`, { stdio: "ignore" });
+        } catch {
+          throw new Error(
+            `Python found at ${cmd}, but missing dependency: '${dep}'`,
+          );
+        }
+      }
+      console.log(`[Import] Using validated Python environment: ${cmd}`);
+      return cmd;
+    } catch (err) {
+      console.warn(
+        `[Import] Python path '${cmd}' failed:`,
+        (err as Error).message,
+      );
+    }
+  }
+  throw new Error(
+    "A valid Python environment with required dependencies could not be found.",
+  );
+}
+
+function calculateDuration(importBatch: {
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+}): { seconds: number; formatted: string } | null {
+  if (!importBatch.startedAt) return null;
+  const endTime = importBatch.completedAt ?? new Date();
+  const startTime = importBatch.startedAt;
+  const seconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return {
+    seconds,
+    formatted: minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${seconds}s`,
+  };
+}
+
+function calculateProgress(importBatch: {
+  processedCount: number | null;
+  rowCount: number | null;
+}): number {
+  const processed = importBatch.processedCount ?? 0;
+  const total = importBatch.rowCount ?? 0;
+  if (total === 0) return 0;
+  return Math.min(100, Math.round((processed / total) * 100));
+}
+
+function generateWarnings(headers: string[], rows: any[]): string[] {
+  const warnings: string[] = [];
+
+  // Check for empty columns
+  const emptyColumns = headers.filter((h) => {
+    const hasValues = rows.some(
+      (r) => r[h] !== undefined && r[h] !== null && r[h] !== "",
+    );
+    return !hasValues;
+  });
+  if (emptyColumns.length > 0) {
+    warnings.push(`Empty columns detected: ${emptyColumns.join(", ")}`);
+  }
+
+  // Check for duplicate headers
+  const duplicates = headers.filter((h, i) => headers.indexOf(h) !== i);
+  if (duplicates.length > 0) {
+    warnings.push(
+      `Duplicate column headers: ${[...new Set(duplicates)].join(", ")}`,
+    );
+  }
+
+  return warnings;
+}
+
+// =============================================================================
+// MIDDLEWARE
+// =============================================================================
 router.use(authenticate);
 
 // =============================================================================
-// ROUTES
+// ROUTES - IMPORT HISTORY (must be before /:importId routes)
+// =============================================================================
+
+/**
+ * GET /api/imports/history
+ * Get import history for all clients (filtered by user access)
+ */
+router.get("/history", async (req, res, next) => {
+  try {
+    const { clientId, status, limit = "50", offset = "0" } = req.query;
+
+    const where: any = {};
+
+    // Filter by clientId if provided
+    if (clientId && typeof clientId === "string") {
+      where.clientId = clientId;
+    }
+
+    // Filter by status if provided
+    if (status && typeof status === "string") {
+      where.status = status;
+    }
+
+    const imports = await prisma.importBatch.findMany({
+      where,
+      include: {
+        client: {
+          select: { id: true, name: true, code: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: parseInt(limit as string, 10),
+      skip: parseInt(offset as string, 10),
+    });
+
+    const total = await prisma.importBatch.count({ where });
+
+    res.json({
+      data: imports,
+      total,
+      limit: parseInt(limit as string, 10),
+      offset: parseInt(offset as string, 10),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================================================
+// ROUTES - CUSTOM FIELDS (must be before /:importId routes)
+// =============================================================================
+
+/**
+ * GET /api/imports/custom-fields/:clientId
+ * Get custom field definitions for a client
+ */
+router.get(
+  "/custom-fields/:clientId",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+      const fields = await getClientCustomFields(clientId);
+      res.json({ data: fields, count: fields.length });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * POST /api/imports/custom-fields/:clientId
+ * Discover and create custom fields from import data
+ */
+router.post(
+  "/custom-fields/:clientId",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+      const { headers } = req.body;
+
+      const discovered = await discoverCustomFields(clientId, headers);
+      res.json({
+        data: discovered,
+        message: `Discovered ${discovered.length} custom fields`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * PATCH /api/imports/custom-fields/:fieldId
+ * Update a custom field definition
+ */
+router.patch("/custom-fields/:fieldId", async (req, res, next) => {
+  try {
+    const { fieldId } = req.params;
+    const updates = req.body;
+
+    const updated = await updateCustomFieldDefinition(fieldId, updates);
+    res.json({ data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/imports/custom-fields/:clientId/stats
+ * Get custom field usage statistics
+ */
+router.get(
+  "/custom-fields/:clientId/stats",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+      const stats = await getCustomFieldStats(clientId);
+      res.json({ stats });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// =============================================================================
+// ROUTES - CLIENT DATA OPERATIONS (must be before /:importId routes)
+// =============================================================================
+
+/**
+ * DELETE /api/imports/client/:clientId/data
+ * Delete all import data for a client (full wipe)
+ */
+router.delete(
+  "/client/:clientId/data",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+      const { confirm } = req.body;
+
+      if (confirm !== "DELETE_ALL_DATA") {
+        throw new ValidationError("Must confirm with 'DELETE_ALL_DATA'");
+      }
+
+      // Delete in order to respect foreign keys
+      const deletedTransactions = await prisma.transaction.deleteMany({
+        where: { product: { clientId } },
+      });
+
+      const deletedProducts = await prisma.product.deleteMany({
+        where: { clientId },
+      });
+
+      const deletedImports = await prisma.importBatch.deleteMany({
+        where: { clientId },
+      });
+
+      res.json({
+        message: "All client data deleted",
+        deleted: {
+          transactions: deletedTransactions.count,
+          products: deletedProducts.count,
+          imports: deletedImports.count,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * POST /api/imports/recalculate/:clientId
+ * Trigger manual recalculation of client usage and alerts
+ */
+router.post(
+  "/recalculate/:clientId",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+
+      await recalculateClientUsage(clientId);
+      const alertResult = await runAlertGeneration(clientId);
+
+      res.json({
+        message: "Recalculation complete",
+        alertsGenerated: alertResult?.created || 0,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// =============================================================================
+// ROUTES - FILE UPLOAD
 // =============================================================================
 
 /**
@@ -169,78 +576,75 @@ router.post(
         throw new ValidationError("Client ID is required");
       }
 
-      // Verify client exists
       const client = await prisma.client.findUnique({
         where: { id: clientId },
       });
-
       if (!client) {
         throw new NotFoundError("Client");
       }
 
-      // Parse file preview for header detection and column mapping
-      const { headers, rows } = await parseFilePreview(req.file.path);
+      const absoluteFilePath = req.file.path;
+      const totalRows = await countFileRows(absoluteFilePath);
 
-      // Get detection result with confidence scoring
+      const { headers, rows } = await parseFilePreview(absoluteFilePath);
       const detectionResult = detectFileTypeWithConfidence(headers);
-
-      // Allow user to override detected type via request body
       const { importType: userSelectedType } = req.body;
-      const validTypes = ["inventory", "orders", "both"];
-      const finalType = validTypes.includes(userSelectedType)
-        ? (userSelectedType as "inventory" | "orders" | "both")
-        : detectionResult.type;
-      const userOverride =
-        userSelectedType && userSelectedType !== detectionResult.type;
 
-      // Pass sample rows for better data type detection
-      // Use learning-enabled mapping to incorporate past user corrections
+      // Determine final type - force user selection if "both" detected and not overridden
+      const validProcessableTypes: ImportType[] = ["inventory", "orders"];
+      const requiresTypeSelection =
+        detectionResult.type === "both" &&
+        !validProcessableTypes.includes(userSelectedType as ImportType);
+
+      // If user provided a valid type, use it; otherwise use detected (but may require selection)
+      const finalType: ImportType = validProcessableTypes.includes(
+        userSelectedType as ImportType,
+      )
+        ? (userSelectedType as ImportType)
+        : requiresTypeSelection
+          ? "inventory" // Default for column mapping, but flag will indicate user must choose
+          : detectionResult.type;
+
       const columnMapping = await generateColumnMappingWithLearning(
         headers,
-        finalType,
+        requiresTypeSelection ? "inventory" : finalType, // Use inventory patterns for preview if both
         clientId,
         rows.slice(0, 20),
       );
 
-      // Create import batch
-      // Note: rowCount set to 0 initially (preview is inaccurate)
-      // Python will update with actual row count in first progress event
       const importBatch = await prisma.importBatch.create({
         data: {
           clientId,
           importType: finalType,
           filename: req.file.originalname,
-          filePath: req.file.path,
+          filePath: absoluteFilePath,
           status: "pending",
-          rowCount: 0, // Will be updated by Python when actual count is known
+          rowCount: totalRows ?? rows.length,
+          processedCount: 0,
           importedBy: req.user!.userId,
         },
       });
 
-      // Generate preview warnings (legacy)
       const warnings = generateWarnings(headers, rows);
-
-      // Run validation on sample data
       const validationResult = validateImportData(
         rows.slice(0, 100),
         columnMapping,
         finalType,
       );
 
-      const preview = {
+      res.json({
         importId: importBatch.id,
         detectedType: detectionResult.type,
-        selectedType: finalType,
-        userOverride: !!userOverride,
-        detection: {
-          confidence: detectionResult.confidence,
-          inventoryMatches: detectionResult.inventoryMatches,
-          orderMatches: detectionResult.orderMatches,
-          ambiguousMatches: detectionResult.ambiguousMatches,
-          matchedInventoryHeaders: detectionResult.matchedInventoryHeaders,
-          matchedOrderHeaders: detectionResult.matchedOrderHeaders,
-        },
-        rowCount: rows.length,
+        selectedType: requiresTypeSelection ? null : finalType,
+        userOverride:
+          userSelectedType && userSelectedType !== detectionResult.type,
+        requiresTypeSelection,
+        ...(requiresTypeSelection && {
+          message:
+            "File contains both inventory and order data. Please select which type to import.",
+        }),
+        detection: detectionResult,
+        rowCount: totalRows ?? rows.length,
         columns: columnMapping,
         sampleRows: rows.slice(0, 5),
         warnings,
@@ -249,15 +653,12 @@ router.post(
           totalErrors: validationResult.totalErrors,
           totalWarnings: validationResult.totalWarnings,
           summary: validationResult.summary,
-          // Only include first 10 detailed results to keep response size manageable
           sampleIssues: validationResult.rowResults
             .filter((r) => r.errors.length > 0 || r.warnings.length > 0)
             .slice(0, 10)
             .flatMap((r) => [...r.errors, ...r.warnings]),
         },
-      };
-
-      res.json(preview);
+      });
     } catch (error) {
       next(error);
     }
@@ -266,7 +667,7 @@ router.post(
 
 /**
  * POST /api/imports/upload-multiple
- * Upload multiple files for import (processes sequentially)
+ * Upload multiple files for import
  */
 router.post(
   "/upload-multiple",
@@ -284,11 +685,9 @@ router.post(
         throw new ValidationError("Client ID is required");
       }
 
-      // Verify client exists
       const client = await prisma.client.findUnique({
         where: { id: clientId },
       });
-
       if (!client) {
         throw new NotFoundError("Client");
       }
@@ -296,72 +695,73 @@ router.post(
       const previews: Array<{
         importId: string;
         filename: string;
-        detectedType: string;
+        detectedType: "orders" | "inventory" | "both";
+        detection: ReturnType<typeof detectFileTypeWithConfidence>;
         rowCount: number;
-        columns: ReturnType<typeof generateColumnMapping>;
-        sampleRows: Record<string, string | number | undefined>[];
-        warnings: ReturnType<typeof generateWarnings>;
+        columns: Awaited<ReturnType<typeof generateColumnMappingWithLearning>>;
+        sampleRows: Record<string, unknown>[];
+        warnings: string[];
         validation: {
           isValid: boolean;
           totalErrors: number;
           totalWarnings: number;
-          summary: {
-            errorsByField: Record<string, number>;
-            warningsByField: Record<string, number>;
-          };
+          summary: Record<string, unknown>;
+          sampleIssues: string[];
         };
       }> = [];
 
       for (const file of files) {
-        // Parse file preview for header detection and column mapping
-        const { headers, rows } = await parseFilePreview(file.path);
-        const detectedType = detectFileType(headers);
-        // Use learning-enabled mapping to incorporate past user corrections
+        const absoluteFilePath = file.path;
+        const totalRows = await countFileRows(absoluteFilePath);
+        const { headers, rows } = await parseFilePreview(absoluteFilePath);
+        const detectionResult = detectFileTypeWithConfidence(headers);
         const columnMapping = await generateColumnMappingWithLearning(
           headers,
-          detectedType,
+          detectionResult.type,
           clientId,
           rows.slice(0, 20),
         );
 
-        // Create import batch
-        // Note: rowCount set to 0 initially (preview is inaccurate)
-        // Python will update with actual row count in progress events
         const importBatch = await prisma.importBatch.create({
           data: {
             clientId,
-            importType: detectedType,
+            importType: detectionResult.type,
             filename: file.originalname,
-            filePath: file.path,
+            filePath: absoluteFilePath,
             status: "pending",
-            rowCount: 0, // Will be updated by Python when actual count is known
+            rowCount: totalRows ?? rows.length,
+            processedCount: 0,
             importedBy: req.user!.userId,
           },
         });
 
-        // Generate warnings
         const warnings = generateWarnings(headers, rows);
-
-        // Run validation on sample data
         const validationResult = validateImportData(
           rows.slice(0, 100),
           columnMapping,
-          detectedType,
+          detectionResult.type,
         );
 
         previews.push({
           importId: importBatch.id,
           filename: file.originalname,
-          detectedType,
-          rowCount: rows.length,
+          detectedType: detectionResult.type,
+          detection: detectionResult,
+          rowCount: totalRows ?? rows.length,
           columns: columnMapping,
-          sampleRows: rows.slice(0, 3),
+          sampleRows: rows.slice(0, 5),
           warnings,
           validation: {
             isValid: validationResult.isValid,
             totalErrors: validationResult.totalErrors,
             totalWarnings: validationResult.totalWarnings,
             summary: validationResult.summary,
+            sampleIssues: validationResult.rowResults
+              .filter((r) => r.errors.length > 0 || r.warnings.length > 0)
+              .slice(0, 10)
+              .flatMap((r) =>
+                [...r.errors, ...r.warnings].map((w) => w.message),
+              ),
           },
         });
       }
@@ -376,49 +776,444 @@ router.post(
   },
 );
 
+// =============================================================================
+// ROUTES - IMPORT OPERATIONS
+// =============================================================================
+
 /**
- * GET /api/imports/history
- * List past imports (must be before /:importId to avoid route conflict)
+ * POST /api/imports/:importId/confirm
+ * Confirm and process an import
  */
-router.get("/history", async (req, res, next) => {
+router.post("/:importId/confirm", async (req, res, next) => {
   try {
-    const userId = req.user!.userId;
-    const role = req.user!.role;
+    const { importId } = req.params;
+    const { columnMapping, originalMapping } = req.body;
 
-    // Get client IDs user has access to
-    let clientIds: string[] = [];
-
-    if (role === "admin" || role === "operations_manager") {
-      const clients = await prisma.client.findMany({
-        where: { isActive: true },
-        select: { id: true },
-      });
-      clientIds = clients.map((c) => c.id);
-    } else {
-      const userClients = await prisma.userClient.findMany({
-        where: { userId },
-        select: { clientId: true },
-      });
-      clientIds = userClients.map((uc) => uc.clientId);
-    }
-
-    const imports = await prisma.importBatch.findMany({
-      where: {
-        clientId: { in: clientIds },
-      },
-      include: {
-        client: {
-          select: { name: true, code: true },
-        },
-        user: {
-          select: { name: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 50,
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
     });
 
-    res.json({ data: imports });
+    if (!importBatch) throw new NotFoundError("Import");
+    if (importBatch.status !== "pending") {
+      throw new ValidationError("Import has already been processed");
+    }
+
+    // Validate import type - Python only supports "inventory" or "orders"
+    if (importBatch.importType === "both") {
+      throw new ValidationError(
+        "Cannot process import type 'both'. Please select either 'inventory' or 'orders' using PATCH /api/imports/:id before confirming.",
+      );
+    }
+
+    if (!importBatch.filePath || !fs.existsSync(importBatch.filePath)) {
+      throw new ValidationError(
+        "Uploaded file is missing on server. Please re-upload and try again.",
+      );
+    }
+
+    // Store mapping corrections for learning
+    if (originalMapping && columnMapping) {
+      try {
+        // Transform mappings into corrections format
+        const corrections = (
+          columnMapping as Array<{ source: string; mapsTo: string }>
+        ).map((col) => {
+          const original = (
+            originalMapping as Array<{ source: string; mapsTo: string }>
+          ).find((o) => o.source === col.source);
+          return {
+            header: col.source,
+            suggestedField: original?.mapsTo || "",
+            confirmedField: col.mapsTo,
+          };
+        });
+        await storeMappingCorrections(importBatch.clientId, corrections);
+      } catch (err) {
+        console.warn("Failed to store mapping corrections:", err);
+      }
+    }
+
+    const normalizedMappings = (columnMapping || []).map(
+      (m: { source: string; mapsTo: string; isCustomField?: boolean }) => ({
+        ...m,
+        mapsTo: toSnakeCase(m.mapsTo),
+      }),
+    );
+
+    // Create mapping file next to the data file
+    const mappingFilePath = `${importBatch.filePath}.mapping.json`;
+
+    fs.writeFileSync(
+      mappingFilePath,
+      JSON.stringify(
+        {
+          importId,
+          clientId: importBatch.clientId,
+          importType: importBatch.importType,
+          columnMappings: normalizedMappings,
+        },
+        null,
+        2,
+      ),
+    );
+
+    // Get Python command
+    let pythonCmd: string;
+    try {
+      pythonCmd = getPythonCommand();
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Unknown Python error";
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [
+            {
+              message: "Python environment validation failed",
+              details: errorMessage,
+            },
+          ],
+        },
+      });
+      return res.status(500).json({
+        error: "Python environment validation failed",
+        message: errorMessage,
+      });
+    }
+
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is not set in the API environment.");
+    }
+
+    let stderrOutput = "";
+    let stdoutBuffer = "";
+    const diagnosticLogs: Array<{
+      level: string;
+      message: string;
+      timestamp: string;
+      context: Record<string, unknown>;
+    }> = [];
+
+    // Ensure file paths are absolute (database may have relative paths)
+    const absoluteFilePath = path.isAbsolute(importBatch.filePath!)
+      ? importBatch.filePath!
+      : path.join(monorepoRoot, importBatch.filePath!);
+
+    const absoluteMappingPath = path.isAbsolute(mappingFilePath)
+      ? mappingFilePath
+      : path.join(monorepoRoot, mappingFilePath);
+
+    // Spawn Python process with ABSOLUTE paths
+    const pythonProcess = spawn(
+      pythonCmd,
+      [
+        path.join(monorepoRoot, "apps", "python-importer", "main.py"),
+        process.env.DATABASE_URL,
+        importId,
+        absoluteFilePath,
+        importBatch.importType!,
+        absoluteMappingPath,
+      ],
+      {
+        cwd: monorepoRoot,
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      },
+    );
+
+    // Timeout handler
+    const timeout = setTimeout(async () => {
+      if (!pythonProcess.killed) {
+        pythonProcess.kill("SIGTERM");
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            status: "failed",
+            errors: [
+              {
+                message: "Import timed out after 30 minutes",
+                details: stderrOutput,
+              },
+            ],
+          },
+        });
+      }
+    }, IMPORT_TIMEOUT_MS);
+
+    // Capture stdout for progress events
+    pythonProcess.stdout.on("data", async (data) => {
+      stdoutBuffer += data.toString();
+
+      // Parse progress events (one per line)
+      const lines = stdoutBuffer.split("\n");
+      stdoutBuffer = lines.pop() || ""; // Keep incomplete line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "chunk_completed" && event.data) {
+            // Update progress in database
+            await prisma.importBatch.update({
+              where: { id: importId },
+              data: {
+                processedCount: event.data.total_processed,
+              },
+            });
+          }
+        } catch {
+          // Not JSON, just log output
+          console.log(`[Python] ${line}`);
+        }
+      }
+    });
+
+    // Capture stderr for errors - parse structured diagnostics
+    pythonProcess.stderr.on("data", (data) => {
+      const lines = data.toString().split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        stderrOutput += line + "\n";
+
+        // Parse structured diagnostic logs from Python
+        if (line.startsWith("[DIAG]")) {
+          try {
+            const jsonStr = line.substring(7).trim(); // Remove "[DIAG] " prefix
+            const diag = JSON.parse(jsonStr);
+            diagnosticLogs.push(diag);
+            const logPrefix = `[Python ${diag.level}]`;
+            const contextStr =
+              diag.context && Object.keys(diag.context).length > 0
+                ? ` (${JSON.stringify(diag.context)})`
+                : "";
+            console.log(`${logPrefix} ${diag.message}${contextStr}`);
+          } catch {
+            // Not valid JSON, log as plain stderr
+            console.error(`[Python stderr] ${line}`);
+          }
+        } else {
+          console.error(`[Python stderr] ${line}`);
+        }
+      }
+    });
+
+    // Handle process completion
+    pythonProcess.on("close", async (code) => {
+      clearTimeout(timeout);
+      console.log(`Python process exited with code ${code}`);
+
+      // Clean up mapping file
+      try {
+        if (fs.existsSync(mappingFilePath)) {
+          fs.unlinkSync(mappingFilePath);
+        }
+      } catch (cleanupError) {
+        console.warn("Failed to clean up mapping file:", cleanupError);
+      }
+
+      // Read Python's status from database
+      const pythonBatch = await prisma.importBatch.findUnique({
+        where: { id: importId },
+      });
+
+      if (!pythonBatch) {
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            errors: [
+              {
+                message: "Import failed",
+                details: "Could not read import batch after Python execution.",
+              },
+            ],
+            diagnosticLogs:
+              diagnosticLogs.length > 0 ? (diagnosticLogs as any) : undefined,
+          },
+        });
+        return;
+      }
+
+      // Store diagnostic logs from Python execution
+      if (diagnosticLogs.length > 0) {
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            diagnosticLogs: diagnosticLogs as any,
+          },
+        });
+      }
+
+      if (pythonBatch.status === "failed") {
+        // Python marked failure explicitly; surface its errors and stop.
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            completedAt: pythonBatch.completedAt ?? new Date(),
+          },
+        });
+        return;
+      }
+
+      if (code === 0 || code === 2) {
+        // Python handled it - run post-processing
+        try {
+          await prisma.importBatch.update({
+            where: { id: importId },
+            data: { status: "post_processing" },
+          });
+
+          let postProcessingError: Error | null = null;
+          try {
+            await Promise.race([
+              (async () => {
+                await recalculateClientUsage(importBatch.clientId);
+                await runAlertGeneration(importBatch.clientId);
+              })(),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("Post-processing timed out")),
+                  5 * 60 * 1000,
+                ),
+              ),
+            ]);
+          } catch (calcError) {
+            postProcessingError = calcError as Error;
+          }
+
+          // Preserve Python's status determination
+          const pythonStatus = pythonBatch.status;
+          const finalStatus =
+            postProcessingError || pythonStatus === "completed_with_errors"
+              ? "completed_with_errors"
+              : pythonStatus === "completed"
+                ? "completed"
+                : "completed_with_errors";
+
+          await prisma.importBatch.update({
+            where: { id: importId },
+            data: {
+              status: finalStatus,
+              completedAt: new Date(),
+              ...(postProcessingError && {
+                errors: {
+                  push: {
+                    message: "Post-processing failed",
+                    details: postProcessingError.message,
+                  },
+                },
+              }),
+            },
+          });
+        } catch (finalizeError) {
+          await prisma.importBatch.update({
+            where: { id: importId },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              errors: {
+                push: {
+                  message: "Failed to finalize import",
+                  details: (finalizeError as Error).message,
+                },
+              },
+            },
+          });
+        }
+      } else {
+        // Python returned error - don't overwrite if Python already set status
+        if (pythonBatch?.status !== "failed") {
+          await prisma.importBatch.update({
+            where: { id: importId },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              errors: [
+                {
+                  message: "Import script failed",
+                  details: stderrOutput || "No error output captured",
+                },
+              ],
+            },
+          });
+        }
+      }
+    });
+
+    pythonProcess.on("error", async (err) => {
+      clearTimeout(timeout);
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: {
+          status: "failed",
+          errors: [
+            { message: `Failed to start Python process: ${err.message}` },
+          ],
+        },
+      });
+    });
+
+    // Update status to processing
+    await prisma.importBatch.update({
+      where: { id: importId },
+      data: { status: "processing", startedAt: new Date() },
+    });
+
+    // Return full response for frontend
+    res.json({
+      id: importId,
+      status: "processing",
+      processedCount: 0,
+      rowCount: importBatch.rowCount ?? 0,
+      message: "Import process started",
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/:importId/analyze
+ * Analyze import impact before confirming
+ */
+router.post("/:importId/analyze", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const { columnMapping } = req.body;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) throw new NotFoundError("Import");
+
+    const analysis = await analyzeImportImpact(importId, columnMapping || []);
+
+    res.json(analysis);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/:importId/diff
+ * Get diff preview for import with column mapping
+ */
+router.post("/:importId/diff", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const { columnMapping } = req.body;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) throw new NotFoundError("Import");
+
+    const diff = await generateImportDiff(importId, columnMapping || []);
+
+    res.json(diff);
   } catch (error) {
     next(error);
   }
@@ -426,70 +1221,59 @@ router.get("/history", async (req, res, next) => {
 
 /**
  * PATCH /api/imports/:importId
- * Update import type (allows user to override auto-detected type)
+ * Update import type and regenerate mappings
  */
 router.patch("/:importId", async (req, res, next) => {
   try {
     const { importId } = req.params;
     const { importType } = req.body;
 
-    // Validate import type
-    const validTypes = ["inventory", "orders", "both"];
-    if (!importType || !validTypes.includes(importType)) {
-      throw new ValidationError(
-        "Invalid import type. Must be 'inventory', 'orders', or 'both'",
-      );
-    }
-
     const importBatch = await prisma.importBatch.findUnique({
       where: { id: importId },
     });
 
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
-
+    if (!importBatch) throw new NotFoundError("Import");
     if (importBatch.status !== "pending") {
-      throw new ValidationError("Can only update pending imports");
+      throw new ValidationError("Cannot modify import that has been processed");
     }
 
-    if (!importBatch.filePath) {
-      throw new ValidationError("Import file not found");
+    const validTypes = ["inventory", "orders", "both"];
+    if (!validTypes.includes(importType)) {
+      throw new ValidationError(
+        `Invalid import type. Must be one of: ${validTypes.join(", ")}`,
+      );
     }
 
-    // Re-parse file to regenerate column mapping with new type
-    const { headers, rows } = await parseFilePreview(importBatch.filePath);
+    // Regenerate column mapping for new type
+    const totalRows = await countFileRows(importBatch.filePath!);
+    const { headers, rows } = await parseFilePreview(importBatch.filePath!);
     const columnMapping = await generateColumnMappingWithLearning(
       headers,
-      importType as "inventory" | "orders" | "both",
+      importType,
       importBatch.clientId,
       rows.slice(0, 20),
     );
 
-    // Update import batch with new type
-    const updatedImport = await prisma.importBatch.update({
+    await prisma.importBatch.update({
       where: { id: importId },
-      data: {
-        importType: importType as "inventory" | "orders" | "both",
-      },
-      include: {
-        client: {
-          select: { name: true, code: true },
-        },
-      },
+      data: { importType, rowCount: totalRows ?? rows.length },
     });
 
-    // Run validation on sample data with new type
+    const warnings = generateWarnings(headers, rows);
     const validationResult = validateImportData(
       rows.slice(0, 100),
       columnMapping,
-      importType as "inventory" | "orders" | "both",
+      importType,
     );
 
     res.json({
-      ...updatedImport,
+      importId,
+      detectedType: importType,
+      selectedType: importType,
+      rowCount: totalRows ?? rows.length,
       columns: columnMapping,
       sampleRows: rows.slice(0, 5),
+      warnings,
       validation: {
         isValid: validationResult.isValid,
         totalErrors: validationResult.totalErrors,
@@ -508,7 +1292,7 @@ router.patch("/:importId", async (req, res, next) => {
 
 /**
  * GET /api/imports/:importId
- * Get import status
+ * Get import status and details (for polling)
  */
 router.get("/:importId", async (req, res, next) => {
   try {
@@ -518,563 +1302,342 @@ router.get("/:importId", async (req, res, next) => {
       where: { id: importId },
       include: {
         client: {
-          select: { name: true, code: true },
-        },
-        user: {
-          select: { name: true, email: true },
+          select: { id: true, name: true, code: true },
         },
       },
     });
 
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
-
-    res.json(importBatch);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/imports/:importId/analyze
- * Analyze import impact before confirming
- * Returns projections of status changes, anomalies, and alert impact
- */
-router.post("/:importId/analyze", async (req, res, next) => {
-  try {
-    const { importId } = req.params;
-    const { columnMapping } = req.body;
-
-    const importBatch = await prisma.importBatch.findUnique({
-      where: { id: importId },
-    });
-
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
-
-    if (importBatch.status !== "pending") {
-      throw new ValidationError("Can only analyze pending imports");
-    }
-
-    // If no column mapping provided, generate one
-    let mapping = columnMapping;
-    if (!mapping || mapping.length === 0) {
-      const { headers, rows } = await parseFilePreview(importBatch.filePath!);
-      mapping = generateColumnMapping(
-        headers,
-        importBatch.importType as "inventory" | "orders" | "both",
-        rows.slice(0, 20),
-      );
-    }
-
-    const analysis = await analyzeImportImpact(importId, mapping);
-
-    res.json(analysis);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * GET /api/imports/:importId/diff
- * Get side-by-side comparison of existing vs import data
- */
-router.get("/:importId/diff", async (req, res, next) => {
-  try {
-    const { importId } = req.params;
-
-    const importBatch = await prisma.importBatch.findUnique({
-      where: { id: importId },
-    });
-
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
-
-    // Generate column mapping using preview parser
-    const { headers, rows } = await parseFilePreview(importBatch.filePath!);
-    const mapping = generateColumnMapping(
-      headers,
-      importBatch.importType as "inventory" | "orders" | "both",
-      rows.slice(0, 20),
-    );
-
-    const diff = await generateImportDiff(importId, mapping);
-
-    res.json(diff);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/imports/:importId/confirm
- * Confirm and process an import
- */
-router.post("/:importId/confirm", async (req, res, next) => {
-  try {
-    const { importId } = req.params;
-    const { columnMapping, originalMapping } = req.body;
-
-    const importBatch = await prisma.importBatch.findUnique({
-      where: { id: importId },
-    });
-
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
-
-    if (importBatch.status !== "pending") {
-      throw new ValidationError("Import has already been processed");
-    }
-
-    // Store mapping corrections for learning (if user modified mappings)
-    if (
-      originalMapping &&
-      columnMapping &&
-      Array.isArray(originalMapping) &&
-      Array.isArray(columnMapping)
-    ) {
-      const corrections: Array<{
-        header: string;
-        suggestedField: string;
-        confirmedField: string;
-      }> = [];
-
-      for (let i = 0; i < columnMapping.length; i++) {
-        const original = originalMapping[i];
-        const confirmed = columnMapping[i];
-        if (original && confirmed && original.mapsTo !== confirmed.mapsTo) {
-          corrections.push({
-            header: original.source,
-            suggestedField: original.mapsTo,
-            confirmedField: confirmed.mapsTo,
-          });
-        }
-      }
-
-      if (corrections.length > 0) {
-        // Store corrections for learning
-        await storeMappingCorrections(importBatch.clientId, corrections);
-      }
-    }
-
-    // Helper to convert camelCase to snake_case
-    const toSnakeCase = (str: string): string =>
-      str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-
-    // Convert camelCase mapsTo values to snake_case for Python (database column names)
-    const normalizedMappings = (columnMapping || []).map(
-      (m: { source: string; mapsTo: string; isCustomField?: boolean }) => ({
-        ...m,
-        mapsTo: toSnakeCase(m.mapsTo),
-      }),
-    );
-
-    // Write column mappings to JSON sidecar file for Python importer
-    const mappingFilePath = `${importBatch.filePath}.mapping.json`;
-    const mappingData = {
-      importId,
-      clientId: importBatch.clientId,
-      importType: importBatch.importType,
-      columnMappings: normalizedMappings,
-      customFields: normalizedMappings.filter(
-        (m: { isCustomField?: boolean }) => m.isCustomField,
-      ),
-      createdAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(mappingFilePath, JSON.stringify(mappingData, null, 2));
-    console.log(`Wrote mapping file to ${mappingFilePath}`);
-
-    // Detect Python command (python3 or python)
-    let pythonCmd: string;
-    try {
-      pythonCmd = getPythonCommand();
-    } catch (err) {
-      await prisma.importBatch.update({
-        where: { id: importId },
-        data: {
-          status: "failed",
-          errors: [{ message: "Python not found on system" }],
-        },
-      });
-      throw new ValidationError("Python is not installed on the server");
-    }
-
-    // Validate DATABASE_URL exists before spawning Python
-    if (!process.env.DATABASE_URL) {
-      await prisma.importBatch.update({
-        where: { id: importId },
-        data: {
-          status: "failed",
-          errors: [{ message: "DATABASE_URL not configured in environment" }],
-        },
-      });
-      throw new ValidationError(
-        "Server configuration error: DATABASE_URL not set",
-      );
-    }
-
-    // === ROBUST ERROR HANDLING IMPLEMENTATION ===
-    // Initialize variables to capture ALL output (not just lines with keywords)
-    let stdoutOutput = "";
-    let stderrOutput = "";
-
-    // Calculate monorepo root for correct path to python-importer
-    const monorepoRoot = getMonorepoRoot();
-
-    // File paths are stored relative to monorepo root (uploads/filename), make them absolute
-    const absoluteFilePath = path.join(monorepoRoot, importBatch.filePath!);
-    const absoluteMappingFilePath = path.join(monorepoRoot, mappingFilePath);
-
-    const pythonProcess = spawn(
-      pythonCmd,
-      [
-        path.join(monorepoRoot, "apps", "python-importer", "main.py"),
-        process.env.DATABASE_URL,
-        importId,
-        absoluteFilePath,
-        importBatch.importType!,
-        absoluteMappingFilePath,
-      ],
-      {
-        cwd: monorepoRoot,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: "1", // Ensure real-time output
-        },
-      },
-    );
-
-    // Set up timeout to kill process if it runs too long
-    const timeout = setTimeout(async () => {
-      if (!pythonProcess.killed) {
-        pythonProcess.kill("SIGTERM");
-        console.error(
-          `Python Importer timed out after ${IMPORT_TIMEOUT_MS / 1000}s`,
-        );
-        await prisma.importBatch.update({
-          where: { id: importId },
-          data: {
-            status: "failed",
-            errors: [
-              {
-                message: "Import timed out after 30 minutes.",
-                details: stderrOutput,
-              },
-            ],
-          },
-        });
-      }
-    }, IMPORT_TIMEOUT_MS);
-
-    // Capture all stdout data (accumulated for debugging) and parse JSON progress events
-    pythonProcess.stdout.on("data", async (data) => {
-      const output = data.toString();
-      stdoutOutput += output;
-
-      // Parse JSON progress events
-      const lines = output.split("\n");
-      for (const line of lines) {
-        if (line.trim().startsWith("{")) {
-          try {
-            const event = JSON.parse(line);
-            if (event.type === "chunk_completed" && event.data) {
-              // Update database with real-time progress
-              // Also update rowCount to match processedCount (streaming means we don't know total upfront)
-              await prisma.importBatch
-                .update({
-                  where: { id: event.data.import_id },
-                  data: {
-                    processedCount: event.data.total_processed,
-                    rowCount: event.data.total_processed, // Keep rowCount in sync
-                  },
-                })
-                .catch((err) => logger.warn("Failed to update progress:", err));
-
-              logger.info(
-                `Import progress: ${event.data.total_processed} rows`,
-              );
-            } else if (event.type === "import_started" && event.data) {
-              logger.info(
-                `Import started: ${event.data.filename} (type: ${event.data.import_type})`,
-              );
-            }
-          } catch (e) {
-            // Not JSON, regular log line
-            logger.info(`Python: ${line}`);
-          }
-        } else if (line.trim()) {
-          logger.info(`Python: ${line}`);
-        }
-      }
-    });
-
-    // Capture all stderr data (accumulated for error reporting)
-    pythonProcess.stderr.on("data", (data) => {
-      const output = data.toString();
-      stderrOutput += output;
-      console.error(`Python Importer stderr: ${output}`);
-    });
-
-    // Use 'close' event as the single source of truth for success or failure
-    pythonProcess.on("close", async (code) => {
-      clearTimeout(timeout);
-      logger.info(`Python Importer process exited with code ${code}`);
-
-      // NOTE: Mapping file cleanup moved to AFTER post-processing to avoid race condition
-
-      if (code === 0) {
-        // SUCCESS: Python handled the import - check its status from database
-        const pythonBatch = await prisma.importBatch.findUnique({
-          where: { id: importId },
-        });
-
-        if (!pythonBatch) {
-          logger.error(`Import batch ${importId} not found after Python exit`);
-          return;
-        }
-
-        // Only run post-processing if Python marked it as completed or completed_with_errors
-        if (
-          pythonBatch.status === "completed" ||
-          pythonBatch.status === "completed_with_errors"
-        ) {
-          try {
-            await prisma.importBatch.update({
-              where: { id: importId },
-              data: { status: "post_processing" },
-            });
-
-            // Post-processing with timeout to prevent hangs
-            const POST_PROCESSING_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
-            let postProcessingError: Error | null = null;
-            try {
-              await Promise.race([
-                (async () => {
-                  await recalculateClientUsage(importBatch.clientId);
-                  await runAlertGeneration(importBatch.clientId);
-                })(),
-                new Promise<never>((_, reject) =>
-                  setTimeout(
-                    () =>
-                      reject(
-                        new Error("Post-processing timed out after 5 minutes"),
-                      ),
-                    POST_PROCESSING_TIMEOUT,
-                  ),
-                ),
-              ]);
-            } catch (calcError: unknown) {
-              const error = calcError as Error;
-              logger.error("Post-import calculation error:", error);
-              postProcessingError = error;
-            }
-
-            // CRITICAL: Restore Python's status after post-processing
-            // Preserve completed_with_errors if Python set it, or upgrade to it if post-processing failed
-            const finalStatus =
-              postProcessingError ||
-              pythonBatch.status === "completed_with_errors"
-                ? "completed_with_errors"
-                : "completed";
-
-            await prisma.importBatch.update({
-              where: { id: importId },
-              data: {
-                status: finalStatus,
-                completedAt: new Date(),
-                ...(postProcessingError && {
-                  errors: [
-                    ...(Array.isArray(pythonBatch.errors)
-                      ? pythonBatch.errors
-                      : []),
-                    {
-                      message: "Post-processing failed",
-                      details: String(postProcessingError),
-                    },
-                  ],
-                }),
-              },
-            });
-          } catch (finalizeError) {
-            // Outer catch: Handle failures in the finalization process itself
-            console.error(
-              "CRITICAL: Failed to finalize import status:",
-              finalizeError,
-            );
-            // Last-ditch attempt to mark as failed so import doesn't stay stuck
-            try {
-              await prisma.importBatch.update({
-                where: { id: importId },
-                data: {
-                  status: "completed_with_errors",
-                  completedAt: new Date(),
-                  errors: [
-                    {
-                      message: "Failed to finalize import",
-                      details: String(finalizeError),
-                    },
-                  ],
-                },
-              });
-            } catch (fatalError) {
-              console.error(
-                "FATAL: Could not update import status at all:",
-                fatalError,
-              );
-              // At this point, the import will be stuck - but at least we logged the error
-            }
-          }
-
-          // Clean up mapping file AFTER all post-processing is complete
-          try {
-            // Use the same absolute path we passed to Python
-            const absoluteMappingPath = path.join(
-              getMonorepoRoot(),
-              mappingFilePath,
-            );
-            if (fs.existsSync(absoluteMappingPath)) {
-              fs.unlinkSync(absoluteMappingPath);
-              logger.info(`Cleaned up mapping file: ${absoluteMappingPath}`);
-            }
-          } catch (cleanupError: unknown) {
-            logger.warn("Failed to clean up mapping file", {
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            });
-          }
-        }
-      } else {
-        // FAILURE: Save the complete stderr output to database
-        await prisma.importBatch.update({
-          where: { id: importId },
-          data: {
-            status: "failed",
-            errors: [
-              {
-                message: "The import script failed to execute.",
-                details: stderrOutput || "No error output was captured.",
-              },
-            ],
-          },
-        });
-      }
-    });
-
-    pythonProcess.on("error", async (err) => {
-      clearTimeout(timeout);
-      console.error("Failed to start Python Importer process:", err);
-      await prisma.importBatch.update({
-        where: { id: importId },
-        data: {
-          status: "failed",
-          errors: [
-            { message: `Failed to start Python process: ${err.message}` },
-          ],
-        },
-      });
-    });
-
-    // Update the status to 'processing' to give immediate feedback to the user
-    const updatedBatch = await prisma.importBatch.update({
-      where: { id: importId },
-      data: { status: "processing", startedAt: new Date() },
-    });
+    if (!importBatch) throw new NotFoundError("Import");
 
     res.json({
-      ...updatedBatch,
-      message:
-        "Import process started. You can monitor the progress on the import status page.",
+      id: importBatch.id,
+      clientId: importBatch.clientId,
+      client: importBatch.client,
+      filename: importBatch.filename,
+      importType: importBatch.importType,
+      status: importBatch.status,
+      rowCount: importBatch.rowCount,
+      processedCount: importBatch.processedCount,
+      errorCount: importBatch.errorCount,
+      errors: importBatch.errors,
+      createdAt: importBatch.createdAt,
+      startedAt: importBatch.startedAt,
+      completedAt: importBatch.completedAt,
     });
   } catch (error) {
     next(error);
   }
 });
+
+/**
+ * GET /api/imports/:importId/diagnostics
+ * Get detailed diagnostic information for debugging failed imports
+ */
+router.get("/:importId/diagnostics", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+      include: {
+        client: {
+          select: { id: true, name: true, code: true },
+        },
+      },
+    });
+
+    if (!importBatch) throw new NotFoundError("Import");
+
+    // Check Python environment
+    let pythonPath: string | null = null;
+    let pythonError: string | null = null;
+    try {
+      pythonPath = getPythonCommand();
+    } catch (err) {
+      pythonError = (err as Error).message;
+    }
+
+    // Check file existence
+    const fileExists = importBatch.filePath
+      ? fs.existsSync(importBatch.filePath)
+      : false;
+    const mappingFileExists = importBatch.filePath
+      ? fs.existsSync(`${importBatch.filePath}.mapping.json`)
+      : false;
+
+    // Get file stats if it exists
+    let fileStats: { size: number; permissions: string } | null = null;
+    if (fileExists && importBatch.filePath) {
+      try {
+        const stats = fs.statSync(importBatch.filePath);
+        fileStats = {
+          size: stats.size,
+          permissions: `0${(stats.mode & parseInt("777", 8)).toString(8)}`,
+        };
+      } catch {
+        // Ignore stats errors
+      }
+    }
+
+    res.json({
+      // Import metadata
+      id: importBatch.id,
+      clientId: importBatch.clientId,
+      client: importBatch.client,
+      status: importBatch.status,
+      importType: importBatch.importType,
+      filename: importBatch.filename,
+      filePath: importBatch.filePath,
+
+      // Timing
+      timing: {
+        createdAt: importBatch.createdAt,
+        startedAt: importBatch.startedAt,
+        completedAt: importBatch.completedAt,
+        duration: calculateDuration(importBatch),
+      },
+
+      // Progress
+      progress: {
+        rowCount: importBatch.rowCount,
+        processedCount: importBatch.processedCount,
+        errorCount: importBatch.errorCount,
+        progressPercent: calculateProgress(importBatch),
+      },
+
+      // Errors (full detail)
+      errors: importBatch.errors,
+
+      // Diagnostic logs from Python
+      diagnosticLogs: importBatch.diagnosticLogs || [],
+
+      // Reconciliation data
+      reconciliation: (importBatch.metadata as any)?.reconciliation || {
+        total_rows_seen: importBatch.rowCount || 0,
+        rows_cleaned: null,
+        rows_inserted: importBatch.processedCount || 0,
+        rows_updated: null,
+        rows_dropped: null,
+        chunk_count: null,
+        drop_reasons: {},
+      },
+
+      // Success rate calculation
+      successRate:
+        (importBatch.metadata as any)?.reconciliation?.total_rows_seen > 0
+          ? ((importBatch.metadata as any).reconciliation.rows_inserted /
+              (importBatch.metadata as any).reconciliation.total_rows_seen) *
+            100
+          : importBatch.rowCount && importBatch.rowCount > 0
+            ? ((importBatch.processedCount || 0) / importBatch.rowCount) * 100
+            : 0,
+
+      // Environment checks
+      environment: {
+        pythonPath,
+        pythonError,
+        fileExists,
+        mappingFileExists,
+        fileStats,
+        uploadsDir,
+        monorepoRoot,
+        cwd: process.cwd(),
+        databaseUrlSet: !!process.env.DATABASE_URL,
+      },
+
+      // Recommendations based on status
+      recommendations: generateDiagnosticRecommendations(importBatch, {
+        pythonPath,
+        pythonError,
+        fileExists,
+        mappingFileExists,
+      }),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Generate diagnostic recommendations based on import state
+ */
+function generateDiagnosticRecommendations(
+  importBatch: {
+    status: string;
+    importType: string | null;
+    errors: any;
+    filePath: string | null;
+    rowCount: number | null;
+    processedCount: number;
+    metadata: any;
+  },
+  env: {
+    pythonPath: string | null;
+    pythonError: string | null;
+    fileExists: boolean;
+    mappingFileExists: boolean;
+  },
+): string[] {
+  const recommendations: string[] = [];
+  const reconciliation = importBatch.metadata?.reconciliation;
+
+  // Check Python environment
+  if (!env.pythonPath) {
+    recommendations.push(
+      `Python environment issue: ${env.pythonError || "Python not found"}. Install Python 3.8+ with pandas, sqlalchemy, psycopg2, and openpyxl.`,
+    );
+  }
+
+  // Check file exists
+  if (!env.fileExists && importBatch.filePath) {
+    recommendations.push(
+      `Uploaded file not found at '${importBatch.filePath}'. The file may have been deleted or the path is incorrect.`,
+    );
+  }
+
+  // Check import type
+  if (importBatch.importType === "both") {
+    recommendations.push(
+      "Import type is 'both' which is not supported by Python processor. Use PATCH /api/imports/:id to change to 'inventory' or 'orders'.",
+    );
+  }
+
+  // Check for common error patterns
+  const errors = importBatch.errors as Array<{
+    message?: string;
+    details?: string;
+  }> | null;
+  if (errors && errors.length > 0) {
+    const errorMessages = errors.map((e) => e.message || "").join(" ");
+
+    if (
+      errorMessages.includes("invalid date") ||
+      errorMessages.includes("date format")
+    ) {
+      recommendations.push(
+        "Date parsing issues detected. Ensure dates are in ISO format (YYYY-MM-DD) or common US formats (MM/DD/YYYY).",
+      );
+    }
+
+    if (
+      errorMessages.includes("required column") ||
+      errorMessages.includes("missing column")
+    ) {
+      recommendations.push(
+        "Missing required columns. Inventory requires: product_id, name, current_stock. Orders require: order_id, product_id, quantity.",
+      );
+    }
+
+    if (
+      errorMessages.includes("permission") ||
+      errorMessages.includes("access denied")
+    ) {
+      recommendations.push(
+        "File permission issues detected. Ensure the uploads directory is writable by the API process.",
+      );
+    }
+  }
+
+  // Check reconciliation data for specific issues
+  if (
+    importBatch.processedCount === 0 &&
+    importBatch.rowCount &&
+    importBatch.rowCount > 0
+  ) {
+    recommendations.push(
+      `All ${importBatch.rowCount} rows were dropped during processing. Check column mapping - required fields may not be mapped correctly. Review the errors list for specific validation failures.`,
+    );
+  }
+
+  // Check for data quality issues from drop_reasons
+  if (reconciliation?.drop_reasons) {
+    const dropReasons = reconciliation.drop_reasons;
+
+    if (dropReasons.invalid_dates > 0) {
+      recommendations.push(
+        `${dropReasons.invalid_dates} rows dropped due to invalid dates. Ensure date columns are in format YYYY-MM-DD or MM/DD/YYYY.`,
+      );
+    }
+
+    if (dropReasons.missing_required > 0) {
+      recommendations.push(
+        `${dropReasons.missing_required} rows dropped due to missing required fields. Check that all required columns have data.`,
+      );
+    }
+
+    if (dropReasons.data_validation > 0) {
+      recommendations.push(
+        `${dropReasons.data_validation} rows failed data validation. Check for invalid numeric values, special characters, or formatting issues.`,
+      );
+    }
+  }
+
+  // Check for low success rate
+  if (reconciliation?.total_rows_seen > 0) {
+    const successRate =
+      (reconciliation.rows_inserted / reconciliation.total_rows_seen) * 100;
+    if (successRate < 50 && successRate > 0) {
+      recommendations.push(
+        `Low success rate: Only ${successRate.toFixed(1)}% of rows were successfully imported. Review column mappings and data format.`,
+      );
+    }
+  }
+
+  // Status-specific recommendations
+  if (importBatch.status === "processing") {
+    recommendations.push(
+      "Import is still processing. Check PM2 logs for Python output: pm2 logs inventory-api",
+    );
+  }
+
+  if (importBatch.status === "failed" && recommendations.length === 0) {
+    recommendations.push(
+      "Check PM2 logs for detailed error output: pm2 logs inventory-api --lines 200",
+    );
+  }
+
+  return recommendations;
+}
 
 /**
  * DELETE /api/imports/:importId/data
- * Delete all data (products and transactions) created by a completed import
- * This allows users to undo an import and remove all associated data
+ * Rollback import - delete data created by this import
  */
 router.delete("/:importId/data", async (req, res, next) => {
   try {
     const { importId } = req.params;
-    const { deleteProducts = true, deleteTransactions = true } = req.query;
 
     const importBatch = await prisma.importBatch.findUnique({
       where: { id: importId },
     });
 
-    if (!importBatch) {
-      throw new NotFoundError("Import");
-    }
+    if (!importBatch) throw new NotFoundError("Import");
 
-    let deletedProducts = 0;
-    let deletedTransactions = 0;
+    // Delete transactions linked to this import
+    const deletedTransactions = await prisma.transaction.deleteMany({
+      where: { importBatchId: importId },
+    });
 
-    // Delete transactions created by this import
-    if (deleteTransactions !== "false") {
-      const transactionResult = await prisma.transaction.deleteMany({
-        where: { importBatchId: importId },
-      });
-      deletedTransactions = transactionResult.count;
-    }
-
-    // Delete products created by this import (if they have no other transactions)
-    if (deleteProducts !== "false") {
-      // Find products that were only created for this import (orphan products from order imports)
-      // and have no transactions from other imports
-      const orphanProducts = await prisma.product.findMany({
-        where: {
-          clientId: importBatch.clientId,
-          isOrphan: true,
-          transactions: {
-            none: {
-              importBatchId: { not: importId },
-            },
-          },
-        },
-        select: { id: true },
-      });
-
-      if (orphanProducts.length > 0) {
-        // First delete their transactions (already done above)
-        // Then delete the products
-        const productResult = await prisma.product.deleteMany({
-          where: {
-            id: { in: orphanProducts.map((p) => p.id) },
-          },
-        });
-        deletedProducts = productResult.count;
-      }
-    }
-
-    // Delete the uploaded file if exists
-    if (importBatch.filePath && fs.existsSync(importBatch.filePath)) {
-      fs.unlinkSync(importBatch.filePath);
-    }
-
-    // Update import batch status to indicate it was rolled back
-    await prisma.importBatch.update({
-      where: { id: importId },
-      data: {
-        status: "rolled_back",
-        completedAt: new Date(),
+    // For inventory imports, we can't easily identify which products were created
+    // So we just delete orphaned products (those with no transactions)
+    const deletedOrphans = await prisma.product.deleteMany({
+      where: {
+        clientId: importBatch.clientId,
+        isOrphan: true,
+        transactions: { none: {} },
       },
     });
 
-    // Recalculate usage after deletion via analytics facade
-    await recalculateClientUsage(importBatch.clientId);
+    // Update import status
+    await prisma.importBatch.update({
+      where: { id: importId },
+      data: { status: "rolled_back" },
+    });
 
     res.json({
-      message: "Import data deleted successfully",
-      deletedProducts,
-      deletedTransactions,
+      message: "Import data rolled back",
+      deletedTransactions: deletedTransactions.count,
+      deletedOrphanProducts: deletedOrphans.count,
     });
   } catch (error) {
     next(error);
@@ -1083,7 +1646,7 @@ router.delete("/:importId/data", async (req, res, next) => {
 
 /**
  * DELETE /api/imports/:importId
- * Cancel a pending import
+ * Cancel/delete a pending import
  */
 router.delete("/:importId", async (req, res, next) => {
   try {
@@ -1093,411 +1656,32 @@ router.delete("/:importId", async (req, res, next) => {
       where: { id: importId },
     });
 
-    if (!importBatch) {
-      throw new NotFoundError("Import");
+    if (!importBatch) throw new NotFoundError("Import");
+
+    if (importBatch.status === "processing") {
+      throw new ValidationError(
+        "Cannot delete import that is currently processing",
+      );
     }
 
-    if (importBatch.status !== "pending") {
-      throw new ValidationError("Can only cancel pending imports");
-    }
-
-    // Delete file if exists
+    // Delete the uploaded file if it exists
     if (importBatch.filePath && fs.existsSync(importBatch.filePath)) {
-      fs.unlinkSync(importBatch.filePath);
+      try {
+        fs.unlinkSync(importBatch.filePath);
+      } catch {
+        console.warn("Failed to delete uploaded file:", importBatch.filePath);
+      }
     }
 
+    // Delete the import record
     await prisma.importBatch.delete({
       where: { id: importId },
     });
 
-    res.json({ message: "Import cancelled" });
+    res.json({ message: "Import deleted" });
   } catch (error) {
     next(error);
   }
 });
-
-/**
- * DELETE /api/imports/client/:clientId/data
- * Delete ALL products and transactions for a client (fresh start)
- * Use with caution - this removes all inventory data
- */
-router.delete("/client/:clientId/data", async (req, res, next) => {
-  try {
-    const { clientId } = req.params;
-    const { confirm } = req.query;
-
-    // Require explicit confirmation
-    if (confirm !== "true") {
-      throw new ValidationError(
-        "Must confirm deletion by adding ?confirm=true to the request",
-      );
-    }
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError("Client");
-    }
-
-    // Delete in order: transactions first, then usage metrics, then products, then import batches
-    const deletedTransactions = await prisma.transaction.deleteMany({
-      where: {
-        product: { clientId },
-      },
-    });
-
-    const deletedUsageMetrics = await prisma.usageMetric.deleteMany({
-      where: {
-        product: { clientId },
-      },
-    });
-
-    const deletedSnapshots = await prisma.monthlyUsageSnapshot.deleteMany({
-      where: {
-        product: { clientId },
-      },
-    });
-
-    const deletedProducts = await prisma.product.deleteMany({
-      where: { clientId },
-    });
-
-    // Delete import batch records
-    const deletedImports = await prisma.importBatch.deleteMany({
-      where: { clientId },
-    });
-
-    res.json({
-      message: "All client data deleted successfully",
-      deleted: {
-        transactions: deletedTransactions.count,
-        usageMetrics: deletedUsageMetrics.count,
-        monthlySnapshots: deletedSnapshots.count,
-        products: deletedProducts.count,
-        imports: deletedImports.count,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/imports/recalculate/:clientId
- * Trigger manual recalculation for a client
- */
-router.post("/recalculate/:clientId", async (req, res, next) => {
-  try {
-    const { clientId } = req.params;
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError("Client");
-    }
-
-    // Fix any products that have isActive = false (shouldn't happen but fix legacy data)
-    const fixedProducts = await prisma.product.updateMany({
-      where: {
-        clientId,
-        isActive: false,
-      },
-      data: {
-        isActive: true,
-      },
-    });
-
-    // Run recalculations via analytics facade
-    // The facade handles both DS Analytics and TypeScript based on client feature flag
-    await recalculateClientUsage(clientId);
-
-    const alertResult = await runAlertGeneration(clientId);
-
-    res.json({
-      message: "Recalculation completed",
-      alerts: alertResult,
-      fixedProducts: fixedProducts.count,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// =============================================================================
-// CUSTOM FIELD ENDPOINTS
-// =============================================================================
-
-/**
- * GET /api/imports/custom-fields/:clientId
- * Get all custom field definitions for a client
- * Used by MappingComboBox to show existing custom fields
- */
-router.get("/custom-fields/:clientId", async (req, res, next) => {
-  try {
-    const { clientId } = req.params;
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError("Client");
-    }
-
-    const customFields = await getClientCustomFields(clientId);
-
-    res.json({
-      data: customFields,
-      count: customFields.length,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/imports/custom-fields/:clientId
- * Create a new custom field definition on-the-fly
- * Used when user types a new field name in the MappingComboBox
- */
-router.post("/custom-fields/:clientId", async (req, res, next) => {
-  try {
-    const { clientId } = req.params;
-    const { fieldName, sourceColumnName, dataType = "text" } = req.body;
-
-    if (!fieldName) {
-      throw new ValidationError("Field name is required");
-    }
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError("Client");
-    }
-
-    // Normalize field name to camelCase
-    const normalizedName = fieldName
-      .toLowerCase()
-      .trim()
-      .replace(/[()[\]{}]/g, "")
-      .replace(/[-_\s]+(.)?/g, (_: string, c: string) =>
-        c ? c.toUpperCase() : "",
-      )
-      .replace(/^./, (c: string) => c.toLowerCase());
-
-    // Create custom field using the discovery service
-    const [customField] = await discoverCustomFields(clientId, [
-      {
-        source: sourceColumnName || fieldName,
-        mapsTo: normalizedName,
-        dataType,
-      },
-    ]);
-
-    res.json({
-      data: customField,
-      message: "Custom field created successfully",
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * PATCH /api/imports/custom-fields/:fieldId
- * Update a custom field definition
- */
-router.patch("/custom-fields/:fieldId", async (req, res, next) => {
-  try {
-    const { fieldId } = req.params;
-    const {
-      displayName,
-      isDisplayed,
-      isPinned,
-      displayOrder,
-      aggregationType,
-      formatPattern,
-    } = req.body;
-
-    const updated = await updateCustomFieldDefinition(fieldId, {
-      displayName,
-      isDisplayed,
-      isPinned,
-      displayOrder,
-      aggregationType,
-      formatPattern,
-    });
-
-    res.json({
-      data: updated,
-      message: "Custom field updated successfully",
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * GET /api/imports/custom-fields/:clientId/stats
- * Get statistics for all custom fields
- */
-router.get("/custom-fields/:clientId/stats", async (req, res, next) => {
-  try {
-    const { clientId } = req.params;
-
-    // Verify client exists
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
-    });
-
-    if (!client) {
-      throw new NotFoundError("Client");
-    }
-
-    const stats = await getCustomFieldStats(clientId);
-
-    res.json({
-      data: stats,
-      count: stats.length,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
-
-/**
- * Detect the Python command available on the system.
- * Supports multiple platforms: Docker containers, Unix (macOS/Linux), and Windows.
- * Validates that critical dependencies (including openpyxl for Excel support) are installed.
- */
-function getPythonCommand(): string {
-  // Multi-platform Python paths in priority order:
-  // 1. Local venv on Unix (macOS/Linux) - preferred for consistent dependencies
-  // 2. Local venv on Windows
-  // 3. Docker container system Python (installed globally in Dockerfile)
-  // 4. System Python (python3/python)
-
-  const monorepoRoot = getMonorepoRoot();
-
-  const possiblePaths = [
-    // Local venv on Unix (macOS/Linux) - PREFERRED to avoid dependency validation noise
-    path.join(monorepoRoot, "apps", "python-importer", "venv", "bin", "python"),
-    // Local venv on Windows - relative to monorepo root
-    path.join(
-      monorepoRoot,
-      "apps",
-      "python-importer",
-      "venv",
-      "Scripts",
-      "python.exe",
-    ),
-    // Docker container - Python installed system-wide
-    "/usr/bin/python3",
-    // System Python (works on all platforms)
-    "python3",
-    "python",
-  ];
-
-  for (const cmd of possiblePaths) {
-    try {
-      // Check Python version
-      execSync(`${cmd} --version`, { stdio: "ignore" });
-
-      // Validate ALL critical dependencies exist, including openpyxl for Excel support
-      // CRITICAL: openpyxl is required for .xlsx/.xls file imports
-      const testImport = `${cmd} -c "import pandas, sqlalchemy, psycopg2, openpyxl"`;
-      execSync(testImport, { stdio: "ignore" });
-
-      console.log(`[Import] Using Python: ${cmd}`);
-      return cmd;
-    } catch (err) {
-      console.warn(
-        `[Import] Python command ${cmd} failed validation:`,
-        err instanceof Error ? err.message : String(err),
-      );
-      // Try next command
-    }
-  }
-
-  throw new Error(
-    "Python not found or missing required dependencies (pandas, sqlalchemy, psycopg2, openpyxl). " +
-      "Please set up Python environment in apps/python-importer/venv or install dependencies globally. " +
-      "Note: openpyxl is required for Excel (.xlsx/.xls) file support.",
-  );
-}
-
-/** Import timeout in milliseconds (30 minutes) */
-const IMPORT_TIMEOUT_MS = 30 * 60 * 1000;
-
-interface ParsedRow {
-  [key: string]: string | number | undefined;
-}
-
-function generateWarnings(headers: string[], rows: ParsedRow[]) {
-  const warnings: { type: string; message: string; affectedRows: number }[] =
-    [];
-
-  // Check for whitespace issues
-  let whitespaceCount = 0;
-  for (const header of headers) {
-    if (header !== header.trim()) {
-      whitespaceCount++;
-    }
-  }
-  if (whitespaceCount > 0) {
-    warnings.push({
-      type: "whitespace",
-      message: `${whitespaceCount} column headers contain leading/trailing whitespace`,
-      affectedRows: rows.length,
-    });
-  }
-
-  // Check for empty rows
-  let emptyRowCount = 0;
-  for (const row of rows) {
-    const values = Object.values(row).filter(
-      (v) => v !== undefined && v !== "",
-    );
-    if (values.length === 0) {
-      emptyRowCount++;
-    }
-  }
-  if (emptyRowCount > 0) {
-    warnings.push({
-      type: "empty_rows",
-      message: `${emptyRowCount} empty rows detected`,
-      affectedRows: emptyRowCount,
-    });
-  }
-
-  // Check for missing required fields
-  const requiredFields = ["product id", "sku", "item id"];
-  const hasProductId = headers.some((h) =>
-    requiredFields.some((f) => h.toLowerCase().includes(f)),
-  );
-  if (!hasProductId) {
-    warnings.push({
-      type: "missing_field",
-      message: "No product identifier column detected",
-      affectedRows: rows.length,
-    });
-  }
-
-  return warnings;
-}
 
 export default router;
