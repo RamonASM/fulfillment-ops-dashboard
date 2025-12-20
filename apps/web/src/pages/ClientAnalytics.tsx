@@ -128,6 +128,7 @@ export default function ClientAnalytics() {
   const {
     data: summaryData,
     isLoading: summaryLoading,
+    error: summaryError,
     refetch: refetchSummary,
   } = useQuery({
     queryKey: ["analytics", "intelligent-summary", clientId],
@@ -140,7 +141,11 @@ export default function ClientAnalytics() {
   });
 
   // Fetch anomalies
-  const { data: anomaliesData, isLoading: anomaliesLoading } = useQuery({
+  const {
+    data: anomaliesData,
+    isLoading: anomaliesLoading,
+    error: anomaliesError,
+  } = useQuery({
     queryKey: ["analytics", "anomalies", clientId],
     queryFn: () =>
       api.get<{ data: AnomalyAlert[] }>(`/analytics/anomalies/${clientId}`),
@@ -149,7 +154,11 @@ export default function ClientAnalytics() {
   });
 
   // Fetch locations
-  const { data: locationsData, isLoading: locationsLoading } = useQuery({
+  const {
+    data: locationsData,
+    isLoading: locationsLoading,
+    error: locationsError,
+  } = useQuery({
     queryKey: ["analytics", "locations", clientId],
     queryFn: () =>
       api.get<{ data: LocationAnalytics[] }>(
@@ -160,7 +169,11 @@ export default function ClientAnalytics() {
   });
 
   // Fetch monthly trends
-  const { data: trendsData, isLoading: trendsLoading } = useQuery({
+  const {
+    data: trendsData,
+    isLoading: trendsLoading,
+    error: trendsError,
+  } = useQuery({
     queryKey: ["analytics", "monthly-trends", clientId],
     queryFn: () =>
       api.get<{ data: MonthlyTrends }>(`/analytics/monthly-trends/${clientId}`),
@@ -321,6 +334,83 @@ export default function ClientAnalytics() {
           Refresh
         </button>
       </div>
+
+      {/* Diagnostic Error Display */}
+      {(summaryError || anomaliesError || locationsError || trendsError) && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0">
+              <svg
+                className="w-5 h-5 text-red-600"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-red-900 mb-1">
+                Analytics Error
+              </h3>
+              <p className="text-sm text-red-700 mb-3">
+                Some analytics data failed to load. This may be due to
+                insufficient data or server issues.
+              </p>
+              <details className="mt-2 mb-2">
+                <summary className="text-xs text-red-600 cursor-pointer font-medium hover:text-red-700">
+                  Technical Details (Click to expand)
+                </summary>
+                <div className="mt-2 space-y-2 text-xs">
+                  {summaryError && (
+                    <div className="bg-white p-2 rounded border border-red-200">
+                      <strong className="text-red-800">Summary:</strong>{" "}
+                      <span className="text-red-700">
+                        {(summaryError as any)?.message ||
+                          "Failed to load summary data"}
+                      </span>
+                    </div>
+                  )}
+                  {anomaliesError && (
+                    <div className="bg-white p-2 rounded border border-red-200">
+                      <strong className="text-red-800">Anomalies:</strong>{" "}
+                      <span className="text-red-700">
+                        {(anomaliesError as any)?.message ||
+                          "Failed to load anomaly data"}
+                      </span>
+                    </div>
+                  )}
+                  {locationsError && (
+                    <div className="bg-white p-2 rounded border border-red-200">
+                      <strong className="text-red-800">Locations:</strong>{" "}
+                      <span className="text-red-700">
+                        {(locationsError as any)?.message ||
+                          "Failed to load location data"}
+                      </span>
+                    </div>
+                  )}
+                  {trendsError && (
+                    <div className="bg-white p-2 rounded border border-red-200">
+                      <strong className="text-red-800">Trends:</strong>{" "}
+                      <span className="text-red-700">
+                        {(trendsError as any)?.message ||
+                          "Failed to load trends data"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </details>
+              <p className="text-xs text-red-600 mt-2">
+                💡 Tip: If this is a new client with recently imported data,
+                some analytics may need more transaction history to generate.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-center py-12">

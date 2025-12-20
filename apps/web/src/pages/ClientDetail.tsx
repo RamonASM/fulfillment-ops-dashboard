@@ -110,6 +110,7 @@ export default function ClientDetail() {
         params: {
           type: activeTab,
           search: search || undefined,
+          includeOrphans: "true", // Show all products including orphans from order imports
         },
       }),
     enabled: !!clientId,
