@@ -150,18 +150,29 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
-### 2025-12-20: Post-Import Analytics Fix
-- **What**: Added 3 analytics functions to run after CSV import
+### 2025-12-20 @ 23:04 PST: Post-Import Analytics + Schema Update (DEPLOYED)
+- **What**: Added 3 analytics functions to run after CSV import + database schema update
   - `createDailySnapshot()` - Generates daily snapshot for trend charts
   - `refreshRiskScoreCache()` - Pre-calculates risk scores for portfolio risk
   - `aggregateDailyAlertMetrics()` - Aggregates alert metrics for alert trends
+  - Added `diagnosticLogs` and `metadata` fields to `ImportBatch` model
+- **Commits**:
+  - `e80d4cb` - fix: Add post-import analytics and update CLAUDE.md
+  - `3eb1d8a` - fix: Add diagnosticLogs and metadata fields to ImportBatch schema
 - **Files Changed**:
   - `apps/api/src/services/import.service.ts` (added analytics calls)
-  - `apps/api/.env` (commented out REDIS_URL for in-memory fallback)
+  - `apps/api/prisma/schema.prisma` (added diagnosticLogs, metadata fields)
   - `apps/web/src/components/widgets/WidgetDataStatus.tsx` (new component for empty states)
   - `apps/api/prisma/check-recent-imports.ts` (new diagnostic script)
+  - `CLAUDE.md` (complete rewrite with verified production architecture)
+- **Deployment Process**:
+  1. Schema changes pushed to database with `npm run db:push`
+  2. Prisma client regenerated with `npm run db:generate`
+  3. TypeScript build completed successfully
+  4. PM2 restarted `inventory-api` process
 - **Impact**: Dashboard widgets now populate with data immediately after import
-- **Status**: Committed locally, ready for production deployment
+- **Status**: ✅ DEPLOYED to production at 04:04 UTC (23:04 PST Dec 20)
+- **Verification**: API running healthy, logs showing successful restart
 
 ---
 
