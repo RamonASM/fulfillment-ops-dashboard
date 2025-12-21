@@ -258,6 +258,39 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-21 @ 18:55 PST: P0/P1 Security + Health Endpoints + Python Hardening (DEPLOYED)
+- **What**: Comprehensive security and reliability improvements from codebase audit
+- **Commits**:
+  - `22b3243` - P0/P1 security fixes + health endpoints + TDD philosophy
+  - `5704c97` - docs: Fix domain structure in CLAUDE.md
+  - `c660515` - security: Fix CORS and add circuit breaker to Python services
+- **P0 Critical Security Fixes**:
+  - Password reset email now uses `sendPasswordResetEmail()` with SendGrid
+  - Column mapping validation with Zod schema
+  - adminLimiter applied to `/api/clients` and `/api/audit`
+- **P1 Reliability Fixes**:
+  - 8 comprehensive health check endpoints:
+    - `/api/health` - Full system status
+    - `/api/health/live` - Liveness probe
+    - `/api/health/ready` - Readiness probe
+    - `/api/health/db` - Database health (2ms latency, 440 products)
+    - `/api/health/redis` - Redis health (0ms latency)
+    - `/api/health/disk` - Storage health (112 files)
+    - `/api/health/email` - Email service status
+    - `/api/health/services` - Python services status
+  - CORS in Python services now uses environment-based origins (not `["*"]`)
+  - Circuit breaker pattern added to ML Analytics (matches DS Analytics)
+- **Files Created**:
+  - `apps/api/src/services/health.service.ts`
+  - `apps/api/src/routes/health.routes.ts`
+- **Status**: ✅ DEPLOYED to production at 23:55 UTC (18:55 PST Dec 21)
+- **Verification**: All health endpoints returning correct status
+- **Known Issues**:
+  - Email shows "degraded" - needs SENDGRID_API_KEY in production .env
+  - Python services show "down" - DS/ML Analytics not yet deployed
+
+---
+
 ### 2025-12-21 @ 17:15 PST: Python Importer Fix + CSRF Fix (DEPLOYED)
 - **What**: Fixed critical Python import error that was blocking all CSV imports
 - **Root Cause**: `bulk_operations.py` line 22 had `from . import models` (relative import) but `main.py` imports it as a module, not a package
