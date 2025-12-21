@@ -3,7 +3,7 @@
 // Shows top products by usage volume with trend indicators
 // =============================================================================
 
-import { useRef } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -11,9 +11,10 @@ import {
   ArrowRight,
   Camera,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import html2canvas from "html2canvas";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 interface TopProduct {
   id: string;
@@ -59,28 +60,26 @@ export function TopProductsWidget({
   showExport = true,
 }: TopProductsWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
-  const displayProducts = products.slice(0, limit);
-  const maxUnits = Math.max(...displayProducts.map((p) => p.units), 1);
 
-  // Export as PNG
-  const exportToPNG = async () => {
-    if (!widgetRef.current) return;
-    try {
-      const canvas = await html2canvas(widgetRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting widget:", error);
-    }
-  };
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef,
+    title,
+  });
+
+  // Memoize computed values
+  const displayProducts = useMemo(
+    () => products.slice(0, limit),
+    [products, limit]
+  );
+
+  const maxUnits = useMemo(
+    () => Math.max(...displayProducts.map((p) => p.units), 1),
+    [displayProducts]
+  );
 
   // Export as CSV
-  const exportToCSV = () => {
+  const exportToCSV = useCallback(() => {
     const csvContent = [
       "Rank,Product Name,Units,Trend",
       ...displayProducts.map(
@@ -96,7 +95,7 @@ export function TopProductsWidget({
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, [displayProducts, title]);
 
   if (displayProducts.length === 0) {
     return (
@@ -121,15 +120,22 @@ export function TopProductsWidget({
             <div className="flex gap-1">
               <button
                 onClick={exportToPNG}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                disabled={isExporting}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
                 title="Export as PNG"
+                aria-label="Export widget as PNG image"
               >
-                <Camera className="w-4 h-4" />
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={exportToCSV}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                 title="Export as CSV"
+                aria-label="Export data as CSV file"
               >
                 <FileSpreadsheet className="w-4 h-4" />
               </button>

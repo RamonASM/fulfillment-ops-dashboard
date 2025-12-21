@@ -122,6 +122,8 @@ export default function LocationSelector({
     ? LOCATION_ICONS[selectedLocation.locationType]
     : MapPin;
 
+  const listboxId = 'location-listbox';
+
   return (
     <div ref={containerRef} className={clsx('relative', className)}>
       <button
@@ -134,9 +136,13 @@ export default function LocationSelector({
           isOpen && 'ring-2 ring-emerald-500',
           required && !value && 'border-amber-300'
         )}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-label={selectedLocation ? `Selected location: ${selectedLocation.name}` : placeholder}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Icon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          <Icon className="w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
           {selectedLocation ? (
             <div className="truncate">
               <span className="font-medium">{selectedLocation.name}</span>
@@ -155,11 +161,17 @@ export default function LocationSelector({
             'w-4 h-4 text-gray-400 flex-shrink-0 transition-transform',
             isOpen && 'rotate-180'
           )}
+          aria-hidden="true"
         />
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-hidden">
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label="Delivery locations"
+          className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-hidden"
+        >
           {/* Search input (only show if more than 5 locations) */}
           {locations.length > 5 && (
             <div className="p-2 border-b border-gray-100">
@@ -192,6 +204,8 @@ export default function LocationSelector({
                   <button
                     key={location.id}
                     type="button"
+                    role="option"
+                    aria-selected={isSelected}
                     onClick={() => handleSelect(location.id)}
                     className={clsx(
                       'w-full px-3 py-3 text-left text-sm hover:bg-gray-50 flex items-start gap-3 transition-colors',
@@ -199,7 +213,7 @@ export default function LocationSelector({
                       !location.isActive && 'opacity-50'
                     )}
                   >
-                    <LocationIcon className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                    <LocationIcon className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium truncate">{location.name}</span>
@@ -217,7 +231,7 @@ export default function LocationSelector({
                       )}
                     </div>
                     {isSelected && (
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-1.5" />
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-1.5" aria-hidden="true" />
                     )}
                   </button>
                 );

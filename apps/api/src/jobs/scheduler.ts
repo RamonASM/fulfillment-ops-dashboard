@@ -1,9 +1,5 @@
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import {
-  recalculateClientUsage,
-  recalculateClientMonthlyUsage,
-} from "../services/usage.service.js";
 import { runAlertGeneration } from "../services/alert.service.js";
 import {
   createDailySnapshot,
@@ -16,8 +12,9 @@ import {
 } from "../services/order-timing.service.js";
 import { emitOrderDeadlineAlert } from "../services/notification.service.js";
 import { BenchmarkingService } from "../services/benchmarking.service.js";
-import { recalculateAllClientsUsage } from "../services/ds-analytics.service.js";
+import { recalculateAllClientsUsage, isDsAnalyticsHealthy } from "../services/analytics-facade.service.js";
 import { MLClientService } from "../services/ml-client.service.js";
+import { dsAnalyticsService } from "../services/ds-analytics.service.js";
 
 // =============================================================================
 // JOB SCHEDULER
@@ -101,43 +98,19 @@ export function startScheduler(): void {
 /**
  * Daily usage recalculation for all active clients
  * Runs every 24 hours
- * Uses advanced DS Analytics service for multi-method calculation
+ * Uses analytics facade to route between DS Analytics (Python) and TypeScript
+ * based on per-client feature flags
  */
 registerJob("daily-usage-recalculation", 24 * 60 * 60 * 1000, async () => {
-  try {
-    // Use Python DS Analytics service for advanced calculations
-    await recalculateAllClientsUsage();
-  } catch (error) {
-    logger.error(
-      "Advanced usage recalculation failed, falling back to basic calculation",
-      error as Error,
-    );
+  const stats = await recalculateAllClientsUsage();
 
-    // Fallback to basic TypeScript calculation
-    const clients = await prisma.client.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true },
-    });
-
-    for (const client of clients) {
-      try {
-        logger.debug("Recalculating usage for client", {
-          clientId: client.id,
-          clientName: client.name,
-        });
-        // Phase 12: Basic usage metrics
-        await recalculateClientUsage(client.id);
-        // Phase 13: Monthly usage with tier transparency (12-mo, 6-mo, 3-mo, weekly)
-        await recalculateClientMonthlyUsage(client.id);
-      } catch (error) {
-        logger.error(
-          `Usage recalculation failed for client: ${client.name}`,
-          error as Error,
-          { clientId: client.id },
-        );
-      }
-    }
-  }
+  logger.info("Daily usage recalculation completed", {
+    total: stats.total,
+    dsAnalytics: stats.dsAnalytics,
+    typescript: stats.typescript,
+    fallback: stats.fallback,
+    failed: stats.failed,
+  });
 });
 
 /**
@@ -625,40 +598,67 @@ registerJob("daily-ml-forecasts", 24 * 60 * 60 * 1000, async () => {
     LIMIT 50
   `;
 
+  // Process products in parallel batches to avoid overwhelming the ML service
+  const BATCH_SIZE = 10;
   let successCount = 0;
   let errorCount = 0;
+  const errors: Array<{ productId: string; error: string }> = [];
 
-  for (const product of topProducts) {
-    try {
-      // Generate demand forecast
-      await MLClientService.getDemandForecast(product.id, 30);
+  for (let i = 0; i < topProducts.length; i += BATCH_SIZE) {
+    const batch = topProducts.slice(i, i + BATCH_SIZE);
 
-      // Generate stockout prediction
-      const productData = await prisma.product.findUnique({
-        where: { id: product.id },
-        select: { currentStockUnits: true },
-      });
+    // Process batch in parallel using Promise.allSettled
+    const results = await Promise.allSettled(
+      batch.map(async (product) => {
+        // Generate demand forecast
+        await MLClientService.getDemandForecast(product.id, 30);
 
-      if (productData && productData.currentStockUnits > 0) {
-        await MLClientService.predictStockout(
-          product.id,
-          productData.currentStockUnits,
-          90,
-        );
+        // Generate stockout prediction
+        const productData = await prisma.product.findUnique({
+          where: { id: product.id },
+          select: { currentStockUnits: true },
+        });
+
+        if (productData && productData.currentStockUnits > 0) {
+          await MLClientService.predictStockout(
+            product.id,
+            productData.currentStockUnits,
+            90,
+          );
+        }
+
+        return product.id;
+      }),
+    );
+
+    // Aggregate results
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      if (result.status === "fulfilled") {
+        successCount++;
+      } else {
+        errorCount++;
+        errors.push({
+          productId: batch[j].id,
+          error: result.reason?.message || "Unknown error",
+        });
       }
-
-      successCount++;
-    } catch (error) {
-      logger.warn(
-        `ML forecast failed for product ${product.id}: ${(error as Error).message}`,
-      );
-      errorCount++;
     }
   }
 
-  logger.info(
-    `ML forecast job complete: ${successCount} success, ${errorCount} errors`,
-  );
+  // Log aggregated errors if any
+  if (errors.length > 0) {
+    logger.warn("ML forecast failures", {
+      count: errors.length,
+      samples: errors.slice(0, 5), // Log first 5 errors as samples
+    });
+  }
+
+  logger.info("ML forecast job complete", {
+    success: successCount,
+    errors: errorCount,
+    total: topProducts.length,
+  });
 });
 
 /**
@@ -737,6 +737,78 @@ registerJob("weekly-ml-stockout-alerts", 7 * 24 * 60 * 60 * 1000, async () => {
   logger.info(
     `ML stockout alert scan complete: ${alertsCreated} alerts created`,
   );
+});
+
+// =============================================================================
+// DS ANALYTICS HEALTH MONITORING
+// =============================================================================
+
+/**
+ * DS Analytics health check
+ * Monitors the Python DS Analytics service health every 5 minutes
+ * Creates alerts if service becomes unhealthy
+ */
+let dsAnalyticsWasHealthy = true; // Track previous state for change detection
+
+registerJob("ds-analytics-health-check", 5 * 60 * 1000, async () => {
+  try {
+    const isHealthy = await isDsAnalyticsHealthy();
+
+    if (!isHealthy && dsAnalyticsWasHealthy) {
+      // Service just went down - create alert
+      logger.error("DS Analytics service is unhealthy", new Error("Service health check failed"), {
+        previousState: "healthy",
+        currentState: "unhealthy",
+      });
+
+      // Create a system alert for admins
+      await prisma.alert.create({
+        data: {
+          clientId: (await prisma.client.findFirst({ select: { id: true } }))?.id || "",
+          alertType: "system_health",
+          severity: "critical",
+          title: "DS Analytics Service Down",
+          message: "The Python DS Analytics service is not responding. Usage calculations will fall back to TypeScript implementation until service is restored.",
+          status: "active",
+        },
+      });
+    } else if (isHealthy && !dsAnalyticsWasHealthy) {
+      // Service recovered
+      logger.info("DS Analytics service recovered", {
+        previousState: "unhealthy",
+        currentState: "healthy",
+      });
+
+      // Resolve the system alert
+      await prisma.alert.updateMany({
+        where: {
+          alertType: "system_health",
+          title: "DS Analytics Service Down",
+          isDismissed: false,
+        },
+        data: {
+          isDismissed: true,
+          dismissedAt: new Date(),
+        },
+      });
+    }
+
+    dsAnalyticsWasHealthy = isHealthy;
+
+    // Log stats periodically
+    if (isHealthy) {
+      const stats = await dsAnalyticsService.getStats();
+      if (stats) {
+        logger.debug("DS Analytics stats", {
+          totalProducts: stats.total_products,
+          productsWithUsage: stats.products_with_usage,
+          avgConfidence: stats.avg_confidence_score,
+        });
+      }
+    }
+  } catch (error) {
+    logger.error("DS Analytics health check failed", error as Error);
+  }
 });
 
 // Export for manual initialization

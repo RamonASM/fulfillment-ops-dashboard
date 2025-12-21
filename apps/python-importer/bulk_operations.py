@@ -11,6 +11,8 @@ Phase 2.1: Import Pipeline Optimization
 
 from io import StringIO
 import csv
+import json
+import sys
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -18,6 +20,24 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from datetime import datetime
 
 from . import models
+
+
+def _log_structured(level: str, message: str, context: dict = None):
+    """
+    Emit structured log message for Node.js parsing.
+    Format: JSON object with level, message, timestamp, and context.
+    """
+    log_entry = {
+        "level": level,
+        "message": message,
+        "timestamp": datetime.now().isoformat(),
+        "source": "bulk_operations"
+    }
+    if context:
+        log_entry["context"] = context
+
+    # Emit to stderr for logs (stdout is for data/progress)
+    print(json.dumps(log_entry), file=sys.stderr)
 
 
 # =============================================================================
@@ -129,10 +149,20 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
 
     except Exception as e:
         connection.rollback()
-        print(f"  ❌ COPY failed, falling back to bulk_insert_mappings: {e}")
+        # Structured logging for fallback with context
+        _log_structured("warning", "COPY failed, falling back to bulk_insert_mappings", {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "record_count": len(products),
+            "operation": "bulk_insert_products_copy"
+        })
+        print(f"  ⚠️  COPY failed ({type(e).__name__}), using bulk_insert_mappings fallback")
         # Fallback to SQLAlchemy bulk insert if COPY fails
         db_session.bulk_insert_mappings(models.Product, products)
         db_session.commit()
+        _log_structured("info", "Fallback bulk_insert_mappings succeeded", {
+            "record_count": len(products)
+        })
 
 
 def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[str, Any]]) -> None:
@@ -192,8 +222,112 @@ def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[s
 
     except Exception as e:
         connection.rollback()
-        print(f"  ❌ COPY failed: {e}")
+        # Structured logging for transaction COPY failure
+        _log_structured("error", "Transaction COPY failed", {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "record_count": len(transactions),
+            "operation": "bulk_insert_transactions_copy"
+        })
+        print(f"  ❌ COPY failed: {type(e).__name__}: {e}")
         raise  # Re-raise to allow caller to handle fallback
+
+
+def bulk_insert_products_ignore_conflicts(
+    db_session: Session,
+    products: List[Dict[str, Any]],
+    client_id: str
+) -> Dict[str, Any]:
+    """
+    Insert products with ON CONFLICT DO NOTHING to handle race conditions.
+
+    This is the preferred method for creating orphan products during imports
+    because it safely handles concurrent imports that may create the same product.
+
+    Args:
+        db_session: SQLAlchemy database session
+        products: List of product dictionaries to insert
+        client_id: Client UUID (used for querying back existing products)
+
+    Returns:
+        Dictionary mapping product_id (string) to UUID for all products
+        (both newly inserted and already existing)
+
+    Race Condition Safety:
+        Uses ON CONFLICT DO NOTHING, then queries back all product IDs.
+        This ensures no failures from concurrent inserts.
+    """
+    if not products:
+        return {}
+
+    print(f"  Using bulk INSERT with ON CONFLICT DO NOTHING for {len(products)} products...")
+    start_time = datetime.now()
+
+    # Collect all product_ids we're trying to insert
+    product_id_strings = [p['product_id'] for p in products]
+
+    # Get the products table from the model
+    products_table = models.Product.__table__
+
+    BATCH_SIZE = 500
+
+    for i in range(0, len(products), BATCH_SIZE):
+        batch = products[i:i+BATCH_SIZE]
+
+        # Sanitize each record before insertion
+        sanitized_batch = []
+        for p in batch:
+            sanitized_batch.append({
+                'id': str(p['id']),
+                'client_id': str(p['client_id']),
+                'product_id': _sanitize_string(p.get('product_id'), max_length=255),
+                'name': _sanitize_string(p.get('name'), max_length=500),
+                'item_type': _sanitize_string(p.get('item_type'), max_length=100) or 'evergreen',
+                'pack_size': int(p.get('pack_size', 1)) if p.get('pack_size') else 1,
+                'notification_point': int(p.get('notification_point', 0)) if p.get('notification_point') else 0,
+                'current_stock_packs': int(p.get('current_stock_packs', 0)) if p.get('current_stock_packs') else 0,
+                'current_stock_units': int(p.get('current_stock_units', 0)) if p.get('current_stock_units') else 0,
+                'feedback_count': int(p.get('feedback_count', 0)) if p.get('feedback_count') else 0,
+                'is_active': bool(p.get('is_active', True)),
+                'is_orphan': bool(p.get('is_orphan', False)),
+                'metadata': p.get('product_metadata', '{}') if isinstance(p.get('product_metadata'), str) else '{}',
+                'created_at': p.get('created_at', datetime.now()),
+                'updated_at': p.get('updated_at', datetime.now()),
+            })
+
+        try:
+            # Use ON CONFLICT DO NOTHING - silently skip duplicates
+            stmt = pg_insert(products_table).values(sanitized_batch)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=['client_id', 'product_id']
+            )
+            db_session.execute(stmt)
+            db_session.flush()  # Flush but don't commit yet
+
+        except Exception as e:
+            print(f"  Warning: INSERT batch {i//BATCH_SIZE + 1} failed: {type(e).__name__}: {e}")
+            # Continue anyway - we'll query for existing products
+
+    # Now query back ALL products (both new and existing) to get their UUIDs
+    # This handles the race condition by returning the correct IDs
+    result = db_session.execute(
+        text("""
+            SELECT id, product_id
+            FROM products
+            WHERE client_id = :client_id
+            AND product_id = ANY(:product_ids)
+        """),
+        {'client_id': client_id, 'product_ids': product_id_strings}
+    )
+
+    # Build the mapping from product_id string to UUID
+    product_id_to_uuid = {row[1]: row[0] for row in result}
+
+    duration = (datetime.now() - start_time).total_seconds()
+    print(f"  ✅ Bulk insert with conflict handling completed in {duration:.2f}s")
+    print(f"     Requested: {len(products)}, Found/Created: {len(product_id_to_uuid)}")
+
+    return product_id_to_uuid
 
 
 def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) -> None:

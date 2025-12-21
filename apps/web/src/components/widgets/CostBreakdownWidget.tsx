@@ -180,6 +180,7 @@ export function CostBreakdownWidget({ clientId }: CostBreakdownWidgetProps) {
             onClick={exportToPNG}
             className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
             title="Export as PNG"
+            aria-label="Export cost breakdown as PNG image"
           >
             <Camera className="w-4 h-4" />
           </button>

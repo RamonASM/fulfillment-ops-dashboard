@@ -2,7 +2,7 @@
 Core usage calculation engine with multiple methods and confidence scoring
 """
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 import pandas as pd
 import numpy as np
@@ -154,8 +154,8 @@ class UsageCalculator:
         cv = calculate_coefficient_of_variation(df['total_units'])
 
         # Days since last data
-        last_month = pd.to_datetime(df['month'].iloc[-1])
-        days_since_last = (datetime.now() - last_month).days
+        last_month = pd.to_datetime(df['month'].iloc[-1], utc=True)
+        days_since_last = (datetime.now(timezone.utc) - last_month.to_pydatetime()).days
 
         # Detect outliers
         outliers = detect_outliers_iqr(df['total_units'])
@@ -211,7 +211,7 @@ class UsageCalculator:
 
         # Convert to DataFrame
         df = pd.DataFrame(rows, columns=['recorded_at', 'packs_available', 'total_units', 'source'])
-        df['recorded_at'] = pd.to_datetime(df['recorded_at'])
+        df['recorded_at'] = pd.to_datetime(df['recorded_at'], utc=True)
 
         # Calculate deltas between consecutive snapshots
         df['delta_units'] = df['total_units'].diff()
@@ -249,7 +249,7 @@ class UsageCalculator:
         cv = calculate_coefficient_of_variation(consumption_df['monthly_equiv'])
 
         # Days since last data
-        days_since_last = (datetime.now() - df['recorded_at'].iloc[-1]).days
+        days_since_last = (datetime.now(timezone.utc) - df['recorded_at'].iloc[-1].to_pydatetime()).days
 
         # Outliers
         outliers = detect_outliers_iqr(consumption_df['monthly_equiv'])

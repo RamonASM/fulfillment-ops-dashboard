@@ -237,6 +237,7 @@ export function SmartReorderWidget({
               onClick={exportToPNG}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               title="Export as PNG"
+              aria-label="Export reorder recommendations as PNG image"
             >
               <Camera className="h-4 w-4" />
             </button>
@@ -244,6 +245,7 @@ export function SmartReorderWidget({
               onClick={exportToCSV}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               title="Export as CSV"
+              aria-label="Export reorder recommendations as CSV file"
             >
               <FileSpreadsheet className="h-4 w-4" />
             </button>

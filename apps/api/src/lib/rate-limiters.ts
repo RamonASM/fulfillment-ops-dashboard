@@ -2,6 +2,7 @@ import rateLimit from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
 import type { Request } from "express";
 import { redis } from "./redis.js";
+import { logger } from "./logger.js";
 
 // =============================================================================
 // REDIS-BACKED RATE LIMITERS WITH ROLE-BASED TIERS
@@ -52,7 +53,7 @@ const createStore = (prefix: string = 'rl:') => {
     // Capture redis in a const to help TypeScript with type narrowing
     const redisClient = redis;
     try {
-      console.log(`[Rate Limiters] Redis-backed rate limiting (prefix: ${prefix})`);
+      logger.info("Redis-backed rate limiting initialized", { prefix });
       return new RedisStore({
         // Correct signature for ioredis v5 + rate-limit-redis v4
         // The command is the first param, args are spread separately
@@ -61,15 +62,14 @@ const createStore = (prefix: string = 'rl:') => {
         prefix,
       });
     } catch (err) {
-      console.warn('[Rate Limiters] Redis init failed, using in-memory:', err);
+      logger.warn("Redis rate limiter init failed, using in-memory", { error: String(err) });
       return undefined;
     }
   }
 
   // Warn in production - in-memory doesn't work with clustering
   if (process.env.NODE_ENV === 'production') {
-    console.warn('[Rate Limiters] WARNING: In-memory rate limiting in production!');
-    console.warn('  Set USE_REDIS_RATE_LIMIT=true for clustered deployments.');
+    logger.warn("In-memory rate limiting in production - set USE_REDIS_RATE_LIMIT=true for clustering");
   }
 
   return undefined;
@@ -165,13 +165,40 @@ export const createAiLimiter = () =>
       };
       return aiLimits[role] || 10;
     },
-    store: createStore(),
+    store: createStore('rl:ai:'),
     message: { error: "AI request limit exceeded. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => {
       return req.user?.userId || req.portalUser?.id || req.ip || 'unknown';
     },
+  });
+
+/**
+ * Analytics limiter - for expensive analytics/aggregation endpoints
+ * Stricter than default to prevent full table scans overwhelming database
+ * Role-based: 5-30 requests/minute depending on role
+ */
+export const createAnalyticsLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: (req) => {
+      const role = getUserRole(req);
+      // Analytics operations can trigger full table scans - strict limits
+      const analyticsLimits = {
+        anonymous: 5,
+        user: 10,
+        account_manager: 15,
+        operations_manager: 20,
+        admin: 30,
+      };
+      return analyticsLimits[role] || 5;
+    },
+    store: createStore('rl:analytics:'),
+    message: { error: "Analytics request limit exceeded. Please slow down." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `analytics:${req.user?.userId || req.portalUser?.id || req.ip || 'unknown'}`,
   });
 
 /**
@@ -329,7 +356,7 @@ export const createPortalLimiter = () =>
 
 // Log Redis connection status at startup
 if (redis) {
-  console.log('[Rate Limiters] Redis available for distributed rate limiting');
+  logger.info("Redis available for distributed rate limiting");
 } else {
-  console.warn('[Rate Limiters] Redis unavailable - using in-memory fallback');
+  logger.warn("Redis unavailable - using in-memory rate limiting fallback");
 }

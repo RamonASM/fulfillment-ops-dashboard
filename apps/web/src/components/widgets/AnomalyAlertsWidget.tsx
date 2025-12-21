@@ -3,7 +3,7 @@
 // Shows detected anomalies in ordering patterns
 // =============================================================================
 
-import { useRef } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import {
   AlertTriangle,
   TrendingUp,
@@ -13,9 +13,10 @@ import {
   Eye,
   Camera,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
-import html2canvas from "html2canvas";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 interface AnomalyAlert {
   type:
@@ -92,32 +93,31 @@ export function AnomalyAlertsWidget({
   showExport = true,
 }: AnomalyAlertsWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
-  const displayAnomalies = anomalies.slice(0, limit);
 
-  // Summary counts by severity
-  const highCount = anomalies.filter((a) => a.severity === "high").length;
-  const mediumCount = anomalies.filter((a) => a.severity === "medium").length;
-  const lowCount = anomalies.filter((a) => a.severity === "low").length;
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef,
+    title,
+  });
 
-  // Export as PNG
-  const exportToPNG = async () => {
-    if (!widgetRef.current) return;
-    try {
-      const canvas = await html2canvas(widgetRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting widget:", error);
-    }
-  };
+  // Memoize computed values
+  const displayAnomalies = useMemo(
+    () => anomalies.slice(0, limit),
+    [anomalies, limit]
+  );
+
+  // Summary counts by severity (memoized)
+  const { highCount, mediumCount, lowCount } = useMemo(
+    () => ({
+      highCount: anomalies.filter((a) => a.severity === "high").length,
+      mediumCount: anomalies.filter((a) => a.severity === "medium").length,
+      lowCount: anomalies.filter((a) => a.severity === "low").length,
+    }),
+    [anomalies]
+  );
 
   // Export as CSV
-  const exportToCSV = () => {
+  const exportToCSV = useCallback(() => {
     const csvContent = [
       "Type,Severity,Message,Details,Product,Detected At,Value,Expected Value",
       ...anomalies.map(
@@ -133,7 +133,7 @@ export function AnomalyAlertsWidget({
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, [anomalies, title]);
 
   if (displayAnomalies.length === 0) {
     return (
@@ -168,15 +168,22 @@ export function AnomalyAlertsWidget({
             <div className="flex gap-1 mr-2">
               <button
                 onClick={exportToPNG}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                disabled={isExporting}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
                 title="Export as PNG"
+                aria-label="Export widget as PNG image"
               >
-                <Camera className="w-4 h-4" />
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={exportToCSV}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                 title="Export as CSV"
+                aria-label="Export data as CSV file"
               >
                 <FileSpreadsheet className="w-4 h-4" />
               </button>

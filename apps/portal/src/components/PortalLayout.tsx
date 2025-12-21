@@ -60,6 +60,7 @@ export default function PortalLayout() {
         <div
           className="fixed inset-0 bg-gray-900/50 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
@@ -69,6 +70,7 @@ export default function PortalLayout() {
           "fixed inset-y-0 left-0 z-50 w-64 bg-emerald-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
+        aria-label="Main navigation"
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
@@ -89,8 +91,9 @@ export default function PortalLayout() {
             <button
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden p-1 text-emerald-400 hover:text-white"
+              aria-label="Close navigation menu"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
 
@@ -103,13 +106,13 @@ export default function PortalLayout() {
               }}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-lg font-medium transition-colors"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" aria-hidden="true" />
               New Order Request
             </button>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-3 py-2 space-y-1">
+          <nav className="flex-1 px-3 py-2 space-y-1" aria-label="Portal navigation">
             {navigation.map((item) => (
               <NavLink
                 key={item.name}
@@ -125,7 +128,7 @@ export default function PortalLayout() {
                   )
                 }
               >
-                <item.icon className="w-5 h-5" />
+                <item.icon className="w-5 h-5" aria-hidden="true" />
                 {item.name}
               </NavLink>
             ))}
@@ -152,7 +155,7 @@ export default function PortalLayout() {
               onClick={handleLogout}
               className="flex items-center gap-2 w-full px-3 py-2 text-sm text-emerald-200 hover:text-white hover:bg-emerald-800 rounded-lg transition-colors"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-4 h-4" aria-hidden="true" />
               Sign out
             </button>
           </div>
@@ -168,8 +171,9 @@ export default function PortalLayout() {
               <button
                 onClick={() => setSidebarOpen(true)}
                 className="lg:hidden p-2 text-gray-500 hover:text-gray-700"
+                aria-label="Open navigation menu"
               >
-                <Menu className="w-5 h-5" />
+                <Menu className="w-5 h-5" aria-hidden="true" />
               </button>
               <h1 className="text-lg font-semibold text-gray-900 hidden sm:block">
                 Welcome, {user?.name?.split(" ")[0]}
@@ -182,7 +186,7 @@ export default function PortalLayout() {
                 onClick={() => navigate("/order/new")}
                 className="btn btn-primary btn-sm hidden sm:flex"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-4 h-4" aria-hidden="true" />
                 New Order
               </button>
 
@@ -192,9 +196,9 @@ export default function PortalLayout() {
                 className="relative p-2 text-gray-500 hover:text-gray-700"
                 aria-label={`Alerts${unreadAlertCount > 0 ? ` (${unreadAlertCount} unread)` : ""}`}
               >
-                <Bell className="w-5 h-5" />
+                <Bell className="w-5 h-5" aria-hidden="true" />
                 {unreadAlertCount > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" aria-hidden="true" />
                 )}
               </button>
             </div>

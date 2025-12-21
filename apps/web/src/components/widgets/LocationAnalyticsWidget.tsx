@@ -18,12 +18,39 @@ import {
 import { format } from "date-fns";
 import html2canvas from "html2canvas";
 
+// Standard TopProduct interface
 interface TopProduct {
   productId: string;
   productName: string;
   totalUnits: number;
   percentOfLocationVolume: number;
   lastOrderDate: string | null;
+}
+
+// Legacy product interface for backward compatibility
+interface LegacyTopProduct {
+  productId: string;
+  name: string;
+  units: number;
+  percentOfLocationVolume?: number;
+  lastOrderDate?: string | null;
+}
+
+type TopProductType = TopProduct | LegacyTopProduct;
+
+// Type guard for TopProduct
+function isTopProduct(product: TopProductType): product is TopProduct {
+  return "productName" in product;
+}
+
+// Helper to get product name safely
+function getProductName(product: TopProductType): string {
+  return isTopProduct(product) ? product.productName : product.name;
+}
+
+// Helper to get product units safely
+function getProductUnits(product: TopProductType): number {
+  return isTopProduct(product) ? product.totalUnits : product.units;
 }
 
 // Legacy interface for backward compatibility
@@ -34,7 +61,7 @@ interface LocationData {
   totalOrders: number;
   totalUnits: number;
   orderFrequency: number;
-  topProducts: TopProduct[];
+  topProducts: TopProductType[];
   lastOrderDate: string | null;
 }
 
@@ -60,7 +87,7 @@ interface EnhancedLocationPerformance {
   healthStatus: "healthy" | "watch" | "critical";
   totalProducts: number;
   stockoutCount: number;
-  topProducts: TopProduct[];
+  topProducts: TopProductType[];
 }
 
 type LocationDataType = LocationData | EnhancedLocationPerformance;
@@ -195,7 +222,7 @@ export function LocationAnalyticsWidget({
         const locationName = getLocationName(location);
         const company = getLocationCompany(location);
         const products = location.topProducts
-          .map((p) => ("productName" in p ? p.productName : (p as any).name))
+          .map((p) => getProductName(p))
           .join("; ");
 
         if (showEnhancedMetrics && isEnhancedData(location)) {
@@ -251,6 +278,7 @@ export function LocationAnalyticsWidget({
                 onClick={exportToPNG}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                 title="Export as PNG"
+                aria-label="Export location analytics as PNG image"
               >
                 <Camera className="w-4 h-4" />
               </button>
@@ -258,6 +286,7 @@ export function LocationAnalyticsWidget({
                 onClick={exportToCSV}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                 title="Export as CSV"
+                aria-label="Export location data as CSV file"
               >
                 <FileSpreadsheet className="w-4 h-4" />
               </button>
@@ -382,14 +411,8 @@ export function LocationAnalyticsWidget({
                     {location.topProducts
                       .slice(0, productLimit)
                       .map((product) => {
-                        const productName =
-                          "productName" in product
-                            ? product.productName
-                            : (product as any).name;
-                        const productUnits =
-                          "totalUnits" in product
-                            ? product.totalUnits
-                            : (product as any).units;
+                        const productName = getProductName(product);
+                        const productUnits = getProductUnits(product);
                         return (
                           <span
                             key={product.productId}

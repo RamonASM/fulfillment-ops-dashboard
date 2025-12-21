@@ -2,6 +2,7 @@ import pandas as pd
 import re
 import json
 import os
+import zipfile
 from sqlalchemy.orm import Session
 import uuid
 import sys
@@ -114,41 +115,73 @@ def read_file(file_path: str, chunksize: Optional[int] = None, **kwargs):
         if chunksize:
             # Stream Excel file in chunks using openpyxl read_only mode
             import openpyxl
+            from openpyxl.utils.exceptions import InvalidFileException
 
             def excel_stream_chunker(path, chunk_size):
                 """Generator that yields chunks from Excel file without loading it all into memory."""
-                wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-                ws = wb.active
+                wb = None
+                try:
+                    # Attempt to load workbook with error handling for corrupted files
+                    try:
+                        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+                    except InvalidFileException as e:
+                        raise ValueError(f"Invalid Excel file format: {e}")
+                    except zipfile.BadZipFile:
+                        raise ValueError(
+                            "Excel file appears to be corrupted (invalid zip structure). "
+                            "Please re-export from Excel or convert to CSV."
+                        )
+                    except Exception as e:
+                        raise ValueError(f"Failed to open Excel file: {type(e).__name__}: {e}")
 
-                # Get header row
-                rows_iter = ws.iter_rows(values_only=True)
-                header = next(rows_iter, None)
+                    # Validate workbook has at least one worksheet
+                    if not wb.worksheets:
+                        raise ValueError("Excel file has no worksheets")
 
-                if not header:
-                    print("Warning: Excel file appears to be empty")
-                    return
+                    ws = wb.active
+                    if ws is None:
+                        # Fallback to first sheet if no active sheet
+                        ws = wb.worksheets[0]
+                        print(f"Warning: No active worksheet, using first sheet: {ws.title}")
 
-                # Read rows in batches
-                batch = []
-                for row in rows_iter:
-                    batch.append(row)
-                    if len(batch) >= chunk_size:
-                        # Convert batch to DataFrame
+                    # Get header row
+                    rows_iter = ws.iter_rows(values_only=True)
+                    header = next(rows_iter, None)
+
+                    if not header:
+                        print("Warning: Excel file appears to be empty")
+                        return
+
+                    # Validate header has at least some non-None values
+                    if all(h is None for h in header):
+                        raise ValueError("Excel file has no column headers (first row is empty)")
+
+                    # Read rows in batches
+                    batch = []
+                    for row in rows_iter:
+                        batch.append(row)
+                        if len(batch) >= chunk_size:
+                            # Convert batch to DataFrame
+                            df = pd.DataFrame(batch, columns=header)
+                            yield df
+                            batch = []
+
+                    # Yield remaining rows
+                    if batch:
                         df = pd.DataFrame(batch, columns=header)
                         yield df
-                        batch = []
 
-                # Yield remaining rows
-                if batch:
-                    df = pd.DataFrame(batch, columns=header)
-                    yield df
-
-                wb.close()
+                finally:
+                    if wb is not None:
+                        wb.close()
 
             return excel_stream_chunker(file_path, chunksize)
         else:
             # Read entire Excel file (only for preview or small files)
-            return pd.read_excel(file_path, engine='openpyxl')
+            try:
+                return pd.read_excel(file_path, engine='openpyxl')
+            except Exception as e:
+                raise ValueError(f"Failed to read Excel file: {type(e).__name__}: {e}")
     else:
         # CSV files (default) - pandas natively supports chunked reading
         print(f"Detected CSV file ({ext}), using pandas read_csv with chunking")
@@ -508,14 +541,32 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
     return df
 
 
-def clean_orders_data(df: pd.DataFrame, client_id: str, mapping_data: Optional[dict] = None) -> pd.DataFrame:
+def clean_orders_data(
+    df: pd.DataFrame,
+    client_id: str,
+    mapping_data: Optional[dict] = None,
+    errors_encountered: Optional[list] = None
+) -> tuple[pd.DataFrame, dict]:
     """
     Cleans and transforms data for orders imports.
 
     CRITICAL: All column names must use snake_case to match database column names.
     bulk_insert_mappings() uses database column names (from __table__.columns.name),
     NOT Python attribute names. SQLAlchemy SILENTLY IGNORES unknown keys!
+
+    Args:
+        df: Input DataFrame to clean
+        client_id: Client UUID string
+        mapping_data: Optional column mapping configuration
+        errors_encountered: Optional list to append warnings/errors to (for tracking)
+
+    Returns:
+        Tuple of (cleaned_dataframe, dropped_rows_info)
     """
+    # Initialize errors list if not provided (allows standalone usage)
+    if errors_encountered is None:
+        errors_encountered = []
+
     # CRITICAL: Replace NaN with None BEFORE any string operations
     # This prevents NaN from becoming "nan" string during astype(str)
     for col in df.columns:
@@ -931,7 +982,9 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
                 elif import_type == 'orders':
                     print(f"Processing orders chunk {i+1}...")
-                    cleaned_chunk, dropped_info = clean_orders_data(chunk, str(import_batch.clientId), mapping_data)
+                    cleaned_chunk, dropped_info = clean_orders_data(
+                        chunk, str(import_batch.clientId), mapping_data, errors_encountered
+                    )
                     cleaned_rows = len(cleaned_chunk)
                     reconciliation["rows_cleaned"] += cleaned_rows
 
@@ -1007,20 +1060,19 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     if orphan_products_to_create:
                         print(f"  Creating {len(orphan_products_to_create)} new orphan products for this chunk...")
 
-                        # PERFORMANCE: Use PostgreSQL COPY for 10x faster inserts
-                        try:
-                            bulk_operations.bulk_insert_products_copy(db, orphan_products_to_create)
-                        except Exception as e:
-                            # Fallback to standard bulk insert if COPY fails
-                            print(f"  ⚠️  Falling back to bulk_insert_mappings: {e}")
-                            db.bulk_insert_mappings(models.Product, orphan_products_to_create)
-                            db.flush()
+                        # RACE CONDITION SAFE: Use ON CONFLICT DO NOTHING then query back IDs
+                        # This handles concurrent imports that may create the same product
+                        product_id_mapping = bulk_operations.bulk_insert_products_ignore_conflicts(
+                            db, orphan_products_to_create, str(import_batch.clientId)
+                        )
 
-                        # PERFORMANCE: Update product cache with newly created products
-                        # This ensures subsequent chunks can find these products
-                        for orphan in orphan_products_to_create:
-                            product_cache[orphan['product_id']] = orphan['id']
-                        print(f"  ✅ Updated product cache with {len(orphan_products_to_create)} new products")
+                        # Update product cache with the actual IDs (handles both new and existing)
+                        for pid_str, product_uuid in product_id_mapping.items():
+                            product_cache[pid_str] = product_uuid
+                            # Also update our chunk lookup
+                            product_lookup_chunk[pid_str] = product_uuid
+
+                        print(f"  ✅ Updated product cache with {len(product_id_mapping)} products (new + existing)")
 
                     # NOTE: Using snake_case column names after reindex
                     resolved_product_ids = [product_lookup_chunk.get(str(pid).strip()) for pid in cleaned_chunk['product_id']]

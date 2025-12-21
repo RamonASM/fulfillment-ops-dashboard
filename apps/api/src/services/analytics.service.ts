@@ -174,7 +174,7 @@ export async function getDailySummary(
 
 export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
   const cacheKey = CacheKeys.inventoryHealth();
-  const cached = cache.get<InventoryHealthMetrics>(cacheKey);
+  const cached = await cache.get<InventoryHealthMetrics>(cacheKey);
   if (cached) return cached;
 
   const products = await prisma.product.findMany({
@@ -281,7 +281,7 @@ export async function getInventoryHealth(): Promise<InventoryHealthMetrics> {
     },
   };
 
-  cache.set(cacheKey, result, CacheTTL.CLIENT_AGGREGATES);
+  await cache.set(cacheKey, result, CacheTTL.CLIENT_AGGREGATES);
   return result;
 }
 
@@ -294,7 +294,7 @@ export async function getAlertTrends(
   days: number = 30,
 ): Promise<AlertTrend[]> {
   const cacheKey = CacheKeys.alertTrends(clientId);
-  const cached = cache.get<AlertTrend[]>(cacheKey);
+  const cached = await cache.get<AlertTrend[]>(cacheKey);
   if (cached) return cached;
 
   const startDate = subDays(new Date(), days);
@@ -314,7 +314,7 @@ export async function getAlertTrends(
     net: m.createdCount - m.resolvedCount,
   }));
 
-  cache.set(cacheKey, result, CacheTTL.ALERT_TRENDS);
+  await cache.set(cacheKey, result, CacheTTL.ALERT_TRENDS);
   return result;
 }
 

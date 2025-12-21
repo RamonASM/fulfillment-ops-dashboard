@@ -6,12 +6,17 @@
 import { Router, Request, Response } from "express";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { createAnalyticsLimiter } from "../lib/rate-limiters.js";
 import * as analyticsService from "../services/analytics.service.js";
 
 const router = Router();
 
 // All routes require authentication
 router.use(authenticate);
+
+// Apply rate limiting to all analytics endpoints - these can be expensive
+const analyticsLimiter = createAnalyticsLimiter();
+router.use(analyticsLimiter);
 
 // =============================================================================
 // Daily Summary

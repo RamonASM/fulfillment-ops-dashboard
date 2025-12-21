@@ -13,8 +13,20 @@ import {
 } from "recharts";
 import { AlertTriangle, Calendar, TrendingDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { AxiosError } from "axios";
 import { api } from "@/api/client";
 import { ConfidenceBadge } from "../shared/ConfidenceBadge";
+
+// Helper to safely extract error message from Axios errors
+function getErrorMessage(error: unknown, defaultMessage = "An error occurred"): string {
+  if (error instanceof AxiosError) {
+    return error.response?.data?.error || error.response?.data?.message || error.message || defaultMessage;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return defaultMessage;
+}
 
 interface StockoutPredictionData {
   productId: string;
@@ -108,18 +120,62 @@ export function StockoutPredictionChart({
   }
 
   if (error) {
-    const errorMessage =
-      (error as any)?.response?.data?.error ||
-      "Failed to load stockout prediction";
+    const errorMessage = getErrorMessage(error, "Unable to generate prediction");
+
+    // Provide clear, helpful messages instead of "failed" or "offline"
+    let displayMessage = errorMessage;
+    let helperText = "";
+    let daysOfData = 0;
+    const daysNeeded = 30;
+
+    if (errorMessage.includes("No transaction data")) {
+      displayMessage = "Collecting Transaction Data";
+      helperText = "This product needs transaction history to predict stockouts. The system automatically collects data with each order.";
+      daysOfData = 0;
+    } else if (errorMessage.includes("Insufficient data")) {
+      displayMessage = "Building Prediction Model";
+      helperText = "More transaction history is needed for accurate predictions. The system continues to collect data automatically.";
+      // Try to extract days from error message if available
+      const daysMatch = errorMessage.match(/(\d+)\s*days?/i);
+      if (daysMatch) {
+        daysOfData = parseInt(daysMatch[1]);
+      }
+    }
+
+    const progressPercent = Math.min((daysOfData / daysNeeded) * 100, 100);
 
     return (
       <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center gap-2 text-amber-600 mb-4">
+        <div className="flex items-center gap-2 text-blue-600 mb-4">
           <AlertTriangle className="w-5 h-5" />
           <h3 className="text-lg font-semibold">Stockout Prediction</h3>
         </div>
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm text-amber-800">{errorMessage}</p>
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm font-medium text-blue-900">{displayMessage}</p>
+          {helperText && (
+            <p className="text-xs text-blue-700 mt-2">{helperText}</p>
+          )}
+
+          {/* Data Collection Progress */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-xs text-blue-700 mb-2">
+              <span>Transaction History</span>
+              <span className="font-medium">{daysOfData} of {daysNeeded}+ days</span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <p className="text-xs text-blue-600 mt-2">
+              {daysOfData === 0
+                ? "📊 Start placing orders to begin data collection"
+                : daysOfData < daysNeeded
+                ? `📈 ${daysNeeded - daysOfData} more days needed for predictions`
+                : "✓ Sufficient data - predictions available soon"}
+            </p>
+          </div>
         </div>
       </div>
     );

@@ -7,6 +7,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Request, Response } from "express";
 import { prisma } from "../lib/prisma.js";
 
+// Set JWT_SECRET before importing any modules that depend on it
+vi.stubEnv("JWT_SECRET", "test-secret-key-for-testing-only-32chars");
+
 // Mock Prisma client
 vi.mock("../lib/prisma.js", () => ({
   prisma: {
@@ -16,6 +19,14 @@ vi.mock("../lib/prisma.js", () => ({
     transaction: {
       findMany: vi.fn(),
     },
+  },
+}));
+
+// Mock portal auth middleware
+vi.mock("../middleware/portal-auth.js", () => ({
+  portalAuth: (req: any, res: any, next: any) => {
+    req.portalUser = { clientId: "client-123", email: "user@client.com" };
+    next();
   },
 }));
 

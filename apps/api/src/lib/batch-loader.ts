@@ -204,7 +204,7 @@ export async function getBatchUsageMetrics(
   // Check cache first
   for (const productId of productIds) {
     const cacheKey = CacheKeys.usageMetrics(productId, "latest");
-    const cached = cache.get<UsageMetrics>(cacheKey);
+    const cached = await cache.get<UsageMetrics>(cacheKey);
     if (cached !== null) {
       metricsMap.set(productId, cached);
     } else {
@@ -239,9 +239,9 @@ export async function getBatchUsageMetrics(
 
       metricsMap.set(metric.productId, usage);
 
-      // Cache the result
+      // Cache the result (fire and forget for batch operations)
       const cacheKey = CacheKeys.usageMetrics(metric.productId, "latest");
-      cache.set(cacheKey, usage, CacheTTL.USAGE_METRICS);
+      void cache.set(cacheKey, usage, CacheTTL.USAGE_METRICS);
     }
   }
 

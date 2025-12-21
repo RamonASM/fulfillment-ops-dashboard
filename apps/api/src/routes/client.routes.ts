@@ -21,6 +21,7 @@ import {
   getCustomFieldDistribution,
 } from "../services/custom-field.service.js";
 import { cache, CacheTTL, CacheKeys } from "../lib/cache.js";
+import { encrypt, decrypt, isEncryptionConfigured, maskApiKey } from "../lib/encryption.js";
 import type { ClientStats, StockStatus } from "@inventory/shared";
 
 const router = Router();
@@ -430,12 +431,187 @@ router.get(
 );
 
 // =============================================================================
+// AI SETTINGS (White-Label API Key Support)
+// =============================================================================
+
+const aiSettingsSchema = z.object({
+  useOwnAiKey: z.boolean().optional(),
+  anthropicApiKey: z.string().nullable().optional(), // Only sent when setting, never returned
+});
+
+/**
+ * GET /api/clients/:clientId/ai-settings
+ * Get client AI mapping settings (key is masked)
+ */
+router.get(
+  "/:clientId/ai-settings",
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+        select: {
+          id: true,
+          useOwnAiKey: true,
+          anthropicApiKey: true,
+        },
+      });
+
+      if (!client) {
+        throw new NotFoundError("Client");
+      }
+
+      // Decrypt key to mask it properly (don't show encrypted gibberish)
+      let apiKeyMasked: string | null = null;
+      if (client.anthropicApiKey && isEncryptionConfigured()) {
+        try {
+          const decryptedKey = decrypt(client.anthropicApiKey);
+          apiKeyMasked = maskApiKey(decryptedKey);
+        } catch {
+          // If decryption fails, show that a key exists but is corrupted
+          apiKeyMasked = "***corrupted***";
+        }
+      }
+
+      res.json({
+        useOwnAiKey: client.useOwnAiKey,
+        hasApiKey: !!client.anthropicApiKey,
+        apiKeyMasked,
+        encryptionConfigured: isEncryptionConfigured(),
+        platformKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * PATCH /api/clients/:clientId/ai-settings
+ * Update client AI mapping settings
+ */
+router.patch(
+  "/:clientId/ai-settings",
+  requireRole("admin", "operations_manager"),
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+      const data = aiSettingsSchema.parse(req.body);
+
+      // Verify client exists
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+      });
+
+      if (!client) {
+        throw new NotFoundError("Client");
+      }
+
+      // Build update object
+      const updateData: { useOwnAiKey?: boolean; anthropicApiKey?: string | null } = {};
+
+      if (data.useOwnAiKey !== undefined) {
+        updateData.useOwnAiKey = data.useOwnAiKey;
+      }
+
+      if (data.anthropicApiKey !== undefined) {
+        if (data.anthropicApiKey === "" || data.anthropicApiKey === null) {
+          // Clear the API key
+          updateData.anthropicApiKey = null;
+        } else {
+          // Validate API key format
+          if (!data.anthropicApiKey.startsWith("sk-ant-")) {
+            throw new ValidationError("Invalid Anthropic API key format. Key should start with 'sk-ant-'");
+          }
+
+          // Encrypt and store the API key
+          if (!isEncryptionConfigured()) {
+            throw new ValidationError(
+              "ENCRYPTION_KEY not configured on server. Cannot securely store API keys."
+            );
+          }
+
+          updateData.anthropicApiKey = encrypt(data.anthropicApiKey);
+        }
+      }
+
+      // Update client
+      await prisma.client.update({
+        where: { id: clientId },
+        data: updateData,
+      });
+
+      // Return updated settings (without actual key)
+      const updated = await prisma.client.findUnique({
+        where: { id: clientId },
+        select: {
+          useOwnAiKey: true,
+          anthropicApiKey: true,
+        },
+      });
+
+      // Decrypt key to mask it properly
+      let apiKeyMasked: string | null = null;
+      if (updated?.anthropicApiKey && isEncryptionConfigured()) {
+        try {
+          const decryptedKey = decrypt(updated.anthropicApiKey);
+          apiKeyMasked = maskApiKey(decryptedKey);
+        } catch {
+          apiKeyMasked = "***corrupted***";
+        }
+      }
+
+      res.json({
+        message: "AI settings updated successfully",
+        useOwnAiKey: updated?.useOwnAiKey,
+        hasApiKey: !!updated?.anthropicApiKey,
+        apiKeyMasked,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * DELETE /api/clients/:clientId/ai-settings/key
+ * Remove client's API key (will fall back to platform key)
+ */
+router.delete(
+  "/:clientId/ai-settings/key",
+  requireRole("admin", "operations_manager"),
+  requireClientAccess,
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+
+      await prisma.client.update({
+        where: { id: clientId },
+        data: {
+          anthropicApiKey: null,
+          useOwnAiKey: false,
+        },
+      });
+
+      res.json({
+        message: "API key removed. Client will use platform AI mapping.",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
 
 async function getClientStats(clientId: string): Promise<ClientStats> {
   const cacheKey = CacheKeys.clientAggregates(clientId);
-  const cached = cache.get<ClientStats>(cacheKey);
+  const cached = await cache.get<ClientStats>(cacheKey);
   if (cached) return cached;
 
   const products = await prisma.product.findMany({
@@ -512,7 +688,7 @@ async function getClientStats(clientId: string): Promise<ClientStats> {
     lowestWeeksRemaining,
   };
 
-  cache.set(cacheKey, stats, CacheTTL.CLIENT_AGGREGATES);
+  await cache.set(cacheKey, stats, CacheTTL.CLIENT_AGGREGATES);
   return stats;
 }
 

@@ -3,7 +3,7 @@
 // Line chart showing orders and units over time with drill-down support
 // =============================================================================
 
-import { useRef } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import {
   Line,
   XAxis,
@@ -15,8 +15,8 @@ import {
   Area,
   ComposedChart,
 } from "recharts";
-import { Camera, FileSpreadsheet } from "lucide-react";
-import html2canvas from "html2canvas";
+import { Camera, FileSpreadsheet, Loader2 } from "lucide-react";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 interface MonthlyTrendsData {
   labels: string[];
@@ -47,46 +47,42 @@ export function MonthlyTrendsChart({
 }: MonthlyTrendsChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
 
-  // Transform data for recharts
-  const chartData = data.labels.map((label, index) => ({
-    month: label,
-    orders: data.orders[index],
-    units: data.units[index],
-    products: data.products?.[index] || 0,
-  }));
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef: chartRef,
+    title,
+  });
+
+  // Memoize chart data transformation to prevent unnecessary recalculations
+  const chartData = useMemo(
+    () =>
+      data.labels.map((label, index) => ({
+        month: label,
+        orders: data.orders[index],
+        units: data.units[index],
+        products: data.products?.[index] || 0,
+      })),
+    [data.labels, data.orders, data.units, data.products]
+  );
 
   // Handle chart click for drill-down
-  const handleChartClick = (chartEvent: unknown) => {
-    if (!onMonthClick) return;
-    const event = chartEvent as {
-      activeLabel?: string;
-      activePayload?: Array<{ payload: { orders: number; units: number } }>;
-    };
-    if (event?.activeLabel && event?.activePayload?.[0]) {
-      const { orders, units } = event.activePayload[0].payload;
-      onMonthClick(event.activeLabel, { orders, units });
-    }
-  };
-
-  // Export chart as PNG
-  const exportToPNG = async () => {
-    if (!chartRef.current) return;
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting chart:", error);
-    }
-  };
+  const handleChartClick = useCallback(
+    (chartEvent: unknown) => {
+      if (!onMonthClick) return;
+      const event = chartEvent as {
+        activeLabel?: string;
+        activePayload?: Array<{ payload: { orders: number; units: number } }>;
+      };
+      if (event?.activeLabel && event?.activePayload?.[0]) {
+        const { orders, units } = event.activePayload[0].payload;
+        onMonthClick(event.activeLabel, { orders, units });
+      }
+    },
+    [onMonthClick]
+  );
 
   // Export data as CSV
-  const exportToCSV = () => {
+  const exportToCSV = useCallback(() => {
     const csvContent = [
       "Month,Orders,Units" + (showProducts ? ",Products" : ""),
       ...chartData.map(
@@ -103,22 +99,27 @@ export function MonthlyTrendsChart({
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, [chartData, showProducts, title]);
 
-  // Calculate summary stats
-  const totalOrders = data.orders.reduce((sum, v) => sum + v, 0);
-  const totalUnits = data.units.reduce((sum, v) => sum + v, 0);
-  const avgOrders = Math.round(totalOrders / data.orders.length) || 0;
-  const avgUnits = Math.round(totalUnits / data.units.length) || 0;
+  // Memoize summary stats calculation
+  const { totalOrders, totalUnits, avgOrders, avgUnits, ordersTrend } = useMemo(() => {
+    const total = data.orders.reduce((sum, v) => sum + v, 0);
+    const totalU = data.units.reduce((sum, v) => sum + v, 0);
+    const avg = Math.round(total / data.orders.length) || 0;
+    const avgU = Math.round(totalU / data.units.length) || 0;
 
-  // Calculate trend
-  const recentOrders = data.orders.slice(-3).reduce((sum, v) => sum + v, 0) / 3;
-  const previousOrders =
-    data.orders.slice(-6, -3).reduce((sum, v) => sum + v, 0) / 3;
-  const ordersTrend =
-    previousOrders > 0
-      ? Math.round(((recentOrders - previousOrders) / previousOrders) * 100)
-      : 0;
+    // Calculate trend
+    const recentOrders =
+      data.orders.slice(-3).reduce((sum, v) => sum + v, 0) / 3;
+    const previousOrders =
+      data.orders.slice(-6, -3).reduce((sum, v) => sum + v, 0) / 3;
+    const trend =
+      previousOrders > 0
+        ? Math.round(((recentOrders - previousOrders) / previousOrders) * 100)
+        : 0;
+
+    return { totalOrders: total, totalUnits: totalU, avgOrders: avg, avgUnits: avgU, ordersTrend: trend };
+  }, [data.orders, data.units]);
 
   if (!data.labels || data.labels.length === 0) {
     return (
@@ -141,15 +142,22 @@ export function MonthlyTrendsChart({
             <div className="flex gap-1 mr-4">
               <button
                 onClick={exportToPNG}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                disabled={isExporting}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
                 title="Export as PNG"
+                aria-label="Export chart as PNG image"
               >
-                <Camera className="w-4 h-4" />
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={exportToCSV}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                 title="Export as CSV"
+                aria-label="Export data as CSV file"
               >
                 <FileSpreadsheet className="w-4 h-4" />
               </button>

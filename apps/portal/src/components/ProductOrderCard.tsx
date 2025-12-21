@@ -85,8 +85,9 @@ export function ProductOrderCard({
             <button
               onClick={() => onAddToCart(product)}
               className="btn btn-sm btn-outline"
+              aria-label={`Add ${product.name} to cart`}
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" aria-hidden="true" />
               Add
             </button>
           )}
@@ -137,8 +138,9 @@ export function ProductOrderCard({
                   <button
                     onClick={() => onAddToCart(product)}
                     className="btn btn-primary btn-sm"
+                    aria-label={`Add ${product.name} to cart`}
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4" aria-hidden="true" />
                     Add to Cart
                   </button>
                 )}
@@ -218,15 +220,18 @@ export function ProductOrderCard({
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mt-3 transition-colors"
+              aria-expanded={isExpanded}
+              aria-controls={`product-details-${product.id}`}
+              aria-label={isExpanded ? `Hide details for ${product.name}` : `Show details for ${product.name}`}
             >
               {isExpanded ? (
                 <>
-                  <ChevronUp className="w-4 h-4" />
+                  <ChevronUp className="w-4 h-4" aria-hidden="true" />
                   Show less
                 </>
               ) : (
                 <>
-                  <ChevronDown className="w-4 h-4" />
+                  <ChevronDown className="w-4 h-4" aria-hidden="true" />
                   Show details
                 </>
               )}
@@ -245,7 +250,10 @@ export function ProductOrderCard({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-4 border-t border-gray-100 pt-4 bg-gray-50">
+            <div
+              id={`product-details-${product.id}`}
+              className="px-4 pb-4 border-t border-gray-100 pt-4 bg-gray-50"
+            >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Usage Details */}
                 <div>

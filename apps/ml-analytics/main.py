@@ -14,6 +14,10 @@ from datetime import datetime, timedelta
 import os
 from sqlalchemy import create_engine, text
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -149,6 +153,38 @@ async def forecast_demand(request: ForecastRequest):
                 detail=f"Insufficient data for forecasting (found {len(df)} days, minimum 30 required)"
             )
 
+        # Data quality verification before training
+        nan_count = df['y'].isna().sum()
+        nan_percentage = (nan_count / len(df)) * 100
+        if nan_percentage > 20:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Data quality too low: {nan_percentage:.1f}% of values are NaN (max 20% allowed)"
+            )
+
+        # Check for zero variance (all same values)
+        if df['y'].std() == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Data has zero variance - all values are identical, cannot forecast"
+            )
+
+        # Check for extreme outliers (values > 10x mean)
+        mean_val = df['y'].mean()
+        if mean_val > 0:
+            outlier_count = (df['y'] > mean_val * 10).sum()
+            outlier_percentage = (outlier_count / len(df)) * 100
+            if outlier_percentage > 5:
+                logger.warning(
+                    f"High outlier percentage ({outlier_percentage:.1f}%) detected - "
+                    f"forecast accuracy may be reduced"
+                )
+
+        # Log data quality metrics
+        logger.info(f"Data quality check passed: {len(df)} points, "
+                   f"mean={mean_val:.2f}, std={df['y'].std():.2f}, "
+                   f"nan={nan_percentage:.1f}%")
+
         # Train Prophet model
         logger.info(f"Training Prophet model on {len(df)} data points")
         model = Prophet(
@@ -171,7 +207,18 @@ async def forecast_demand(request: ForecastRequest):
             ['ds', 'yhat', 'yhat_lower', 'yhat_upper']
         ].copy()
 
-        # Ensure non-negative predictions
+        # Track negative predictions before clipping (indicates model uncertainty)
+        negative_yhat_count = (predictions['yhat'] < 0).sum()
+        negative_lower_count = (predictions['yhat_lower'] < 0).sum()
+
+        if negative_yhat_count > 0 or negative_lower_count > 0:
+            logger.warning(
+                f"Negative predictions detected and clipped to 0: "
+                f"yhat={negative_yhat_count}, yhat_lower={negative_lower_count} of {len(predictions)} predictions. "
+                f"This may indicate high model uncertainty or poor data quality."
+            )
+
+        # Ensure non-negative predictions (demand cannot be negative)
         predictions['yhat'] = predictions['yhat'].clip(lower=0)
         predictions['yhat_lower'] = predictions['yhat_lower'].clip(lower=0)
         predictions['yhat_upper'] = predictions['yhat_upper'].clip(lower=0)

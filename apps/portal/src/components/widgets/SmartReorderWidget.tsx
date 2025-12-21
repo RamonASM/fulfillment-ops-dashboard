@@ -154,8 +154,12 @@ export function SmartReorderWidget({
           </h3>
         </div>
         <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-gray-400" />
+          <Filter className="w-4 h-4 text-gray-400" aria-hidden="true" />
+          <label htmlFor="urgency-filter" className="sr-only">
+            Filter by urgency
+          </label>
           <select
+            id="urgency-filter"
             value={urgencyFilter}
             onChange={(e) =>
               setUrgencyFilter(
@@ -163,6 +167,7 @@ export function SmartReorderWidget({
               )
             }
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            aria-label="Filter reorder suggestions by urgency level"
           >
             <option value="all">All ({allSuggestions.length})</option>
             <option value="critical">Critical ({criticalCount})</option>
@@ -176,11 +181,15 @@ export function SmartReorderWidget({
 
       {/* Alert Summary */}
       {(criticalCount > 0 || soonCount > 0) && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div
+          className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg"
+          role="alert"
+          aria-live="polite"
+        >
           <p className="text-sm text-red-700 font-medium">
             {criticalCount > 0 && (
               <>
-                <AlertTriangle className="w-4 h-4 inline mr-1" />
+                <AlertTriangle className="w-4 h-4 inline mr-1" aria-hidden="true" />
                 {criticalCount} critical item{criticalCount !== 1 ? "s" : ""}{" "}
                 need immediate attention
               </>
@@ -209,7 +218,7 @@ export function SmartReorderWidget({
               <div className="flex items-start justify-between mb-2">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <Icon className={`w-4 h-4 ${config.color}`} />
+                    <Icon className={`w-4 h-4 ${config.color}`} aria-hidden="true" />
                     <span
                       className={`text-xs font-medium px-2 py-0.5 rounded-full ${config.bgColor} ${config.color}`}
                     >
@@ -226,8 +235,9 @@ export function SmartReorderWidget({
                 <button
                   onClick={() => handleAddToCart(suggestion)}
                   className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                  aria-label={`Add ${suggestion.suggestedOrderQty} units of ${suggestion.productName} to cart`}
                 >
-                  <ShoppingCart className="w-4 h-4" />
+                  <ShoppingCart className="w-4 h-4" aria-hidden="true" />
                   Add
                 </button>
               </div>
@@ -270,7 +280,7 @@ export function SmartReorderWidget({
               {suggestion.estimatedStockoutDate && (
                 <div className="mt-2 pt-2 border-t border-gray-200">
                   <p className="text-xs text-gray-600">
-                    <Clock className="w-3 h-3 inline mr-1" />
+                    <Clock className="w-3 h-3 inline mr-1" aria-hidden="true" />
                     Estimated stockout:{" "}
                     <span className="font-medium">
                       {new Date(

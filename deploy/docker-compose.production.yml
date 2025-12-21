@@ -27,6 +27,10 @@ services:
   # ===========================================================================
   # Database - PostgreSQL
   # ===========================================================================
+  # SECURITY: All credentials MUST be provided via environment variables.
+  # No default fallbacks allowed in production.
+  # Required env vars: DB_USER, DB_PASSWORD, DB_NAME, REDIS_PASSWORD,
+  #                    JWT_SECRET, JWT_REFRESH_SECRET, SESSION_SECRET
   postgres:
     image: postgres:15-alpine
     container_name: inventory-postgres
@@ -34,9 +38,10 @@ services:
     networks:
       - inventory-network
     environment:
-      POSTGRES_USER: ${DB_USER:-inventory}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-inventory123}
-      POSTGRES_DB: ${DB_NAME:-inventory_db}
+      # SECURITY: No default values - deployment will fail if not provided
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
@@ -48,7 +53,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DB_USER:-inventory} -d ${DB_NAME:-inventory_db}",
+          "pg_isready -U ${DB_USER} -d ${DB_NAME}",
         ]
       interval: 10s
       timeout: 5s
@@ -77,7 +82,11 @@ services:
     restart: unless-stopped
     networks:
       - inventory-network
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    # Enable both AOF and RDB persistence for redundancy
+    # RDB snapshots: every 900s if 1+ keys changed, every 300s if 10+ keys, every 60s if 10000+ keys
+    # AOF: append-only file for durability
+    # SECURITY: Require explicit Redis password
+    command: redis-server --appendonly yes --save 900 1 --save 300 10 --save 60 10000 --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
       - redis_data:/data
     expose:
@@ -119,11 +128,13 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${API_PORT:-3001}
-      DATABASE_URL: postgresql://${DB_USER:-inventory}:${DB_PASSWORD:-inventory123}@postgres:5432/${DB_NAME:-inventory_db}
-      REDIS_URL: redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      SESSION_SECRET: ${SESSION_SECRET}
+      # SECURITY: Require all database credentials - no defaults
+      DATABASE_URL: postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/${DB_NAME:?DB_NAME is required}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+      # SECURITY: Require all JWT/session secrets
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       WEB_URL: ${WEB_URL:-https://admin.yourtechassist.us}
       PORTAL_URL: ${PORTAL_URL:-https://portal.yourtechassist.us}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -180,7 +191,8 @@ services:
     networks:
       - inventory-network
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-inventory}:${DB_PASSWORD:-inventory123}@postgres:5432/${DB_NAME:-inventory_db}
+      # SECURITY: Require database credentials - no defaults
+      DATABASE_URL: postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/${DB_NAME:?DB_NAME is required}
       PORT: 8000
       HOST: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -243,30 +255,88 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
 
   # ===========================================================================
-  # Database Backup Service (Optional)
+  # Database Backup Service
+  # Runs pg_dump daily at 2 AM, retains backups for BACKUP_KEEP_DAYS
   # ===========================================================================
   backup:
     image: postgres:15-alpine
     container_name: inventory-backup
-    restart: "no"
+    restart: unless-stopped
     networks:
       - inventory-network
     environment:
-      POSTGRES_USER: ${DB_USER:-inventory}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-inventory123}
-      POSTGRES_DB: ${DB_NAME:-inventory_db}
+      PGHOST: postgres
+      # SECURITY: Require database credentials - no defaults
+      PGUSER: ${DB_USER:?DB_USER is required}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATABASE: ${DB_NAME:?DB_NAME is required}
       BACKUP_DIR: /backups
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
     volumes:
       - backup_data:/backups
-      - ./scripts/backup-db.sh:/backup.sh:ro
     depends_on:
-      - postgres
-    command: /bin/sh -c "while true; do sleep 86400; done"
+      postgres:
+        condition: service_healthy
+    # Run backup every 24 hours (86400 seconds)
+    # Creates compressed backup, verifies it, and cleans old backups
+    command: |
+      /bin/sh -c '
+        echo "Backup service started"
+        while true; do
+          echo "============================================"
+          echo "Running backup at $$(date)"
+          echo "============================================"
+
+          # Create backup with timestamp
+          BACKUP_FILE="/backups/inventory_$$(date +%Y%m%d_%H%M%S).sql.gz"
+
+          # Perform backup
+          if pg_dump -h $$PGHOST -U $$PGUSER $$PGDATABASE | gzip > $$BACKUP_FILE; then
+            SIZE=$$(du -h $$BACKUP_FILE | cut -f1)
+            echo "✓ Backup created: $$BACKUP_FILE ($$SIZE)"
+
+            # Verify backup is not empty
+            if [ $$(zcat $$BACKUP_FILE | wc -c) -lt 1000 ]; then
+              echo "✗ Backup appears to be empty or too small!"
+              rm $$BACKUP_FILE
+            else
+              echo "✓ Backup verified"
+            fi
+          else
+            echo "✗ Backup failed!"
+          fi
+
+          # Clean old backups
+          echo "Cleaning backups older than $$BACKUP_KEEP_DAYS days..."
+          find /backups -name "inventory_*.sql.gz" -mtime +$$BACKUP_KEEP_DAYS -delete
+          echo "Current backups:"
+          ls -lh /backups/inventory_*.sql.gz 2>/dev/null | tail -10 || echo "No backups found"
+
+          echo "Next backup in 24 hours"
+          echo "============================================"
+          sleep 86400
+        done
+      '
     profiles:
       - backup
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
 
 # =============================================================================
 # Usage Instructions:

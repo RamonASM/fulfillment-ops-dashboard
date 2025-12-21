@@ -33,27 +33,45 @@ export interface FeedbackData {
   improvementSuggestions?: string;
 }
 
+// Rating descriptions for accessibility
+const ratingLabels: Record<number, string> = {
+  1: 'Very Poor',
+  2: 'Poor',
+  3: 'Average',
+  4: 'Good',
+  5: 'Excellent',
+};
+
 // Star Rating Component
 function StarRating({
   value,
   onChange,
   label,
   required = false,
+  id,
 }: {
   value: number;
   onChange: (value: number) => void;
   label: string;
   required?: boolean;
+  id?: string;
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
+  const labelId = id ? `${id}-label` : undefined;
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-700">
+      <label id={labelId} className="block text-sm font-medium text-gray-700">
         {label}
-        {required && <span className="text-red-500 ml-1">*</span>}
+        {required && <span className="text-red-500 ml-1" aria-hidden="true">*</span>}
+        {required && <span className="sr-only">(required)</span>}
       </label>
-      <div className="flex gap-1">
+      <div
+        className="flex gap-1"
+        role="group"
+        aria-labelledby={labelId}
+        aria-describedby={value > 0 ? `${id}-description` : undefined}
+      >
         {[1, 2, 3, 4, 5].map((star) => (
           <button
             key={star}
@@ -62,6 +80,8 @@ function StarRating({
             onMouseLeave={() => setHovered(null)}
             onClick={() => onChange(star)}
             className="p-1 transition-transform hover:scale-110"
+            aria-label={`Rate ${star} out of 5 stars - ${ratingLabels[star]}`}
+            aria-pressed={star === value}
           >
             <Star
               className={clsx(
@@ -70,16 +90,13 @@ function StarRating({
                   ? 'fill-amber-400 text-amber-400'
                   : 'text-gray-300'
               )}
+              aria-hidden="true"
             />
           </button>
         ))}
         {value > 0 && (
-          <span className="ml-2 text-sm text-gray-500 self-center">
-            {value === 5 && 'Excellent'}
-            {value === 4 && 'Good'}
-            {value === 3 && 'Average'}
-            {value === 2 && 'Poor'}
-            {value === 1 && 'Very Poor'}
+          <span id={`${id}-description`} className="ml-2 text-sm text-gray-500 self-center">
+            {ratingLabels[value]}
           </span>
         )}
       </div>
@@ -97,10 +114,14 @@ function WouldReorderToggle({
 }) {
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-700">
+      <label id="reorder-label" className="block text-sm font-medium text-gray-700">
         Would you reorder this product?
       </label>
-      <div className="flex gap-3">
+      <div
+        className="flex gap-3"
+        role="group"
+        aria-labelledby="reorder-label"
+      >
         <button
           type="button"
           onClick={() => onChange(true)}
@@ -110,8 +131,10 @@ function WouldReorderToggle({
               ? 'border-green-500 bg-green-50 text-green-700'
               : 'border-gray-200 hover:border-gray-300 text-gray-600'
           )}
+          aria-pressed={value === true}
+          aria-label="Yes, I would reorder this product"
         >
-          <ThumbsUp className="w-4 h-4" />
+          <ThumbsUp className="w-4 h-4" aria-hidden="true" />
           Yes
         </button>
         <button
@@ -123,8 +146,10 @@ function WouldReorderToggle({
               ? 'border-red-500 bg-red-50 text-red-700'
               : 'border-gray-200 hover:border-gray-300 text-gray-600'
           )}
+          aria-pressed={value === false}
+          aria-label="No, I would not reorder this product"
         >
-          <ThumbsDown className="w-4 h-4" />
+          <ThumbsDown className="w-4 h-4" aria-hidden="true" />
           No
         </button>
       </div>
@@ -141,17 +166,21 @@ function QuantitySatisfaction({
   onChange: (value: 'too_little' | 'just_right' | 'too_much') => void;
 }) {
   const options = [
-    { value: 'too_little', label: 'Too Little', icon: Minus },
-    { value: 'just_right', label: 'Just Right', icon: ThumbsUp },
-    { value: 'too_much', label: 'Too Much', icon: Minus },
+    { value: 'too_little', label: 'Too Little', icon: Minus, ariaLabel: 'The quantity was too little' },
+    { value: 'just_right', label: 'Just Right', icon: ThumbsUp, ariaLabel: 'The quantity was just right' },
+    { value: 'too_much', label: 'Too Much', icon: Minus, ariaLabel: 'The quantity was too much' },
   ] as const;
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-700">
+      <label id="quantity-satisfaction-label" className="block text-sm font-medium text-gray-700">
         How was the quantity ordered?
       </label>
-      <div className="flex gap-3 flex-wrap">
+      <div
+        className="flex gap-3 flex-wrap"
+        role="group"
+        aria-labelledby="quantity-satisfaction-label"
+      >
         {options.map((option) => {
           const Icon = option.icon;
           const isSelected = value === option.value;
@@ -168,8 +197,10 @@ function QuantitySatisfaction({
                     : 'border-amber-500 bg-amber-50 text-amber-700'
                   : 'border-gray-200 hover:border-gray-300 text-gray-600'
               )}
+              aria-pressed={isSelected}
+              aria-label={option.ariaLabel}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4" aria-hidden="true" />
               {option.label}
             </button>
           );
@@ -232,6 +263,7 @@ export default function FeedbackForm({
       {/* Quality Rating (Required) */}
       <div>
         <StarRating
+          id="quality-rating"
           value={form.qualityRating || 0}
           onChange={(value) => {
             setForm({ ...form, qualityRating: value });
@@ -243,6 +275,9 @@ export default function FeedbackForm({
         <AnimatePresence>
           {errors.qualityRating && (
             <motion.p
+              id="quality-rating-error"
+              role="alert"
+              aria-live="polite"
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -256,6 +291,7 @@ export default function FeedbackForm({
 
       {/* Delivery Rating (Optional) */}
       <StarRating
+        id="delivery-rating"
         value={form.deliveryRating || 0}
         onChange={(value) => setForm({ ...form, deliveryRating: value })}
         label="Delivery Experience"
@@ -263,6 +299,7 @@ export default function FeedbackForm({
 
       {/* Value Rating (Optional) */}
       <StarRating
+        id="value-rating"
         value={form.valueRating || 0}
         onChange={(value) => setForm({ ...form, valueRating: value })}
         label="Value for Money"
@@ -338,10 +375,11 @@ export default function FeedbackForm({
           type="submit"
           disabled={isSubmitting}
           className="btn-primary flex-1 flex items-center justify-center gap-2"
+          aria-busy={isSubmitting}
         >
           {isSubmitting ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
               Submitting...
             </>
           ) : (

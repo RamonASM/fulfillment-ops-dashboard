@@ -162,7 +162,7 @@ describe('Analytics Service', () => {
         trend: { direction: 'stable', changePercent: 0 },
       };
 
-      vi.mocked(cache.get).mockReturnValue(cachedResult as any);
+      vi.mocked(cache.get).mockResolvedValue(cachedResult as any);
 
       const result = await getInventoryHealth();
 
@@ -171,7 +171,7 @@ describe('Analytics Service', () => {
     });
 
     it('should calculate health metrics when no cache', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [
         { clientId: 'c1', stockStatus: 'HEALTHY', weeksRemaining: 10, client: { id: 'c1', name: 'Client 1' } },
@@ -192,7 +192,7 @@ describe('Analytics Service', () => {
     });
 
     it('should calculate correct percentages', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [
         { clientId: 'c1', stockStatus: 'HEALTHY', weeksRemaining: 10, client: { id: 'c1', name: 'Client 1' } },
@@ -211,7 +211,7 @@ describe('Analytics Service', () => {
     });
 
     it('should determine trend direction', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [
         { clientId: 'c1', stockStatus: 'HEALTHY', weeksRemaining: 10, client: { id: 'c1', name: 'Client 1' } },
@@ -242,7 +242,7 @@ describe('Analytics Service', () => {
     it('should return cached result if available', async () => {
       const cachedResult = [{ date: '2024-01-01', created: 5, resolved: 3, net: 2 }];
 
-      vi.mocked(cache.get).mockReturnValue(cachedResult);
+      vi.mocked(cache.get).mockResolvedValue(cachedResult);
 
       const result = await getAlertTrends('client-1');
 
@@ -251,7 +251,7 @@ describe('Analytics Service', () => {
     });
 
     it('should calculate net alerts correctly', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockMetrics = [
         { metricDate: new Date('2024-01-01'), createdCount: 10, resolvedCount: 3 },
@@ -267,7 +267,7 @@ describe('Analytics Service', () => {
     });
 
     it('should cache the result', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
       vi.mocked(prisma.dailyAlertMetrics.findMany).mockResolvedValue([]);
 
       await getAlertTrends('client-1');

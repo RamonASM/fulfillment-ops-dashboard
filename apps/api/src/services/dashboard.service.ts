@@ -96,7 +96,7 @@ export async function updateDashboardPreferences(
   });
 
   // Invalidate widget data cache
-  cache.deletePattern(`dashboard:${userId}`);
+  await cache.deletePattern(`dashboard:${userId}`);
 
   return {
     userId,
@@ -147,7 +147,7 @@ export async function getKPIWidgetData(
   clientIds: string[]
 ): Promise<Record<string, KPIWidgetData>> {
   const cacheKey = CacheKeys.dashboardWidget(userId, 'kpi');
-  const cached = cache.get<Record<string, KPIWidgetData>>(cacheKey);
+  const cached = await cache.get<Record<string, KPIWidgetData>>(cacheKey);
   if (cached) return cached;
 
   // Get current stats
@@ -265,7 +265,7 @@ export async function getKPIWidgetData(
     },
   };
 
-  cache.set(cacheKey, result, CacheTTL.DASHBOARD_WIDGETS);
+  await cache.set(cacheKey, result, CacheTTL.DASHBOARD_WIDGETS);
   return result;
 }
 

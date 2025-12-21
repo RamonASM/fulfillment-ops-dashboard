@@ -3,7 +3,7 @@
 // Donut chart showing stock health distribution with drill-down support
 // =============================================================================
 
-import { useRef } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import {
   PieChart,
   Pie,
@@ -12,8 +12,8 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import { Camera, FileSpreadsheet } from "lucide-react";
-import html2canvas from "html2canvas";
+import { Camera, FileSpreadsheet, Loader2 } from "lucide-react";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 interface StockHealthData {
   critical: number;
@@ -60,46 +60,43 @@ export function StockHealthDonut({
 }: StockHealthDonutProps) {
   const chartRef = useRef<HTMLDivElement>(null);
 
-  const chartData = Object.entries(data)
-    .filter(([, value]) => value > 0)
-    .map(([key, value]) => ({
-      name: LABELS[key as keyof typeof LABELS],
-      value,
-      color: COLORS[key as keyof typeof COLORS],
-      status: key as StockStatus,
-    }));
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef: chartRef,
+    title,
+  });
 
-  const total = chartData.reduce((sum, item) => sum + item.value, 0);
+  // Memoize chart data transformation
+  const chartData = useMemo(
+    () =>
+      Object.entries(data)
+        .filter(([, value]) => value > 0)
+        .map(([key, value]) => ({
+          name: LABELS[key as keyof typeof LABELS],
+          value,
+          color: COLORS[key as keyof typeof COLORS],
+          status: key as StockStatus,
+        })),
+    [data]
+  );
+
+  const total = useMemo(
+    () => chartData.reduce((sum, item) => sum + item.value, 0),
+    [chartData]
+  );
 
   // Handle segment click for drill-down
-  const handleSegmentClick = (entry: {
-    status: StockStatus;
-    value: number;
-  }) => {
-    if (onStatusClick) {
-      onStatusClick(entry.status, entry.value);
-    }
-  };
-
-  // Export chart as PNG
-  const exportToPNG = async () => {
-    if (!chartRef.current) return;
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting chart:", error);
-    }
-  };
+  const handleSegmentClick = useCallback(
+    (entry: { status: StockStatus; value: number }) => {
+      if (onStatusClick) {
+        onStatusClick(entry.status, entry.value);
+      }
+    },
+    [onStatusClick]
+  );
 
   // Export data as CSV
-  const exportToCSV = () => {
+  const exportToCSV = useCallback(() => {
     const csvContent = [
       "Status,Count,Percentage",
       ...Object.entries(data).map(
@@ -115,7 +112,7 @@ export function StockHealthDonut({
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, [data, title, total]);
 
   if (total === 0) {
     return (
@@ -137,15 +134,22 @@ export function StockHealthDonut({
           <div className="flex gap-1">
             <button
               onClick={exportToPNG}
-              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+              disabled={isExporting}
+              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
               title="Export as PNG"
+              aria-label="Export chart as PNG image"
             >
-              <Camera className="w-4 h-4" />
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Camera className="w-4 h-4" />
+              )}
             </button>
             <button
               onClick={exportToCSV}
               className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
               title="Export as CSV"
+              aria-label="Export data as CSV file"
             >
               <FileSpreadsheet className="w-4 h-4" />
             </button>

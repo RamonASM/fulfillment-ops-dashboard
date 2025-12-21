@@ -180,7 +180,7 @@ describe('Dashboard Service', () => {
         'kpi-inventory': { label: 'Inventory Health', value: 85, unit: '%' },
       };
 
-      vi.mocked(cache.get).mockReturnValue(cachedData);
+      vi.mocked(cache.get).mockResolvedValue(cachedData);
 
       const result = await getKPIWidgetData('user-1', ['client-1']);
 
@@ -189,7 +189,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should calculate inventory health percentage', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [
         { stockStatus: 'HEALTHY', weeksRemaining: 10 },
@@ -209,7 +209,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should count active alerts', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockAlerts = [
         { isDismissed: false, createdAt: new Date() },
@@ -229,7 +229,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should calculate average resolution time', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const now = new Date();
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -253,7 +253,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should calculate average weeks of stock', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [
         { stockStatus: 'HEALTHY', weeksRemaining: 10 },
@@ -272,7 +272,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should determine trend direction from sparkline', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
 
       const mockProducts = [{ stockStatus: 'HEALTHY', weeksRemaining: 10 }];
 
@@ -297,7 +297,7 @@ describe('Dashboard Service', () => {
     });
 
     it('should cache results', async () => {
-      vi.mocked(cache.get).mockReturnValue(undefined);
+      vi.mocked(cache.get).mockResolvedValue(null);
       vi.mocked(prisma.product.findMany).mockResolvedValue([]);
       vi.mocked(prisma.alert.findMany).mockResolvedValue([]);
       vi.mocked(prisma.dailySnapshot.findMany).mockResolvedValue([]);
