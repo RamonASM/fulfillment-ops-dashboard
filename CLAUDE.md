@@ -150,6 +150,32 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-21 @ 07:25 PST: Analytics in Active Import Path + Full Feature Deploy (DEPLOYED)
+- **What**: CRITICAL FIX - Analytics now properly called after imports
+  - Previous deployment added analytics to `import.service.ts` which was NEVER CALLED
+  - This deployment adds analytics to `import.routes.ts` (the ACTUAL import path)
+- **Commits**:
+  - `42e9541` - fix: Add post-import analytics to active import path + orphan reconciliation
+  - `07b02eb` - fix: Add missing middleware exports (getCsrfTokenHandler)
+  - `e979d57` - fix: Add missing lib modules (redis, api-response, etc.)
+  - `167b130` - fix: Disable Redis rate limiting until proper configuration
+- **Files Changed**:
+  - `apps/api/src/routes/import.routes.ts` (added analytics calls to ACTIVE import path)
+  - `apps/api/src/routes/orphan-reconciliation.routes.ts` (NEW)
+  - `apps/api/src/services/orphan-reconciliation.service.ts` (NEW)
+  - `apps/api/src/lib/rate-limiters.ts` (fixed Redis compatibility)
+  - `apps/api/src/lib/redis.ts`, `api-response.ts`, `validation-schemas.ts` (NEW)
+  - `apps/web/src/pages/OrphanReconciliation.tsx` (NEW)
+  - `apps/web/src/pages/admin/AnalyticsSettings.tsx` (NEW)
+  - `packages/shared/package.json` (added lucide-react ^0.460.0)
+- **Issue Fixed**:
+  - Analytics functions were in `import.service.ts` but that file was NEVER CALLED
+  - `import.routes.ts` spawns Python and does post-processing but was MISSING analytics
+- **Status**: ✅ DEPLOYED to production at 15:25 UTC (07:25 PST Dec 21)
+- **Verification**: API running healthy on PM2, using in-memory rate limiting
+
+---
+
 ### 2025-12-20 @ 23:04 PST: Post-Import Analytics + Schema Update (DEPLOYED)
 - **What**: Added 3 analytics functions to run after CSV import + database schema update
   - `createDailySnapshot()` - Generates daily snapshot for trend charts
