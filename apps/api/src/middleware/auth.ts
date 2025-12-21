@@ -13,36 +13,31 @@ declare global {
   }
 }
 
-// JWT_SECRET validation - fail fast in production
+// JWT_SECRET validation - fail fast if not set
+// Environment validation at startup ensures this is set before the app starts
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'FATAL: JWT_SECRET environment variable is required in production. ' +
-      'Please set a strong, unique secret (at least 32 characters).'
-    );
-  } else {
-    logger.warn('JWT_SECRET not set - using insecure development default (DO NOT use in production)');
-  }
+  throw new Error(
+    'FATAL: JWT_SECRET environment variable is required. ' +
+    'Please set a strong, unique secret (at least 32 characters) in your .env file.'
+  );
 }
 
-const EFFECTIVE_SECRET = JWT_SECRET || 'development-secret-DO-NOT-USE-IN-PROD';
-
 export function generateAccessToken(payload: AuthPayload): string {
-  return jwt.sign(payload, EFFECTIVE_SECRET, {
+  return jwt.sign(payload, JWT_SECRET!, {
     expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m',
   } as jwt.SignOptions);
 }
 
 export function generateRefreshToken(payload: AuthPayload): string {
-  return jwt.sign(payload, EFFECTIVE_SECRET, {
+  return jwt.sign(payload, JWT_SECRET!, {
     expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
   } as jwt.SignOptions);
 }
 
 export function verifyToken(token: string): AuthPayload {
-  return jwt.verify(token, EFFECTIVE_SECRET) as AuthPayload;
+  return jwt.verify(token, JWT_SECRET!) as AuthPayload;
 }
 
 export async function authenticate(req: Request, _res: Response, next: NextFunction) {
@@ -87,7 +82,8 @@ export async function requireClientAccess(req: Request, _res: Response, next: Ne
       throw new UnauthorizedError('Authentication required');
     }
 
-    const { clientId } = req.params;
+    // Check for clientId in params or query
+    const clientId = req.params.clientId || (req.query.clientId as string);
     if (!clientId) {
       return next();
     }

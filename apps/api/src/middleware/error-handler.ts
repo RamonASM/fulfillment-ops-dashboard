@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { logger } from '../lib/logger.js';
+import { errorResponse, ERROR_CODES } from '../lib/api-response.js';
 
 export class AppError extends Error {
   public statusCode: number;
@@ -72,24 +73,23 @@ export function errorHandler(
 
   // Handle Zod validation errors
   if (err instanceof ZodError) {
-    return res.status(400).json({
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid request data',
-      requestId,
-      details: err.errors.map((e) => ({
-        field: e.path.join('.'),
-        message: e.message,
-      })),
-    });
+    return res.status(400).json(
+      errorResponse(
+        ERROR_CODES.VALIDATION_ERROR,
+        'Invalid request data',
+        err.errors.map((e) => ({
+          field: e.path.join('.'),
+          message: e.message,
+        }))
+      )
+    );
   }
 
   // Handle AppError
   if (err instanceof AppError) {
-    return res.status(err.statusCode).json({
-      code: err.code,
-      message: err.message,
-      requestId,
-    });
+    return res.status(err.statusCode).json(
+      errorResponse(err.code, err.message)
+    );
   }
 
   // Handle Prisma errors
@@ -97,28 +97,28 @@ export function errorHandler(
     const prismaError = err as unknown as { code: string; meta?: { target?: string[] } };
 
     if (prismaError.code === 'P2002') {
-      return res.status(409).json({
-        code: 'CONFLICT',
-        message: `Duplicate entry for ${prismaError.meta?.target?.join(', ') || 'field'}`,
-        requestId,
-      });
+      return res.status(409).json(
+        errorResponse(
+          ERROR_CODES.DUPLICATE_ENTRY,
+          `Duplicate entry for ${prismaError.meta?.target?.join(', ') || 'field'}`
+        )
+      );
     }
 
     if (prismaError.code === 'P2025') {
-      return res.status(404).json({
-        code: 'NOT_FOUND',
-        message: 'Record not found',
-        requestId,
-      });
+      return res.status(404).json(
+        errorResponse(ERROR_CODES.NOT_FOUND, 'Record not found')
+      );
     }
   }
 
   // Default error response
-  return res.status(500).json({
-    code: 'INTERNAL_ERROR',
-    message: process.env.NODE_ENV === 'production'
-      ? 'An unexpected error occurred'
-      : err.message,
-    requestId,
-  });
+  return res.status(500).json(
+    errorResponse(
+      ERROR_CODES.INTERNAL_ERROR,
+      process.env.NODE_ENV === 'production'
+        ? 'An unexpected error occurred'
+        : err.message
+    )
+  );
 }

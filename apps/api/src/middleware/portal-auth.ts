@@ -2,21 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { logger } from '../lib/logger.js';
 
-// JWT_SECRET validation - fail fast in production
+// JWT_SECRET validation - fail fast if not set
+// Environment validation at startup ensures this is set before the app starts
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'FATAL: JWT_SECRET environment variable is required in production. ' +
-      'Please set a strong, unique secret (at least 32 characters).'
-    );
-  } else {
-    logger.warn('JWT_SECRET not set for portal auth - using insecure development default');
-  }
+  throw new Error(
+    'FATAL: JWT_SECRET environment variable is required. ' +
+    'Please set a strong, unique secret (at least 32 characters) in your .env file.'
+  );
 }
-
-const EFFECTIVE_SECRET = JWT_SECRET || 'development-secret-DO-NOT-USE-IN-PROD';
 
 interface PortalUserPayload {
   userId: string;
@@ -45,7 +40,7 @@ export async function portalAuth(req: Request, res: Response, next: NextFunction
       return res.status(401).json({ message: 'Authentication required' });
     }
 
-    const decoded = jwt.verify(token, EFFECTIVE_SECRET) as PortalUserPayload;
+    const decoded = jwt.verify(token, JWT_SECRET!) as PortalUserPayload;
 
     if (!decoded.isPortalUser) {
       return res.status(401).json({ message: 'Invalid portal token' });

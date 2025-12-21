@@ -1,46 +1,33 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { redis } from '../lib/redis';
 
 // =============================================================================
 // CSRF PROTECTION MIDDLEWARE
 // =============================================================================
+// Uses Redis for token storage to support distributed systems.
+// Falls back to in-memory Map if Redis is unavailable (dev/test only).
 
-// CSRF token storage (in production, consider using Redis for distributed systems)
-const csrfTokens = new Map<string, { token: string; expiresAt: number }>();
+// In-memory fallback for development/testing when Redis is not available
+const csrfTokensFallback = new Map<string, { token: string; expiresAt: number }>();
 
-const CSRF_TOKEN_EXPIRY = 60 * 60 * 1000; // 1 hour
+const CSRF_TOKEN_EXPIRY = 24 * 60 * 60; // 24 hours (in seconds for Redis TTL)
+const CSRF_TOKEN_EXPIRY_MS = CSRF_TOKEN_EXPIRY * 1000; // Milliseconds for cookie
 const CSRF_HEADER = 'x-csrf-token';
 const CSRF_COOKIE = 'csrf_token';
+const REDIS_PREFIX = 'csrf:';
 
 // Safe methods that don't require CSRF protection
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
-// Paths exempt from CSRF (webhooks, health checks, public endpoints)
-// These routes are protected by other means (JWT auth, rate limiting, etc.)
+// Paths exempt from CSRF (only authentication endpoints and health checks)
+// All other routes should be protected by CSRF + JWT authentication
 const EXEMPT_PATHS = [
   '/health',
-  '/api/webhooks/',
-  '/api/auth/',
-  '/api/portal/auth/',
-  '/api/csrf-token',
-  '/api/imports',
-  '/api/exports',
-  '/api/clients',
-  '/api/products',
-  '/api/orders',
-  '/api/alerts',
-  '/api/reports',
-  '/api/ai/',
-  '/api/analytics',
-  '/api/dashboard',
-  '/api/filters',
-  '/api/search',
-  '/api/collaboration',
-  '/api/feedback',
-  '/api/users',
-  '/api/artworks',
-  '/api/audit',
-  '/api/portal/',
+  '/api/webhooks/', // Webhooks protected by signature verification
+  '/api/auth/', // Authentication endpoints (login, register, password reset)
+  '/api/portal/auth/', // Portal authentication endpoints
+  '/api/csrf-token', // Endpoint to obtain CSRF token
 ];
 
 /**
@@ -51,16 +38,53 @@ export function generateCsrfToken(): string {
 }
 
 /**
+ * Store CSRF token (Redis or fallback to in-memory)
+ */
+async function storeCsrfToken(sessionId: string, token: string): Promise<void> {
+  if (redis) {
+    // Store in Redis with TTL
+    await redis.setex(`${REDIS_PREFIX}${sessionId}`, CSRF_TOKEN_EXPIRY, token);
+  } else {
+    // Fallback to in-memory storage
+    csrfTokensFallback.set(sessionId, {
+      token,
+      expiresAt: Date.now() + CSRF_TOKEN_EXPIRY_MS,
+    });
+  }
+}
+
+/**
+ * Retrieve CSRF token (Redis or fallback to in-memory)
+ */
+async function getCsrfToken(sessionId: string): Promise<string | null> {
+  if (redis) {
+    // Get from Redis
+    return await redis.get(`${REDIS_PREFIX}${sessionId}`);
+  } else {
+    // Get from in-memory storage
+    const stored = csrfTokensFallback.get(sessionId);
+    if (stored && Date.now() < stored.expiresAt) {
+      return stored.token;
+    }
+    return null;
+  }
+}
+
+/**
  * CSRF protection middleware using double-submit cookie pattern
  */
-export function csrfProtection(req: Request, res: Response, next: NextFunction) {
+export async function csrfProtection(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   // Skip safe methods
   if (SAFE_METHODS.includes(req.method)) {
     return next();
   }
 
   // Skip exempt paths
-  if (EXEMPT_PATHS.some(path => req.path.startsWith(path))) {
+  if (EXEMPT_PATHS.some((path) => req.path.startsWith(path))) {
     return next();
   }
 
@@ -90,22 +114,25 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
 /**
  * Middleware to issue CSRF token after authentication
  */
-export function issueCsrfToken(req: Request, res: Response, next: NextFunction) {
+export async function issueCsrfToken(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   const userId = req.user?.userId || req.portalUser?.id || 'anonymous';
 
   // Generate new token
   const token = generateCsrfToken();
-  const expiresAt = Date.now() + CSRF_TOKEN_EXPIRY;
 
-  // Store token
-  csrfTokens.set(userId, { token, expiresAt });
+  // Store token in Redis/fallback
+  await storeCsrfToken(userId, token);
 
   // Set cookie with token (readable by JavaScript for double-submit)
   res.cookie(CSRF_COOKIE, token, {
     httpOnly: false, // Must be readable by JavaScript
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: CSRF_TOKEN_EXPIRY,
+    maxAge: CSRF_TOKEN_EXPIRY_MS,
   });
 
   // Also send in response header for convenience
@@ -117,7 +144,7 @@ export function issueCsrfToken(req: Request, res: Response, next: NextFunction) 
 /**
  * Get CSRF token endpoint handler
  */
-export function getCsrfToken(req: Request, res: Response) {
+export async function getCsrfTokenHandler(req: Request, res: Response) {
   const token = generateCsrfToken();
 
   // Set cookie
@@ -125,23 +152,27 @@ export function getCsrfToken(req: Request, res: Response) {
     httpOnly: false,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: CSRF_TOKEN_EXPIRY,
+    maxAge: CSRF_TOKEN_EXPIRY_MS,
   });
 
   res.json({ token });
 }
 
 /**
- * Cleanup expired tokens (call periodically)
+ * Cleanup expired tokens from in-memory fallback
+ * (Redis handles TTL automatically)
  */
 export function cleanupCsrfTokens(): void {
-  const now = Date.now();
-  for (const [key, value] of csrfTokens.entries()) {
-    if (now > value.expiresAt) {
-      csrfTokens.delete(key);
+  if (!redis) {
+    // Only clean up in-memory fallback
+    const now = Date.now();
+    for (const [key, value] of csrfTokensFallback.entries()) {
+      if (now > value.expiresAt) {
+        csrfTokensFallback.delete(key);
+      }
     }
   }
 }
 
-// Run cleanup every 5 minutes
+// Run cleanup every 5 minutes (only for in-memory fallback)
 setInterval(cleanupCsrfTokens, 5 * 60 * 1000);
