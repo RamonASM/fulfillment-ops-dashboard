@@ -28,14 +28,16 @@ model User {
   isActive     Boolean   @default(true) @map("is_active")
 
   // Relations
-  clients             UserClient[]
-  importBatches       ImportBatch[]
-  dismissedAlerts     Alert[]                  @relation("DismissedBy")
-  auditLogs           AuditLog[]
-  dashboardPreference UserDashboardPreference?
+  clients                      UserClient[]
+  importBatches                ImportBatch[]
+  dismissedAlerts              Alert[]                       @relation("DismissedBy")
+  auditLogs                    AuditLog[]
+  dashboardPreference          UserDashboardPreference?
   // Dashboard personalization
-  dashboardLayouts    DashboardLayout[]
-  preferences         UserPreferences?
+  dashboardLayouts             DashboardLayout[]
+  preferences                  UserPreferences?
+  // Orphan reconciliation reviews
+  orphanReconciliationAttempts OrphanReconciliationAttempt[]
 
   @@index([email])
   @@index([role])
@@ -70,33 +72,35 @@ model Client {
   isActive  Boolean  @default(true) @map("is_active")
 
   // Relations
-  users                  UserClient[]
-  products               Product[]
-  alerts                 Alert[]
-  importBatches          ImportBatch[]
-  portalUsers            PortalUser[]
-  orderRequests          OrderRequest[]
-  auditLogs              AuditLog[]
-  dailyAlertMetrics      DailyAlertMetrics[]
+  users                        UserClient[]
+  products                     Product[]
+  alerts                       Alert[]
+  importBatches                ImportBatch[]
+  portalUsers                  PortalUser[]
+  orderRequests                OrderRequest[]
+  auditLogs                    AuditLog[]
+  dailyAlertMetrics            DailyAlertMetrics[]
   // Phase 13 relations
-  locations              Location[]
-  activityFeed           ActivityFeed[]
-  todos                  Todo[]
-  configuration          ClientConfiguration?
-  reports                Report[]
+  locations                    Location[]
+  activityFeed                 ActivityFeed[]
+  todos                        Todo[]
+  configuration                ClientConfiguration?
+  reports                      Report[]
   // Artwork relations
-  artworks               Artwork[]
+  artworks                     Artwork[]
   // Smart Import Enhancement
-  customFieldDefinitions ClientCustomFieldDefinition[]
+  customFieldDefinitions       ClientCustomFieldDefinition[]
   // Financial tracking
-  budgets                Budget[]
-  costTracking           CostTracking[]
+  budgets                      Budget[]
+  costTracking                 CostTracking[]
   // Shipment tracking
-  shipments              Shipment[]
+  shipments                    Shipment[]
   // Benchmarking
-  benchmarkParticipation BenchmarkParticipation?
+  benchmarkParticipation       BenchmarkParticipation?
   // Health scoring
-  healthSnapshots        ClientHealthSnapshot[]
+  healthSnapshots              ClientHealthSnapshot[]
+  // Orphan reconciliation
+  orphanReconciliationAttempts OrphanReconciliationAttempt[]
 
   // AI Mapping Settings (White-Label Support)
   anthropicApiKey String? @map("anthropic_api_key") // Encrypted client API key
@@ -189,6 +193,10 @@ model Product {
   // Artwork relations
   artworks              Artwork[]
 
+  // Orphan reconciliation relations
+  orphanReconciliationAttempts     OrphanReconciliationAttempt[] @relation("OrphanProduct")
+  selectedInReconciliationAttempts OrphanReconciliationAttempt[] @relation("SelectedMatch")
+
   // Financial tracking fields
   unitCost        Decimal?  @map("unit_cost") @db.Decimal(10, 2) // Cost per unit
   unitPrice       Decimal?  @map("unit_price") @db.Decimal(10, 2) // Selling price per unit
@@ -233,7 +241,47 @@ model Product {
   @@index([clientId, isActive, stockStatus])
   @@index([vendorName])
   @@index([clientId, stockStatus, updatedAt])
+  // Phase 2.3: Performance optimization - Dashboard filtering
+  @@index([stockStatus, isActive])
   @@map("products")
+}
+
+// -----------------------------------------------------------------------------
+// ORPHAN PRODUCT RECONCILIATION
+// -----------------------------------------------------------------------------
+
+model OrphanReconciliationAttempt {
+  id              String @id @default(uuid()) @db.Uuid
+  clientId        String @map("client_id") @db.Uuid
+  orphanProductId String @map("orphan_product_id") @db.Uuid
+
+  // AI/Fuzzy matching suggestions
+  suggestedMatches Json   @map("suggested_matches") // [{productId, confidence, reasoning}]
+  matchMethod      String @map("match_method") @db.VarChar(50) // 'fuzzy' | 'ai' | 'manual'
+
+  // User decision
+  selectedMatchId String?   @map("selected_match_id") @db.Uuid
+  userAction      String?   @map("user_action") @db.VarChar(20) // 'merged' | 'rejected' | 'pending'
+  reviewedById    String?   @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz
+
+  // Cost tracking (for AI fallback if used)
+  aiCostUsd Float? @map("ai_cost_usd")
+
+  // Audit trail
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  orphanProduct Product  @relation("OrphanProduct", fields: [orphanProductId], references: [id], onDelete: Cascade)
+  selectedMatch Product? @relation("SelectedMatch", fields: [selectedMatchId], references: [id], onDelete: SetNull)
+  reviewedBy    User?    @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, userAction])
+  @@index([orphanProductId])
+  @@index([selectedMatchId])
+  @@index([createdAt])
+  @@map("orphan_reconciliation_attempts")
 }
 
 // -----------------------------------------------------------------------------
@@ -411,6 +459,8 @@ model Alert {
   // Composite indexes for alert filtering
   @@index([clientId, severity, isDismissed])
   @@index([clientId, alertType, createdAt])
+  // Phase 2.3: Performance optimization - Alert filtering by status and severity
+  @@index([status, severity])
   @@map("alerts")
 }
 
@@ -430,6 +480,8 @@ model ImportBatch {
   processedCount Int       @default(0) @map("processed_count")
   errorCount     Int       @default(0) @map("error_count")
   errors         Json      @default("[]")
+  diagnosticLogs Json?     @map("diagnostic_logs") // Structured diagnostic logs from Python
+  metadata       Json? // Reconciliation data and other metadata
   importedBy     String?   @map("imported_by") @db.Uuid
   startedAt      DateTime? @map("started_at") @db.Timestamptz
   completedAt    DateTime? @map("completed_at") @db.Timestamptz
@@ -447,6 +499,8 @@ model ImportBatch {
 
   @@index([clientId])
   @@index([status])
+  // Phase 2.3: Performance optimization - Import history with date ordering
+  @@index([clientId, status, createdAt])
   @@map("import_batches")
 }
 
