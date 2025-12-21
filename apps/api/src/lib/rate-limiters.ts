@@ -41,16 +41,28 @@ const getUserRole = (
 
 /**
  * Create Redis store if available, otherwise use in-memory
+ * NOTE: rate-limit-redis v4+ requires sendCommand interface which ioredis doesn't provide
+ * For now, using in-memory store until we upgrade to Redis client that supports it
  */
 const createStore = () => {
-  if (redis) {
-    return new RedisStore({
-      // @ts-expect-error - rate-limit-redis types are outdated
-      client: redis,
-      prefix: 'rl:',
-    });
+  // Disable Redis rate limiting until we can properly configure it
+  // The redis integration with rate-limit-redis v4+ requires sendCommand
+  // which ioredis doesn't provide. Using in-memory for now.
+  if (redis && process.env.USE_REDIS_RATE_LIMIT === 'true') {
+    try {
+      console.log('[Rate Limiters] Attempting Redis-backed rate limiting');
+      return new RedisStore({
+        // @ts-expect-error - rate-limit-redis types require sendCommand
+        sendCommand: async (...args: string[]) => redis.call(args[0], ...args.slice(1)),
+        prefix: 'rl:',
+      });
+    } catch (err) {
+      console.warn('[Rate Limiters] Failed to initialize Redis store, using in-memory fallback:', err);
+      return undefined;
+    }
   }
-  // Fallback to in-memory (default)
+  // Default: in-memory rate limiting
+  console.log('[Rate Limiters] Using in-memory rate limiting');
   return undefined;
 };
 
