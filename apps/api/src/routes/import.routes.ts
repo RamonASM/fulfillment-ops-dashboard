@@ -19,6 +19,11 @@ import {
 import { recalculateClientUsage } from "../services/analytics-facade.service.js";
 import { runAlertGeneration } from "../services/alert.service.js";
 import {
+  createDailySnapshot,
+  refreshRiskScoreCache,
+  aggregateDailyAlertMetrics,
+} from "../services/analytics.service.js";
+import {
   analyzeImportImpact,
   generateImportDiff,
 } from "../services/import-analysis.service.js";
@@ -696,6 +701,9 @@ router.post(
         importId: string;
         filename: string;
         detectedType: "orders" | "inventory" | "both";
+        selectedType: "orders" | "inventory" | null;
+        requiresTypeSelection?: boolean;
+        message?: string;
         detection: ReturnType<typeof detectFileTypeWithConfidence>;
         rowCount: number;
         columns: Awaited<ReturnType<typeof generateColumnMappingWithLearning>>;
@@ -715,9 +723,21 @@ router.post(
         const totalRows = await countFileRows(absoluteFilePath);
         const { headers, rows } = await parseFilePreview(absoluteFilePath);
         const detectionResult = detectFileTypeWithConfidence(headers);
+
+        // FIX: Handle "both" type detection same as single-file upload
+        const validProcessableTypes: ImportType[] = ["inventory", "orders"];
+        const requiresTypeSelection =
+          detectionResult.type === "both" &&
+          !validProcessableTypes.includes(detectionResult.type as ImportType);
+
+        // Default to "inventory" for mapping when "both" detected
+        const finalType: ImportType = requiresTypeSelection
+          ? "inventory"
+          : detectionResult.type;
+
         const columnMapping = await generateColumnMappingWithLearning(
           headers,
-          detectionResult.type,
+          requiresTypeSelection ? "inventory" : finalType,
           clientId,
           rows.slice(0, 20),
         );
@@ -725,7 +745,7 @@ router.post(
         const importBatch = await prisma.importBatch.create({
           data: {
             clientId,
-            importType: detectionResult.type,
+            importType: finalType,
             filename: file.originalname,
             filePath: absoluteFilePath,
             status: "pending",
@@ -746,6 +766,12 @@ router.post(
           importId: importBatch.id,
           filename: file.originalname,
           detectedType: detectionResult.type,
+          selectedType: requiresTypeSelection ? null : (finalType as "orders" | "inventory"),
+          requiresTypeSelection,
+          ...(requiresTypeSelection && {
+            message:
+              "File contains both inventory and order data. Please select which type to import.",
+          }),
           detection: detectionResult,
           rowCount: totalRows ?? rows.length,
           columns: columnMapping,
@@ -796,6 +822,22 @@ router.post("/:importId/confirm", async (req, res, next) => {
     if (!importBatch) throw new NotFoundError("Import");
     if (importBatch.status !== "pending") {
       throw new ValidationError("Import has already been processed");
+    }
+
+    // Check for concurrent imports for the same client
+    const concurrentImport = await prisma.importBatch.findFirst({
+      where: {
+        clientId: importBatch.clientId,
+        status: "processing",
+        id: { not: importId },
+      },
+      select: { id: true, filename: true },
+    });
+
+    if (concurrentImport) {
+      throw new ValidationError(
+        `Another import is currently processing for this client${concurrentImport.filename ? ` (${concurrentImport.filename})` : ""}. Please wait for it to complete before starting a new import.`,
+      );
     }
 
     // Validate import type - Python only supports "inventory" or "orders"
@@ -1070,6 +1112,30 @@ router.post("/:importId/confirm", async (req, res, next) => {
               (async () => {
                 await recalculateClientUsage(importBatch.clientId);
                 await runAlertGeneration(importBatch.clientId);
+
+                // Post-import analytics: Create snapshots and metrics
+                console.log("Running post-import analytics...");
+                try {
+                  await createDailySnapshot();
+                  console.log("✓ Created daily snapshot");
+                } catch (err) {
+                  console.error("Failed to create daily snapshot:", err);
+                }
+
+                try {
+                  await refreshRiskScoreCache();
+                  console.log("✓ Refreshed risk score cache");
+                } catch (err) {
+                  console.error("Failed to refresh risk scores:", err);
+                }
+
+                try {
+                  await aggregateDailyAlertMetrics();
+                  console.log("✓ Aggregated alert metrics");
+                } catch (err) {
+                  console.error("Failed to aggregate alert metrics:", err);
+                }
+                console.log("Post-import analytics complete");
               })(),
               new Promise<never>((_, reject) =>
                 setTimeout(

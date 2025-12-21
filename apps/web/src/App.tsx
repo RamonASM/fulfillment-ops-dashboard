@@ -22,6 +22,8 @@ import ClientAnalytics from "@/pages/ClientAnalytics";
 import Imports from "@/pages/Imports";
 import Help from "@/pages/Help";
 import MLAnalytics from "@/pages/MLAnalytics";
+import AnalyticsSettings from "@/pages/admin/AnalyticsSettings";
+import OrphanReconciliation from "@/pages/OrphanReconciliation";
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -99,6 +101,10 @@ export default function App() {
           path="clients/:clientId/analytics"
           element={<ClientAnalytics />}
         />
+        <Route
+          path="clients/:clientId/orphans"
+          element={<OrphanReconciliation />}
+        />
         <Route path="alerts" element={<Alerts />} />
         <Route path="orders" element={<Orders />} />
         <Route path="reports" element={<Reports />} />
@@ -107,6 +113,7 @@ export default function App() {
         <Route path="imports" element={<Imports />} />
         <Route path="help" element={<Help />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="admin/analytics" element={<AnalyticsSettings />} />
       </Route>
 
       {/* Catch-all redirect */}

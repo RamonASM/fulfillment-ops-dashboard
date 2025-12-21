@@ -15,9 +15,14 @@ import {
 import { errorHandler } from "./middleware/error-handler.js";
 import { requestLogger } from "./middleware/request-logger.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
-import { csrfProtection, getCsrfToken } from "./middleware/csrf.js";
+import { csrfProtection, getCsrfTokenHandler } from "./middleware/csrf.js";
 import { logger } from "./lib/logger.js";
+import {
+  validateEnvironment,
+  printEnvironmentWarnings,
+} from "./config/env-validation.js";
 import { initializeWebSocket, getOnlineUsersCount } from "./lib/socket.js";
+import { setupSwagger } from "./lib/swagger.js";
 import authRoutes from "./routes/auth.routes.js";
 import clientRoutes from "./routes/client.routes.js";
 import productRoutes from "./routes/product.routes.js";
@@ -49,6 +54,19 @@ import preferencesRoutes from "./routes/preferences.routes.js";
 import documentationRoutes from "./routes/documentation.routes.js";
 import clientHealthRoutes from "./routes/client-health.routes.js";
 import notificationPreferencesRoutes from "./routes/notification-preferences.routes.js";
+import dsAnalyticsAdminRoutes from "./routes/ds-analytics-admin.routes.js";
+import orphanReconciliationRoutes from "./routes/orphan-reconciliation.routes.js";
+
+// =============================================================================
+// ENVIRONMENT VALIDATION
+// =============================================================================
+// Validate required environment variables before starting the server
+// This ensures the application fails fast if critical configuration is missing
+
+const envValidation = validateEnvironment();
+if (envValidation.warnings.length > 0) {
+  printEnvironmentWarnings(envValidation.warnings);
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -120,6 +138,12 @@ app.use(requestLogger);
 app.use(csrfProtection);
 
 // =============================================================================
+// API DOCUMENTATION
+// =============================================================================
+// Phase 4.1: Swagger/OpenAPI documentation at /api/docs
+setupSwagger(app);
+
+// =============================================================================
 // ROUTES
 // =============================================================================
 
@@ -136,13 +160,14 @@ app.get("/health", (_req, res) => {
 });
 
 // CSRF token endpoint
-app.get("/api/csrf-token", getCsrfToken);
+app.get("/api/csrf-token", getCsrfTokenHandler);
 
 // API routes with specific rate limiters
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/auth", authLimiter, passwordResetRoutes); // Password reset routes
 app.use("/api/clients", clientRoutes);
 app.use("/api/clients/:clientId/products", productRoutes);
+app.use("/api/clients/:clientId/orphans", orphanReconciliationRoutes);
 app.use("/api/clients/:clientId/locations", locationRoutes);
 app.use("/api/alerts", alertRoutes);
 app.use("/api/imports", uploadLimiter, importRoutes);
@@ -170,6 +195,7 @@ app.use("/api/preferences", preferencesRoutes);
 app.use("/api/documentation", documentationRoutes);
 app.use("/api/client-health", clientHealthRoutes);
 app.use("/api/notification-preferences", notificationPreferencesRoutes);
+app.use("/api/admin/ds-analytics", dsAnalyticsAdminRoutes);
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));
