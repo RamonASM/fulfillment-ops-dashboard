@@ -4,15 +4,15 @@
 
 ### Domain Structure (VERIFIED Dec 21, 2025)
 - **admin.yourtechassist.us** - Admin dashboard (React SPA)
-  - Routes `/api/*` requests to backend API
+  - For admin/account managers
   - Frontend files: `apps/web/dist/` → `/var/www/html/inventory/admin/`
 - **portal.yourtechassist.us** - Client portal (React SPA)
-  - Routes `/api/*` requests to backend API
+  - For clients
   - Frontend files: `apps/portal/dist/` → `/var/www/html/inventory/portal/`
-- **Shared API Backend** - Single Node.js Express server
-  - Accessible via both domains at `/api/` path
-  - NOT at api.yourtechassist.us (that subdomain is configured but not actively used)
+- **api.yourtechassist.us** - API Backend
+  - Node.js Express server
   - Backend code: `apps/api/`
+  - Both frontends call this API
 
 ### Infrastructure (VERIFIED Dec 21, 2025)
 - **Server**: DigitalOcean droplet at 138.197.70.205
@@ -41,7 +41,7 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 ### Common Mistakes to AVOID
 1. ❌ **Assuming Docker is deployed** - Production uses PM2, not Docker (Docker configs exist but for local dev)
 2. ❌ **Assuming production code is up-to-date** - Local may be ahead. Always verify git status.
-3. ❌ **Assuming api.yourtechassist.us is used** - API is at admin/portal domains under `/api/` path
+3. ❌ **Testing against localhost** - Always test against production: api.yourtechassist.us
 4. ❌ **Making changes without checking production state first** - SSH and verify before proceeding
 5. ❌ **Forgetting to increase Node memory on production builds** - Use `NODE_OPTIONS='--max-old-space-size=2048'`
 
