@@ -617,12 +617,15 @@ router.post(
         rows.slice(0, 20),
       );
 
+      // Store relative path to prevent path disclosure
+      const relativeFilePath = path.relative(monorepoRoot, absoluteFilePath);
+
       const importBatch = await prisma.importBatch.create({
         data: {
           clientId,
           importType: finalType,
           filename: req.file.originalname,
-          filePath: absoluteFilePath,
+          filePath: relativeFilePath,
           status: "pending",
           rowCount: totalRows ?? rows.length,
           processedCount: 0,
@@ -742,12 +745,15 @@ router.post(
           rows.slice(0, 20),
         );
 
+        // Store relative path to prevent path disclosure
+        const relativeFilePath = path.relative(monorepoRoot, absoluteFilePath);
+
         const importBatch = await prisma.importBatch.create({
           data: {
             clientId,
             importType: finalType,
             filename: file.originalname,
-            filePath: absoluteFilePath,
+            filePath: relativeFilePath,
             status: "pending",
             rowCount: totalRows ?? rows.length,
             processedCount: 0,

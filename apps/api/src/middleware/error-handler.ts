@@ -97,11 +97,13 @@ export function errorHandler(
     const prismaError = err as unknown as { code: string; meta?: { target?: string[] } };
 
     if (prismaError.code === 'P2002') {
+      // In production, don't reveal database column names to prevent information leakage
+      const detailMessage = process.env.NODE_ENV === 'production'
+        ? 'A record with this value already exists'
+        : `Duplicate entry for ${prismaError.meta?.target?.join(', ') || 'field'}`;
+
       return res.status(409).json(
-        errorResponse(
-          ERROR_CODES.DUPLICATE_ENTRY,
-          `Duplicate entry for ${prismaError.meta?.target?.join(', ') || 'field'}`
-        )
+        errorResponse(ERROR_CODES.DUPLICATE_ENTRY, detailMessage)
       );
     }
 

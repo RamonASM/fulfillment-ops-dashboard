@@ -10,6 +10,11 @@ import {
   createUploadLimiter,
   createAiLimiter,
   createReportLimiter,
+  createAdminLimiter,
+  createUserManagementLimiter,
+  createFinancialLimiter,
+  createOrderLimiter,
+  createPortalLimiter,
 } from "./lib/rate-limiters.js";
 
 import { errorHandler } from "./middleware/error-handler.js";
@@ -118,6 +123,11 @@ const authLimiter = createAuthLimiter();
 const uploadLimiter = createUploadLimiter();
 const aiLimiter = createAiLimiter();
 const reportLimiter = createReportLimiter();
+const adminLimiter = createAdminLimiter();
+const userManagementLimiter = createUserManagementLimiter();
+const financialLimiter = createFinancialLimiter();
+const orderLimiter = createOrderLimiter();
+const portalLimiter = createPortalLimiter();
 
 // Apply default limiter globally
 app.use(defaultLimiter);
@@ -173,19 +183,19 @@ app.use("/api/alerts", alertRoutes);
 app.use("/api/imports", uploadLimiter, importRoutes);
 app.use("/api/reports", reportLimiter, reportRoutes);
 app.use("/api/ai", aiLimiter, aiRoutes);
-app.use("/api/portal", portalRoutes);
+app.use("/api/portal", portalLimiter, portalRoutes);
 app.use("/api/exports", reportLimiter, exportRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/analytics", aiLimiter, analyticsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/filters", filterRoutes);
 app.use("/api/search", searchRoutes);
-app.use("/api/orders", orderRoutes);
+app.use("/api/orders", orderLimiter, orderRoutes);
 app.use("/api/collaboration", collaborationRoutes);
 app.use("/api/feedback", feedbackRoutes);
-app.use("/api/users", userRoutes);
+app.use("/api/users", userManagementLimiter, userRoutes);
 app.use("/api/artworks", uploadLimiter, artworkRoutes);
-app.use("/api/financial", financialRoutes);
+app.use("/api/financial", financialLimiter, financialRoutes);
 app.use("/api/shipments", shipmentRoutes);
 app.use("/api/order-timing", orderTimingRoutes);
 app.use("/api/location-analytics", locationAnalyticsRoutes);
@@ -195,7 +205,7 @@ app.use("/api/preferences", preferencesRoutes);
 app.use("/api/documentation", documentationRoutes);
 app.use("/api/client-health", clientHealthRoutes);
 app.use("/api/notification-preferences", notificationPreferencesRoutes);
-app.use("/api/admin/ds-analytics", dsAnalyticsAdminRoutes);
+app.use("/api/admin/ds-analytics", adminLimiter, dsAnalyticsAdminRoutes);
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));

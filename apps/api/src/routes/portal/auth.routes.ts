@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import bcrypt from 'bcryptjs';
@@ -6,25 +7,31 @@ import jwt from 'jsonwebtoken';
 
 const router = Router();
 
-// JWT secret with production validation
+// JWT secret validation - fail fast if not set
+// Environment validation at startup ensures this is set before the app starts
 const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('JWT_SECRET must be set in production');
-}
 if (!JWT_SECRET) {
-  logger.warn('JWT_SECRET not set for portal auth, using dev default');
+  throw new Error(
+    'FATAL: JWT_SECRET environment variable is required. ' +
+    'Please set a strong, unique secret (at least 32 characters) in your .env file.'
+  );
 }
-const EFFECTIVE_SECRET = JWT_SECRET || 'dev-portal-secret-change-in-production';
 const JWT_EXPIRY = '7d';
+
+// =============================================================================
+// VALIDATION SCHEMAS
+// =============================================================================
+
+const portalLoginSchema = z.object({
+  email: z.string().email('Invalid email address').max(255, 'Email too long'),
+  password: z.string().min(1, 'Password is required').max(128, 'Password too long'),
+});
 
 // Portal user login
 router.post('/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required' });
-    }
+    // Validate input with Zod
+    const { email, password } = portalLoginSchema.parse(req.body);
 
     const portalUser = await prisma.portalUser.findUnique({
       where: { email },
@@ -54,7 +61,7 @@ router.post('/login', async (req: Request, res: Response) => {
         role: portalUser.role,
         isPortalUser: true,
       },
-      EFFECTIVE_SECRET,
+      JWT_SECRET!,
       { expiresIn: JWT_EXPIRY }
     );
 
@@ -78,6 +85,17 @@ router.post('/login', async (req: Request, res: Response) => {
       accessToken: token,
     });
   } catch (error) {
+    // Handle Zod validation errors
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        message: 'Invalid request data',
+        errors: error.errors.map(e => ({
+          field: e.path.join('.'),
+          message: e.message,
+        })),
+      });
+    }
+
     logger.error('Portal login error', error as Error);
     res.status(500).json({ message: 'Login failed' });
   }
@@ -98,7 +116,7 @@ router.get('/me', async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Not authenticated' });
     }
 
-    const decoded = jwt.verify(token, EFFECTIVE_SECRET) as unknown as {
+    const decoded = jwt.verify(token, JWT_SECRET!) as unknown as {
       userId: string;
       clientId: string;
       role: string;

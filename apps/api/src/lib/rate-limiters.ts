@@ -40,29 +40,38 @@ const getUserRole = (
 };
 
 /**
- * Create Redis store if available, otherwise use in-memory
- * NOTE: rate-limit-redis v4+ requires sendCommand interface which ioredis doesn't provide
- * For now, using in-memory store until we upgrade to Redis client that supports it
+ * Create Redis store for distributed rate limiting
+ *
+ * Uses the correct sendCommand signature for ioredis v5 + rate-limit-redis v4+.
+ * Falls back to in-memory if Redis is unavailable.
+ *
+ * @param prefix - Redis key prefix for this limiter (default: 'rl:')
  */
-const createStore = () => {
-  // Disable Redis rate limiting until we can properly configure it
-  // The redis integration with rate-limit-redis v4+ requires sendCommand
-  // which ioredis doesn't provide. Using in-memory for now.
+const createStore = (prefix: string = 'rl:') => {
   if (redis && process.env.USE_REDIS_RATE_LIMIT === 'true') {
+    // Capture redis in a const to help TypeScript with type narrowing
+    const redisClient = redis;
     try {
-      console.log('[Rate Limiters] Attempting Redis-backed rate limiting');
+      console.log(`[Rate Limiters] Redis-backed rate limiting (prefix: ${prefix})`);
       return new RedisStore({
-        // @ts-expect-error - rate-limit-redis types require sendCommand
-        sendCommand: async (...args: string[]) => redis.call(args[0], ...args.slice(1)),
-        prefix: 'rl:',
+        // Correct signature for ioredis v5 + rate-limit-redis v4
+        // The command is the first param, args are spread separately
+        sendCommand: (command: string, ...args: string[]) =>
+          redisClient.call(command, ...args) as Promise<number>,
+        prefix,
       });
     } catch (err) {
-      console.warn('[Rate Limiters] Failed to initialize Redis store, using in-memory fallback:', err);
+      console.warn('[Rate Limiters] Redis init failed, using in-memory:', err);
       return undefined;
     }
   }
-  // Default: in-memory rate limiting
-  console.log('[Rate Limiters] Using in-memory rate limiting');
+
+  // Warn in production - in-memory doesn't work with clustering
+  if (process.env.NODE_ENV === 'production') {
+    console.warn('[Rate Limiters] WARNING: In-memory rate limiting in production!');
+    console.warn('  Set USE_REDIS_RATE_LIMIT=true for clustered deployments.');
+  }
+
   return undefined;
 };
 
@@ -193,9 +202,134 @@ export const createReportLimiter = () =>
     },
   });
 
-// Log Redis connection status
+// =============================================================================
+// SENSITIVE ENDPOINT RATE LIMITERS
+// =============================================================================
+
+/**
+ * Admin limiter - for admin-only endpoints
+ * Strictest limits due to sensitive operations
+ * Role-based: 0-30 requests/minute
+ */
+export const createAdminLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: (req) => {
+      const role = getUserRole(req);
+      // Admin endpoints have strict limits - block non-privileged users
+      const adminLimits = {
+        anonymous: 0,
+        user: 0,
+        account_manager: 10,
+        operations_manager: 20,
+        admin: 30,
+      };
+      return adminLimits[role] || 0;
+    },
+    store: createStore('rl:admin:'),
+    message: { error: "Too many admin requests. Please slow down." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `admin:${req.user?.userId || req.ip || 'unknown'}`,
+  });
+
+/**
+ * User management limiter - for user/portal user operations
+ * Stricter to prevent enumeration attacks
+ * Role-based: 0-20 requests/minute
+ */
+export const createUserManagementLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: (req) => {
+      const role = getUserRole(req);
+      const userMgmtLimits = {
+        anonymous: 0,
+        user: 5,
+        account_manager: 10,
+        operations_manager: 15,
+        admin: 20,
+      };
+      return userMgmtLimits[role] || 5;
+    },
+    store: createStore('rl:users:'),
+    message: { error: "Too many user management requests." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `users:${req.user?.userId || req.ip || 'unknown'}`,
+  });
+
+/**
+ * Financial data limiter - for financial/budget endpoints
+ * Sensitive data requires stricter limits
+ * Role-based: 0-40 requests/minute
+ */
+export const createFinancialLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: (req) => {
+      const role = getUserRole(req);
+      const financialLimits = {
+        anonymous: 0,
+        user: 10,
+        account_manager: 20,
+        operations_manager: 30,
+        admin: 40,
+      };
+      return financialLimits[role] || 10;
+    },
+    store: createStore('rl:financial:'),
+    message: { error: "Too many financial data requests." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `financial:${req.user?.userId || req.ip || 'unknown'}`,
+  });
+
+/**
+ * Order limiter - for order workflow operations
+ * Moderate limits for business operations
+ * Role-based: 0-80 requests/minute
+ */
+export const createOrderLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: (req) => {
+      const role = getUserRole(req);
+      const orderLimits = {
+        anonymous: 0,
+        user: 20,
+        account_manager: 40,
+        operations_manager: 60,
+        admin: 80,
+      };
+      return orderLimits[role] || 20;
+    },
+    store: createStore('rl:orders:'),
+    message: { error: "Too many order requests. Please slow down." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `orders:${req.user?.userId || req.ip || 'unknown'}`,
+  });
+
+/**
+ * Portal limiter - for all portal-specific endpoints
+ * Moderate limits for client portal access
+ * Fixed limit: 60 requests/minute per portal user
+ */
+export const createPortalLimiter = () =>
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 60, // Fixed limit for portal users
+    store: createStore('rl:portal:'),
+    message: { error: "Too many requests. Please slow down." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `portal:${req.portalUser?.id || req.ip || 'unknown'}`,
+  });
+
+// Log Redis connection status at startup
 if (redis) {
-  console.log('[Rate Limiters] Using Redis-backed rate limiting');
+  console.log('[Rate Limiters] Redis available for distributed rate limiting');
 } else {
-  console.warn('[Rate Limiters] Redis unavailable - using in-memory fallback (not suitable for production with multiple servers)');
+  console.warn('[Rate Limiters] Redis unavailable - using in-memory fallback');
 }
