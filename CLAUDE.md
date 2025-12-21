@@ -2,19 +2,19 @@
 
 ## 🚨 READ THIS FIRST - Production Architecture
 
-### Domain Structure (VERIFIED Dec 20, 2025)
+### Domain Structure (VERIFIED Dec 21, 2025)
 - **admin.yourtechassist.us** - Admin dashboard (React SPA)
   - Routes `/api/*` requests to backend API
-  - Frontend files: `apps/web/dist/`
+  - Frontend files: `apps/web/dist/` → `/var/www/html/inventory/admin/`
 - **portal.yourtechassist.us** - Client portal (React SPA)
   - Routes `/api/*` requests to backend API
-  - Frontend files: `apps/portal/dist/`
+  - Frontend files: `apps/portal/dist/` → `/var/www/html/inventory/portal/`
 - **Shared API Backend** - Single Node.js Express server
   - Accessible via both domains at `/api/` path
   - NOT at api.yourtechassist.us (that subdomain is configured but not actively used)
   - Backend code: `apps/api/`
 
-### Infrastructure (VERIFIED)
+### Infrastructure (VERIFIED Dec 21, 2025)
 - **Server**: DigitalOcean droplet at 138.197.70.205
 - **SSH Access**: `ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205`
 - **Code Location**: `/var/www/inventory`
@@ -22,9 +22,9 @@
   - User: `user`
   - Database: `inventory_db`
   - Connection string in `.env`
-- **Redis**: NOT RUNNING (using in-memory fallback for rate limiting)
-  - REDIS_URL commented out in `.env`
-  - BullMQ queues use Redis when available, fallback to memory otherwise
+- **Redis**: RUNNING - Used for rate limiting and caching
+  - `USE_REDIS_RATE_LIMIT=true` in production `.env`
+  - Rate limiters use Redis for distributed rate limiting across PM2 instances
 
 ### Process Management (VERIFIED - Using PM2)
 - **PM2** is the active process manager in production
@@ -39,11 +39,11 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 ```
 
 ### Common Mistakes to AVOID
-1. ❌ **Assuming Redis is running** - It's not. Code uses in-memory fallback.
-2. ❌ **Assuming Docker is deployed** - Production uses PM2, not Docker (Docker configs exist but for local dev)
-3. ❌ **Assuming production code is up-to-date** - Local may be ahead. Always verify git status.
-4. ❌ **Assuming api.yourtechassist.us is used** - API is at admin/portal domains under `/api/` path
-5. ❌ **Making changes without checking production state first** - SSH and verify before proceeding
+1. ❌ **Assuming Docker is deployed** - Production uses PM2, not Docker (Docker configs exist but for local dev)
+2. ❌ **Assuming production code is up-to-date** - Local may be ahead. Always verify git status.
+3. ❌ **Assuming api.yourtechassist.us is used** - API is at admin/portal domains under `/api/` path
+4. ❌ **Making changes without checking production state first** - SSH and verify before proceeding
+5. ❌ **Forgetting to increase Node memory on production builds** - Use `NODE_OPTIONS='--max-old-space-size=2048'`
 
 ---
 
@@ -76,8 +76,17 @@ Add a dated entry under the relevant section:
 ### Active Goal: Everstory Onboarding
 - **Objective**: Import Everstory's inventory CSV and display analytics on dashboard
 - **Status**: Import system working, post-import analytics added (Dec 20, 2025)
-- **Last Major Work**: Fixed analytics pipeline to generate snapshots/risk scores after import
-- **Blocker**: Need to test imports generate dashboard data correctly
+- **Last Major Work**: Security hardening deployed (Dec 21, 2025)
+- **Next Steps**: End-to-end testing of import → analytics → dashboard flow
+
+### Security Status (Dec 21, 2025)
+- ✅ SQL injection fixed in Python importer (using SQLAlchemy `pg_insert`)
+- ✅ Redis-backed rate limiting enabled with role-based tiers
+- ✅ Sensitive endpoints protected (admin, financial, orders, portal)
+- ✅ Portal auth uses Zod validation
+- ✅ Production errors sanitized (no column name leakage)
+- ✅ File paths stored as relative (no absolute path disclosure)
+- ✅ Python importer validates file paths (blocks traversal attacks)
 
 ### Tech Stack
 - **Frontend**: React 18, TypeScript, TailwindCSS, Vite
@@ -149,6 +158,27 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 ---
 
 ## Deployment History
+
+### 2025-12-21 @ 08:08 PST: Security Hardening (DEPLOYED)
+- **What**: Critical security fixes from security review
+- **Commit**: `6232025` - Security hardening: Fix critical vulnerabilities from security review
+- **Changes**:
+  - Fixed SQL injection in `apps/python-importer/bulk_operations.py`
+    - Replaced f-string SQL with SQLAlchemy `pg_insert` + `on_conflict_do_update`
+    - Added `_sanitize_string()` helper for input sanitization
+  - Fixed Redis rate limiting in `apps/api/src/lib/rate-limiters.ts`
+    - Corrected `sendCommand` signature for ioredis v5 + rate-limit-redis v4
+    - Added 5 new role-based rate limiters: admin, user management, financial, orders, portal
+  - Applied rate limiters to sensitive endpoints in `apps/api/src/index.ts`
+  - Added Zod validation to portal auth in `apps/api/src/routes/portal/auth.routes.ts`
+  - Sanitized production errors in `apps/api/src/middleware/error-handler.ts`
+  - Changed to relative file paths in `apps/api/src/routes/import.routes.ts`
+  - Added path validation to Python importer in `apps/python-importer/main.py`
+- **Environment**: Added `USE_REDIS_RATE_LIMIT=true` to production `.env`
+- **Status**: ✅ DEPLOYED to production at 16:08 UTC (08:08 PST Dec 21)
+- **Verification**: API healthy, Redis rate limiting active in logs
+
+---
 
 ### 2025-12-21 @ 07:25 PST: Analytics in Active Import Path + Full Feature Deploy (DEPLOYED)
 - **What**: CRITICAL FIX - Analytics now properly called after imports
@@ -362,6 +392,67 @@ npm run db:seed
 
 ---
 
-**Last Updated**: December 20, 2025
-**Last Major Change**: Added post-import analytics pipeline (createDailySnapshot, refreshRiskScoreCache, aggregateDailyAlertMetrics)
+## 📝 Changelog (Small but Important Details)
+
+This section tracks smaller details, quirks, and knowledge that shouldn't be forgotten.
+
+### Rate Limiting Tiers (Added Dec 21, 2025)
+| Role | Default | Auth | Upload | AI | Report | Admin | Financial | Orders |
+|------|---------|------|--------|----|----|-------|-----------|--------|
+| anonymous | 20/min | 10/15min | 20/hr | 10/min | 5/5min | 0 | 0 | 0 |
+| user | 100/min | 10/15min | 40/hr | 20/min | 10/5min | 0 | 10/min | 20/min |
+| account_manager | 200/min | 10/15min | 60/hr | 30/min | 15/5min | 10/min | 20/min | 40/min |
+| operations_manager | 300/min | 10/15min | 80/hr | 45/min | 20/5min | 20/min | 30/min | 60/min |
+| admin | 500/min | 10/15min | 100/hr | 60/min | 25/5min | 30/min | 40/min | 80/min |
+
+### Database Schema Quirks
+- `ImportBatch.filePath` stores **relative paths** (as of Dec 21) - relative to monorepo root
+- `Product.item_type` is case-sensitive - always use lowercase values
+- `DailySnapshot` is created by `createDailySnapshot()` after imports
+- `RiskScoreCache` is pre-calculated by `refreshRiskScoreCache()` after imports
+
+### Python Importer Details
+- Located at `apps/python-importer/`
+- Uses virtualenv at `apps/python-importer/venv/`
+- Called as subprocess from Node.js API
+- `bulk_upsert_products()` uses SQLAlchemy `pg_insert` for SQL injection safety
+- `validate_file_path()` blocks path traversal and restricts to `/uploads` directory
+
+### Build Quirks
+- Production builds need `NODE_OPTIONS='--max-old-space-size=2048'` or OOM kills tsc
+- `npm run build:api` builds shared package first, then API
+- Pre-commit hooks use lint-staged with different tsconfig - may need `--no-verify` for quick fixes
+
+### Environment Variables (Production)
+```bash
+# Critical - must be set
+JWT_SECRET=<32+ chars>
+DATABASE_URL=postgresql://user:pass@localhost:5432/inventory_db
+USE_REDIS_RATE_LIMIT=true
+
+# Optional but recommended
+REDIS_URL=redis://localhost:6379
+FRONTEND_URL=https://admin.yourtechassist.us
+```
+
+### Known Working User Accounts (for testing)
+- Admin Dashboard: `sarah.chen@inventoryiq.com` / `demo1234` (account_manager role)
+- Portal: `admin@everstory.com` / `everstory1234`
+
+### File Locations Reference
+| What | Local Path | Production Path |
+|------|-----------|-----------------|
+| API code | `apps/api/` | `/var/www/inventory/apps/api/` |
+| API dist | `apps/api/dist/` | `/var/www/inventory/apps/api/dist/` |
+| Admin frontend | `apps/web/dist/` | `/var/www/html/inventory/admin/` |
+| Portal frontend | `apps/portal/dist/` | `/var/www/html/inventory/portal/` |
+| Python importer | `apps/python-importer/` | `/var/www/inventory/apps/python-importer/` |
+| Upload files | `uploads/` | `/var/www/inventory/uploads/` |
+| PM2 ecosystem | `deploy/ecosystem.config.js` | `/var/www/inventory/ecosystem.config.js` |
+| Production .env | N/A | `/var/www/inventory/.env` |
+
+---
+
+**Last Updated**: December 21, 2025
+**Last Major Change**: Security hardening - SQL injection fix, Redis rate limiting, input validation
 **Next Update Due**: After next production deployment or major feature completion
