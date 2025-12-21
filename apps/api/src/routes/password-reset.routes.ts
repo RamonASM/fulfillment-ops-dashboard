@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
+import { sendPasswordResetEmail } from '../services/email.service.js';
 
 const router = Router();
 
@@ -84,12 +85,16 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       : process.env.PORTAL_APP_URL || 'https://portal.yourtechassist.us';
     const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
-    // TODO: Send email with reset link
-    // For now, log the reset URL (in production, this would send an email)
-    logger.info(`Password reset requested for ${email}`, { resetUrl });
+    // Send password reset email
+    try {
+      await sendPasswordResetEmail(email, resetUrl, userType);
+      logger.info(`Password reset email sent to ${email}`, { userType });
+    } catch (emailError) {
+      // Log error but don't expose to user (security: prevent email enumeration)
+      logger.error('Failed to send password reset email', emailError as Error, { email });
+    }
 
-    // In development/demo mode, return the token directly
-    // In production, this would only send an email
+    // In development/demo mode, return the token directly for testing
     const isDev = process.env.NODE_ENV !== 'production';
 
     res.json({

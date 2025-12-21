@@ -28,6 +28,7 @@ import {
 } from "./config/env-validation.js";
 import { initializeWebSocket, getOnlineUsersCount } from "./lib/socket.js";
 import { setupSwagger } from "./lib/swagger.js";
+import { initializeEmailService } from "./services/email.service.js";
 import authRoutes from "./routes/auth.routes.js";
 import clientRoutes from "./routes/client.routes.js";
 import productRoutes from "./routes/product.routes.js";
@@ -61,6 +62,7 @@ import clientHealthRoutes from "./routes/client-health.routes.js";
 import notificationPreferencesRoutes from "./routes/notification-preferences.routes.js";
 import dsAnalyticsAdminRoutes from "./routes/ds-analytics-admin.routes.js";
 import orphanReconciliationRoutes from "./routes/orphan-reconciliation.routes.js";
+import healthRoutes from "./routes/health.routes.js";
 
 // =============================================================================
 // ENVIRONMENT VALIDATION
@@ -82,6 +84,11 @@ app.set("trust proxy", 1);
 
 // Initialize WebSocket
 initializeWebSocket(httpServer);
+
+// Initialize Email Service (async, non-blocking)
+initializeEmailService().catch((err) => {
+  logger.warn("Email service initialization failed, emails will be logged instead", { error: err.message });
+});
 
 // =============================================================================
 // MIDDLEWARE
@@ -172,10 +179,14 @@ app.get("/health", (_req, res) => {
 // CSRF token endpoint
 app.get("/api/csrf-token", getCsrfTokenHandler);
 
+// Health check routes (public, no auth/rate limiting)
+app.use("/health", healthRoutes);
+app.use("/api/health", healthRoutes);
+
 // API routes with specific rate limiters
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/auth", authLimiter, passwordResetRoutes); // Password reset routes
-app.use("/api/clients", clientRoutes);
+app.use("/api/clients", adminLimiter, clientRoutes);
 app.use("/api/clients/:clientId/products", productRoutes);
 app.use("/api/clients/:clientId/orphans", orphanReconciliationRoutes);
 app.use("/api/clients/:clientId/locations", locationRoutes);
@@ -185,7 +196,7 @@ app.use("/api/reports", reportLimiter, reportRoutes);
 app.use("/api/ai", aiLimiter, aiRoutes);
 app.use("/api/portal", portalLimiter, portalRoutes);
 app.use("/api/exports", reportLimiter, exportRoutes);
-app.use("/api/audit", auditRoutes);
+app.use("/api/audit", adminLimiter, auditRoutes);
 app.use("/api/analytics", aiLimiter, analyticsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/filters", filterRoutes);

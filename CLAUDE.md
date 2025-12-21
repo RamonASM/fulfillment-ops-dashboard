@@ -47,27 +47,97 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 
 ---
 
-## 📋 KEEP THIS FILE UPDATED
+## 📋 AUTOMATIC DOCUMENTATION UPDATES (PROACTIVE BEHAVIOR)
 
-**IMPORTANT**: After completing major work, update this file with:
+**Claude: You MUST proactively update documentation. This is not optional.**
 
-### When to Update CLAUDE.md
-1. ✅ **After deploying to production** - Document what was deployed, when, and any config changes
-2. ✅ **After infrastructure changes** - New services, changed domains, deployment method switches
-3. ✅ **After fixing recurring issues** - Add to "Common Mistakes" section
-4. ✅ **After major feature completion** - Update "Current Project Context"
-5. ✅ **When something takes >2 hours to figure out** - Document it so it's never lost again
+### Trigger Conditions - Update Docs When:
+1. ✅ **After deploying to production** → Add Deployment History entry
+2. ✅ **After fixing a bug that took >30 minutes** → Add to Debugging section
+3. ✅ **After infrastructure changes** → Update Production Architecture section
+4. ✅ **After schema changes** → Add to Changelog under Database Quirks
+5. ✅ **After security changes** → Update Security Status section
+6. ✅ **After completing a major feature** → Update Current Project Context
+7. ✅ **When conversation is getting long** → Update everything relevant NOW (before context compaction)
+8. ✅ **When you learn something not documented** → Add it immediately
 
-### How to Update
-Add a dated entry under the relevant section:
+### How to Update (Do This Automatically)
 
+**After Deployment:**
 ```markdown
-### Deployment History
-- **2025-12-20**: Added post-import analytics (createDailySnapshot, refreshRiskScoreCache, aggregateDailyAlertMetrics)
-- **2025-12-XX**: [Your change here]
+### YYYY-MM-DD @ HH:MM TZ: Brief Title (DEPLOYED)
+- **What**: One-line summary
+- **Commits**: `abc1234`
+- **Changes**: List of changes
+- **Status**: ✅ DEPLOYED
 ```
 
-**Rule**: If you spent significant time debugging or building something, it belongs in CLAUDE.md.
+**After Bug Fix:**
+```markdown
+### Issue: "[symptom]"
+**Cause**: What caused it
+**Fix**: How to fix
+```
+
+**After Discovering Quirk:**
+Add to the Changelog section under appropriate category.
+
+### Self-Check Questions (Ask Yourself After Every Major Task)
+1. Did I learn something about production not in this file? → **Update now**
+2. Did I fix something that could happen again? → **Add to Debugging section**
+3. Did I change how something works? → **Update relevant section**
+4. Is this conversation getting long? → **Update Current Project Context and Changelog NOW**
+
+**Rule**: If you spent significant time on something, document it BEFORE moving on.
+
+---
+
+## Development Philosophy: Test-Driven Development (TDD)
+
+**Effective Date**: December 21, 2025
+
+From this point forward, all new code MUST follow Test-Driven Development principles:
+
+### TDD Workflow
+1. **Write tests FIRST** - Before implementing any feature or fix
+2. **Run tests to see them fail** - Verify the test is testing the right thing
+3. **Write minimal code to pass** - Only implement what's needed
+4. **Refactor** - Clean up while keeping tests green
+5. **Repeat** - For each new requirement
+
+### Testing Requirements by Code Type
+
+| Code Type | Required Tests | Framework |
+|-----------|---------------|-----------|
+| API Routes | Integration tests | Vitest + Supertest |
+| Services | Unit tests | Vitest |
+| React Components | Component tests | Vitest + React Testing Library |
+| Python Scripts | Unit tests | pytest |
+| E2E Workflows | End-to-end tests | Playwright |
+
+### Before Merging Any PR
+- [ ] All new code has corresponding tests
+- [ ] Tests run and pass locally
+- [ ] Test coverage does not decrease
+- [ ] No skipped tests without documented reason
+
+### Test Location Conventions
+```
+apps/api/src/__tests__/           # API unit/integration tests
+apps/api/src/__tests__/integration/  # API integration tests
+apps/web/src/__tests__/           # Admin frontend tests
+apps/portal/src/__tests__/        # Portal frontend tests
+apps/python-importer/tests/       # Python importer tests
+apps/ds-analytics/tests/          # DS Analytics tests
+apps/ml-analytics/tests/          # ML Analytics tests
+e2e/                              # End-to-end Playwright tests
+```
+
+### Why TDD?
+- **Fewer bugs** - Tests catch issues before deployment
+- **Better design** - Writing tests first forces better architecture
+- **Confidence** - Refactor without fear of breaking things
+- **Documentation** - Tests serve as living documentation
 
 ---
 
@@ -76,8 +146,13 @@ Add a dated entry under the relevant section:
 ### Active Goal: Everstory Onboarding
 - **Objective**: Import Everstory's inventory CSV and display analytics on dashboard
 - **Status**: Import system working, post-import analytics added (Dec 20, 2025)
-- **Last Major Work**: Security hardening deployed (Dec 21, 2025)
+- **Last Major Work**: Created 9 specialized agents including docs-keeper (Dec 21, 2025)
 - **Next Steps**: End-to-end testing of import → analytics → dashboard flow
+
+### Recently Completed (Dec 21, 2025)
+- Security hardening deployed (SQL injection fix, Redis rate limiting, input validation)
+- Created 9 specialized slash command agents (db, api, python, ml, admin-ui, portal-ui, testing, devops, docs-keeper)
+- Automatic documentation behavior added to CLAUDE.md
 
 ### Security Status (Dec 21, 2025)
 - ✅ SQL injection fixed in Python importer (using SQLAlchemy `pg_insert`)
@@ -102,10 +177,34 @@ Add a dated entry under the relevant section:
 
 ---
 
+## Specialized Agents
+
+This project has 9 specialized agents available as slash commands:
+
+| Agent | Use For |
+|-------|---------|
+| `/db-expert` | Schema changes, Prisma migrations, query optimization |
+| `/api-expert` | New endpoints, auth, middleware, rate limiting |
+| `/python-expert` | CSV imports, DS analytics, data processing |
+| `/ml-expert` | Prophet forecasting, stockout prediction |
+| `/admin-ui-expert` | Dashboard widgets, Recharts, admin features |
+| `/portal-ui-expert` | Client portal, mobile-first, simplified UX |
+| `/testing-expert` | Vitest, Playwright, coverage, CI testing |
+| `/devops-expert` | Docker, PM2, nginx, deployment, CI/CD |
+| `/docs-keeper` | **USE BEFORE CONTEXT COMPACTION** - Updates CLAUDE.md, changelogs, READMEs |
+
+Standalone prompts also available in `.agents/` directory for use with other AI tools.
+
+See `.agents/README.md` for detailed usage and agent interaction patterns.
+
+---
+
 ## Project Structure
 
 ```
 fulfillment-ops-dashboard/
+├── .agents/              # Standalone agent prompts (NEW)
+├── .claude/commands/     # Slash command agents (NEW)
 ├── apps/
 │   ├── api/              # Node.js Express API (deployed via PM2)
 │   ├── web/              # Admin dashboard (React, deployed to admin.yourtechassist.us)
@@ -158,6 +257,24 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 ---
 
 ## Deployment History
+
+### 2025-12-21 @ 17:15 PST: Python Importer Fix + CSRF Fix (DEPLOYED)
+- **What**: Fixed critical Python import error that was blocking all CSV imports
+- **Root Cause**: `bulk_operations.py` line 22 had `from . import models` (relative import) but `main.py` imports it as a module, not a package
+- **Fix**: Changed to `import models` (absolute import)
+- **Files Changed**:
+  - `apps/python-importer/bulk_operations.py` (line 22 import fix)
+  - `apps/api/src/routes/auth.routes.ts` (CSRF token issuance on login)
+  - `apps/api/src/routes/portal/auth.routes.ts` (CSRF token issuance on login)
+  - `.claude/settings.local.json` (cleaned up malformed permissions)
+- **Also Fixed**:
+  - CSRF token errors on delete operations - backend now issues CSRF token on login
+  - Item_type case sensitivity - ran SQL to normalize 111 products (Evergreen → evergreen)
+  - Settings file had malformed git commit message causing parse errors
+- **Status**: ✅ DEPLOYED to production
+- **Verification**: `python -c 'import bulk_operations'` returns SUCCESS on production
+
+---
 
 ### 2025-12-21 @ 08:08 PST: Security Hardening (DEPLOYED)
 - **What**: Critical security fixes from security review
@@ -293,6 +410,27 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
 "
 ```
 
+### Issue: "ImportError: attempted relative import with no known parent package"
+**Cause**: Python file uses relative imports (e.g., `from . import models`) but is run as a script, not a package
+**Fix**: Change relative imports to absolute imports in the Python file:
+```python
+# WRONG (relative import)
+from . import models
+
+# RIGHT (absolute import)
+import models
+```
+**Why**: `main.py` adds the package directory to `sys.path` and imports modules directly. Relative imports only work when running as a package with `-m` flag.
+
+### Issue: "CSRF token missing" on delete/POST operations
+**Cause**: Backend wasn't issuing CSRF token on login, or frontend not sending it
+**Fix**: Ensure `auth.routes.ts` issues CSRF token cookie on login:
+```typescript
+const csrfToken = generateCsrfToken();
+res.cookie('csrf_token', csrfToken, { httpOnly: false, ... });
+```
+**Verify**: Check browser cookies after login - should see `csrf_token` cookie
+
 ---
 
 ## Testing & Verification Commands
@@ -417,6 +555,9 @@ This section tracks smaller details, quirks, and knowledge that shouldn't be for
 - Called as subprocess from Node.js API
 - `bulk_upsert_products()` uses SQLAlchemy `pg_insert` for SQL injection safety
 - `validate_file_path()` blocks path traversal and restricts to `/uploads` directory
+- **IMPORTANT**: All imports must be absolute (e.g., `import models` not `from . import models`)
+  - `main.py` adds package dir to `sys.path` and imports modules directly
+  - Relative imports will fail with `ImportError: attempted relative import with no known parent package`
 
 ### Build Quirks
 - Production builds need `NODE_OPTIONS='--max-old-space-size=2048'` or OOM kills tsc
@@ -453,6 +594,6 @@ FRONTEND_URL=https://admin.yourtechassist.us
 
 ---
 
-**Last Updated**: December 21, 2025
-**Last Major Change**: Security hardening - SQL injection fix, Redis rate limiting, input validation
-**Next Update Due**: After next production deployment or major feature completion
+**Last Updated**: December 21, 2025 @ 17:15 PST
+**Last Major Change**: Fixed Python importer crash (relative import → absolute import), CSRF token issues, settings file cleanup
+**Next Update Due**: After successful test import or next production deployment

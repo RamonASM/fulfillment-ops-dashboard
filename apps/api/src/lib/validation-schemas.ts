@@ -213,6 +213,38 @@ export const fullQuerySchema = paginationSchema
 export type FullQueryParams = z.infer<typeof fullQuerySchema>;
 
 // =============================================================================
+// IMPORT COLUMN MAPPING SCHEMAS
+// =============================================================================
+
+/**
+ * Single column mapping entry
+ * Maps a source CSV column to a database field
+ */
+export const columnMappingEntrySchema = z.object({
+  source: z.string().min(1, 'Source column name is required').max(255),
+  mapsTo: z.string().min(1, 'Target field name is required').max(255),
+  isCustomField: z.boolean().optional().default(false),
+});
+
+export type ColumnMappingEntry = z.infer<typeof columnMappingEntrySchema>;
+
+/**
+ * Array of column mappings for import processing
+ */
+export const columnMappingsSchema = z.array(columnMappingEntrySchema).min(1, 'At least one column mapping is required');
+
+export type ColumnMappings = z.infer<typeof columnMappingsSchema>;
+
+/**
+ * Process import request body (including column mappings)
+ */
+export const processImportSchema = z.object({
+  columnMapping: columnMappingsSchema,
+});
+
+export type ProcessImportBody = z.infer<typeof processImportSchema>;
+
+// =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
 

@@ -34,6 +34,7 @@ import {
   updateCustomFieldDefinition,
   getCustomFieldStats,
 } from "../services/custom-field.service.js";
+import { columnMappingsSchema } from "../lib/validation-schemas.js";
 
 // Type for import types
 type ImportType = "inventory" | "orders" | "both";
@@ -819,7 +820,16 @@ router.post(
 router.post("/:importId/confirm", async (req, res, next) => {
   try {
     const { importId } = req.params;
-    const { columnMapping, originalMapping } = req.body;
+    const { columnMapping: rawColumnMapping, originalMapping } = req.body;
+
+    // Validate column mapping with Zod schema
+    const columnMappingResult = columnMappingsSchema.safeParse(rawColumnMapping);
+    if (!columnMappingResult.success) {
+      throw new ValidationError(
+        `Invalid column mapping: ${columnMappingResult.error.errors.map(e => e.message).join(', ')}`
+      );
+    }
+    const columnMapping = columnMappingResult.data;
 
     const importBatch = await prisma.importBatch.findUnique({
       where: { id: importId },
@@ -1105,74 +1115,120 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
 
       if (code === 0 || code === 2) {
-        // Python handled it - run post-processing
+        // Python handled it - run post-processing with per-service resilience
         try {
           await prisma.importBatch.update({
             where: { id: importId },
             data: { status: "post_processing" },
           });
 
-          let postProcessingError: Error | null = null;
-          try {
-            await Promise.race([
-              (async () => {
-                await recalculateClientUsage(importBatch.clientId);
-                await runAlertGeneration(importBatch.clientId);
-
-                // Post-import analytics: Create snapshots and metrics
-                console.log("Running post-import analytics...");
-                try {
-                  await createDailySnapshot();
-                  console.log("✓ Created daily snapshot");
-                } catch (err) {
-                  console.error("Failed to create daily snapshot:", err);
-                }
-
-                try {
-                  await refreshRiskScoreCache();
-                  console.log("✓ Refreshed risk score cache");
-                } catch (err) {
-                  console.error("Failed to refresh risk scores:", err);
-                }
-
-                try {
-                  await aggregateDailyAlertMetrics();
-                  console.log("✓ Aggregated alert metrics");
-                } catch (err) {
-                  console.error("Failed to aggregate alert metrics:", err);
-                }
-                console.log("Post-import analytics complete");
-              })(),
-              new Promise<never>((_, reject) =>
-                setTimeout(
-                  () => reject(new Error("Post-processing timed out")),
-                  5 * 60 * 1000,
-                ),
-              ),
-            ]);
-          } catch (calcError) {
-            postProcessingError = calcError as Error;
+          // Track results for each analytics service independently
+          interface ServiceResult {
+            success: boolean;
+            error: string | null;
+            duration: number;
           }
+          const postProcessingResults: Record<string, ServiceResult> = {};
 
-          // Preserve Python's status determination
+          // Helper to run each service with timeout and error isolation
+          const runWithTimeout = async (
+            fn: () => Promise<unknown>,
+            name: string,
+            timeoutMs = 60000,
+          ): Promise<ServiceResult> => {
+            const startTime = Date.now();
+            try {
+              await Promise.race([
+                fn(),
+                new Promise<never>((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error(`${name} timed out after ${timeoutMs}ms`)),
+                    timeoutMs,
+                  ),
+                ),
+              ]);
+              console.log(`✓ ${name} completed in ${Date.now() - startTime}ms`);
+              return { success: true, error: null, duration: Date.now() - startTime };
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              console.error(`✗ ${name} failed:`, errorMsg);
+              return { success: false, error: errorMsg, duration: Date.now() - startTime };
+            }
+          };
+
+          console.log("Running post-import analytics (isolated per service)...");
+
+          // Run each service independently - failures don't block others
+          postProcessingResults.usageRecalc = await runWithTimeout(
+            () => recalculateClientUsage(importBatch.clientId),
+            "Usage recalculation",
+            90000, // 90 seconds for usage calc
+          );
+
+          postProcessingResults.alertGeneration = await runWithTimeout(
+            () => runAlertGeneration(importBatch.clientId),
+            "Alert generation",
+            60000,
+          );
+
+          postProcessingResults.dailySnapshot = await runWithTimeout(
+            () => createDailySnapshot(),
+            "Daily snapshot",
+            60000,
+          );
+
+          postProcessingResults.riskScoreRefresh = await runWithTimeout(
+            () => refreshRiskScoreCache(),
+            "Risk score refresh",
+            60000,
+          );
+
+          postProcessingResults.alertMetrics = await runWithTimeout(
+            () => aggregateDailyAlertMetrics(),
+            "Alert metrics aggregation",
+            60000,
+          );
+
+          // Count successes and failures
+          const results = Object.values(postProcessingResults);
+          const successCount = results.filter((r) => r.success).length;
+          const failureCount = results.filter((r) => !r.success).length;
+          console.log(
+            `Post-import analytics complete: ${successCount}/${results.length} succeeded, ${failureCount} failed`,
+          );
+
+          // Determine final status based on Python status + post-processing
           const pythonStatus = pythonBatch.status;
+          const hasPostProcessingFailures = failureCount > 0;
           const finalStatus =
-            postProcessingError || pythonStatus === "completed_with_errors"
+            hasPostProcessingFailures || pythonStatus === "completed_with_errors"
               ? "completed_with_errors"
               : pythonStatus === "completed"
                 ? "completed"
                 : "completed_with_errors";
+
+          // Get existing metadata to preserve it
+          const existingMetadata =
+            (pythonBatch.metadata as Record<string, unknown>) || {};
 
           await prisma.importBatch.update({
             where: { id: importId },
             data: {
               status: finalStatus,
               completedAt: new Date(),
-              ...(postProcessingError && {
+              metadata: JSON.parse(JSON.stringify({
+                ...existingMetadata,
+                postProcessingResults,
+                postProcessingCompletedAt: new Date().toISOString(),
+              })),
+              ...(hasPostProcessingFailures && {
                 errors: {
                   push: {
-                    message: "Post-processing failed",
-                    details: postProcessingError.message,
+                    message: `Post-processing: ${failureCount}/${results.length} services failed`,
+                    details: Object.entries(postProcessingResults)
+                      .filter(([, r]) => !r.success)
+                      .map(([name, r]) => `${name}: ${r.error}`)
+                      .join("; "),
                   },
                 },
               }),
@@ -1751,6 +1807,130 @@ router.delete("/:importId", async (req, res, next) => {
     });
 
     res.json({ message: "Import deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/imports/:importId/retry-analytics
+ * Manually retry failed post-processing analytics for an import
+ */
+router.post("/:importId/retry-analytics", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+    });
+
+    if (!importBatch) throw new NotFoundError("Import");
+
+    if (!["completed", "completed_with_errors"].includes(importBatch.status)) {
+      throw new ValidationError(
+        "Can only retry analytics for completed imports",
+      );
+    }
+
+    const metadata = importBatch.metadata as Record<string, unknown> | null;
+
+    interface ServiceResult {
+      success: boolean;
+      error: string | null;
+      duration: number;
+      retriedAt?: string;
+    }
+
+    // Run all analytics services with per-service error handling
+    const runWithTimeout = async (
+      fn: () => Promise<unknown>,
+      name: string,
+      timeoutMs = 60000,
+    ): Promise<ServiceResult> => {
+      const startTime = Date.now();
+      try {
+        await Promise.race([
+          fn(),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`${name} timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            ),
+          ),
+        ]);
+        return {
+          success: true,
+          error: null,
+          duration: Date.now() - startTime,
+          retriedAt: new Date().toISOString(),
+        };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: errorMsg,
+          duration: Date.now() - startTime,
+          retriedAt: new Date().toISOString(),
+        };
+      }
+    };
+
+    const retryResults: Record<string, ServiceResult> = {};
+
+    retryResults.usageRecalc = await runWithTimeout(
+      () => recalculateClientUsage(importBatch.clientId),
+      "Usage recalculation",
+      90000,
+    );
+
+    retryResults.alertGeneration = await runWithTimeout(
+      () => runAlertGeneration(importBatch.clientId),
+      "Alert generation",
+      60000,
+    );
+
+    retryResults.dailySnapshot = await runWithTimeout(
+      () => createDailySnapshot(),
+      "Daily snapshot",
+      60000,
+    );
+
+    retryResults.riskScoreRefresh = await runWithTimeout(
+      () => refreshRiskScoreCache(),
+      "Risk score refresh",
+      60000,
+    );
+
+    retryResults.alertMetrics = await runWithTimeout(
+      () => aggregateDailyAlertMetrics(),
+      "Alert metrics aggregation",
+      60000,
+    );
+
+    // Count results
+    const results = Object.values(retryResults);
+    const successCount = results.filter((r) => r.success).length;
+    const failureCount = results.filter((r) => !r.success).length;
+
+    // Update import metadata
+    await prisma.importBatch.update({
+      where: { id: importId },
+      data: {
+        status: failureCount > 0 ? "completed_with_errors" : "completed",
+        metadata: JSON.parse(JSON.stringify({
+          ...metadata,
+          postProcessingResults: retryResults,
+          manualRetryAt: new Date().toISOString(),
+        })),
+      },
+    });
+
+    res.json({
+      message: `Analytics retry complete: ${successCount}/${results.length} succeeded`,
+      results: retryResults,
+      successCount,
+      failureCount,
+    });
   } catch (error) {
     next(error);
   }
