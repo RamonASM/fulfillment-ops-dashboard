@@ -15,6 +15,7 @@ import os
 from sqlalchemy import create_engine, text
 import logging
 from dotenv import load_dotenv
+from threading import Lock
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,15 +24,109 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# CIRCUIT BREAKER PATTERN
+# =============================================================================
+
+class CircuitBreaker:
+    """
+    Simple circuit breaker to prevent cascading failures.
+
+    States:
+    - CLOSED: Normal operation, requests flow through
+    - OPEN: Too many failures, requests are rejected immediately
+    - HALF_OPEN: Testing if service recovered, allow one request through
+
+    After FAILURE_THRESHOLD consecutive failures, circuit opens.
+    After RECOVERY_TIMEOUT seconds, circuit becomes half-open.
+    If half-open request succeeds, circuit closes.
+    """
+
+    FAILURE_THRESHOLD = 5  # Consecutive failures before opening
+    RECOVERY_TIMEOUT = 60  # Seconds before attempting recovery
+
+    def __init__(self, name: str):
+        self.name = name
+        self.failure_count = 0
+        self.last_failure_time: datetime | None = None
+        self.state = "CLOSED"
+        self._lock = Lock()
+
+    def record_success(self):
+        """Record a successful operation, reset failure count."""
+        with self._lock:
+            self.failure_count = 0
+            self.state = "CLOSED"
+
+    def record_failure(self):
+        """Record a failed operation, potentially open circuit."""
+        with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = datetime.now()
+
+            if self.failure_count >= self.FAILURE_THRESHOLD:
+                self.state = "OPEN"
+                logger.warning(
+                    f"Circuit breaker '{self.name}' OPENED after {self.failure_count} failures"
+                )
+
+    def can_execute(self) -> bool:
+        """Check if request should be allowed through."""
+        with self._lock:
+            if self.state == "CLOSED":
+                return True
+
+            if self.state == "OPEN":
+                # Check if recovery timeout has elapsed
+                if self.last_failure_time:
+                    elapsed = (datetime.now() - self.last_failure_time).total_seconds()
+                    if elapsed >= self.RECOVERY_TIMEOUT:
+                        self.state = "HALF_OPEN"
+                        logger.info(f"Circuit breaker '{self.name}' now HALF_OPEN")
+                        return True
+                return False
+
+            # HALF_OPEN: allow one request through to test
+            return True
+
+    def get_status(self) -> dict:
+        """Get current circuit breaker status."""
+        with self._lock:
+            return {
+                "name": self.name,
+                "state": self.state,
+                "failure_count": self.failure_count,
+                "last_failure": self.last_failure_time.isoformat() if self.last_failure_time else None
+            }
+
+
+# Global circuit breaker for database operations
+db_circuit_breaker = CircuitBreaker("database")
+
 app = FastAPI(title="ML Analytics Service", version="1.0.0")
 
-# CORS middleware
+# CORS middleware - Use environment-based configuration for security
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else [
+    "https://admin.yourtechassist.us",
+    "https://portal.yourtechassist.us",
+    "https://api.yourtechassist.us",
+]
+
+# In development, allow localhost
+if os.getenv("ENVIRONMENT", "production") == "development":
+    ALLOWED_ORIGINS.extend([
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately in production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # Database connection
@@ -89,24 +184,38 @@ def calculate_rmse(actual, predicted):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with circuit breaker status"""
+    db_connected = False
+    db_latency_ms = None
+
     try:
-        # Test database connection
+        # Test database connection with timing
+        import time
+        start = time.time()
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {
-            "status": "healthy",
-            "service": "ml-analytics",
-            "database": "connected"
-        }
+        db_latency_ms = round((time.time() - start) * 1000, 2)
+        db_connected = True
+        db_circuit_breaker.record_success()
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "service": "ml-analytics",
-            "database": "disconnected",
-            "error": str(e)
-        }
+        db_circuit_breaker.record_failure()
+
+    # Get circuit breaker status
+    circuit_status = db_circuit_breaker.get_status()
+
+    # Determine overall health
+    # Unhealthy if: DB disconnected OR circuit is OPEN
+    is_healthy = db_connected and circuit_status["state"] != "OPEN"
+
+    return {
+        "status": "healthy" if is_healthy else "unhealthy",
+        "service": "ml-analytics",
+        "database": "connected" if db_connected else "disconnected",
+        "db_latency_ms": db_latency_ms,
+        "circuit_breaker": circuit_status,
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.post("/forecast/demand", response_model=ForecastResponse)
 async def forecast_demand(request: ForecastRequest):
@@ -119,6 +228,13 @@ async def forecast_demand(request: ForecastRequest):
     Returns:
         ForecastResponse with predictions and metrics
     """
+    # Check circuit breaker before processing
+    if not db_circuit_breaker.can_execute():
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable due to database issues. Please try again later."
+        )
+
     try:
         logger.info(f"Forecasting demand for product {request.product_id}")
 
@@ -245,6 +361,9 @@ async def forecast_demand(request: ForecastRequest):
 
         logger.info(f"Forecast complete. MAPE: {mape:.2f}%, RMSE: {rmse:.2f}")
 
+        # Record success with circuit breaker
+        db_circuit_breaker.record_success()
+
         return ForecastResponse(
             product_id=request.product_id,
             predictions=predictions_list,
@@ -259,6 +378,8 @@ async def forecast_demand(request: ForecastRequest):
     except HTTPException:
         raise
     except Exception as e:
+        # Record failure with circuit breaker
+        db_circuit_breaker.record_failure()
         logger.error(f"Forecast failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
@@ -276,6 +397,13 @@ async def predict_stockout(request: StockoutPredictionRequest):
     Returns:
         StockoutPredictionResponse with predicted stockout date
     """
+    # Check circuit breaker before processing
+    if not db_circuit_breaker.can_execute():
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable due to database issues. Please try again later."
+        )
+
     try:
         logger.info(f"Predicting stockout for product {request.product_id}")
 

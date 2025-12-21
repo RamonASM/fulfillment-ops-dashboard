@@ -170,13 +170,27 @@ app = FastAPI(
     description="Data science analytics for inventory intelligence"
 )
 
-# CORS middleware
+# CORS middleware - Use environment-based configuration for security
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else [
+    "https://admin.yourtechassist.us",
+    "https://portal.yourtechassist.us",
+    "https://api.yourtechassist.us",
+]
+
+# In development, allow localhost
+if os.getenv("ENVIRONMENT", "production") == "development":
+    ALLOWED_ORIGINS.extend([
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 
