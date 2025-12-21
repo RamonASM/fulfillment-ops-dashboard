@@ -10,6 +10,11 @@ import {
   recalculateClientMonthlyUsage,
 } from "./usage.service.js";
 import { runAlertGeneration } from "./alert.service.js";
+import {
+  createDailySnapshot,
+  refreshRiskScoreCache,
+  aggregateDailyAlertMetrics,
+} from "./analytics.service.js";
 import { discoverCustomFields } from "./custom-field.service.js";
 import { calculateUsageAfterImport } from "./ds-analytics.service.js";
 import {
@@ -2288,7 +2293,7 @@ export async function generateColumnMappingWithLearning(
     }
   }
 
-  return mappings;
+  return dedupeColumnMappings(mappings);
 }
 
 /**
@@ -2335,9 +2340,9 @@ function validateSampleDataType(
   values: (string | number | undefined)[],
   expectedType: ExpectedFieldType,
   fieldName: string,
-): { isValid: boolean; matchRatio: number } {
-  switch (fieldName) {
-    case "productId":
+    ): { isValid: boolean; matchRatio: number } {
+    switch (fieldName) {
+      case "productId":
       return validateProductIdSamples(values);
     case "currentStockPacks":
     case "packSize":
@@ -2354,6 +2359,68 @@ function validateSampleDataType(
       };
     }
   }
+}
+
+/**
+ * Resolve duplicate target mappings by keeping the highest-confidence mapping per target.
+ * Conflicting mappings are dropped and annotated with warnings; the winner also records conflicts.
+ */
+function dedupeColumnMappings(mappings: ColumnMapping[]): ColumnMapping[] {
+  const bestByTarget = new Map<string, ColumnMapping>();
+  const conflictsByTarget = new Map<string, ColumnMapping[]>();
+
+  const getConf = (m: ColumnMapping) =>
+    typeof m.confidence === "number" ? m.confidence : 0;
+
+  // Pick best mapping per target
+  for (const mapping of mappings) {
+    if (!mapping.mapsTo) continue;
+    const currentBest = bestByTarget.get(mapping.mapsTo);
+    if (!currentBest || getConf(mapping) > getConf(currentBest)) {
+      if (currentBest) {
+        const list = conflictsByTarget.get(mapping.mapsTo) || [];
+        list.push(currentBest);
+        conflictsByTarget.set(mapping.mapsTo, list);
+      }
+      bestByTarget.set(mapping.mapsTo, mapping);
+    } else {
+      const list = conflictsByTarget.get(mapping.mapsTo) || [];
+      list.push(mapping);
+      conflictsByTarget.set(mapping.mapsTo, list);
+    }
+  }
+
+  const deduped: ColumnMapping[] = [];
+
+  for (const mapping of mappings) {
+    if (!mapping.mapsTo) {
+      deduped.push(mapping);
+      continue;
+    }
+    const best = bestByTarget.get(mapping.mapsTo);
+    const conflicts = conflictsByTarget.get(mapping.mapsTo) || [];
+    if (best === mapping) {
+      if (conflicts.length > 0) {
+        mapping.warnings = mapping.warnings || [];
+        mapping.warnings.push(
+          `Conflicts resolved: kept this mapping over ${conflicts
+            .map((c) => `"${c.source}"`)
+            .join(", ")} for target "${mapping.mapsTo}".`,
+        );
+      }
+      deduped.push(mapping);
+    } else {
+      mapping.warnings = mapping.warnings || [];
+      mapping.warnings.push(
+        `Mapping dropped: "${mapping.source}" -> "${mapping.mapsTo}" conflicts with higher-confidence mapping from "${best?.source ?? "unknown"}".`,
+      );
+      // Unmap the conflicting column but keep it in the list
+      mapping.mapsTo = "";
+      deduped.push(mapping);
+    }
+  }
+
+  return deduped;
 }
 
 // =============================================================================
@@ -3407,6 +3474,56 @@ export async function processImport(
 
     // Generate alerts
     await runAlertGeneration(importBatch.clientId);
+
+    // Post-import analytics: Create snapshots, risk scores, and alert metrics
+    console.log("Running post-import analytics...");
+
+    try {
+      // Create daily snapshot for dashboard trend data
+      await createDailySnapshot();
+      console.log("✓ Created daily snapshot for newly imported products");
+    } catch (err) {
+      console.error("Failed to create daily snapshot:", err);
+    }
+
+    try {
+      // Pre-calculate risk scores for portfolio risk analytics
+      await refreshRiskScoreCache();
+      console.log("✓ Pre-calculated risk scores for imported products");
+    } catch (err) {
+      console.error("Failed to refresh risk score cache:", err);
+    }
+
+    try {
+      // Aggregate alert metrics for alert trend analytics
+      await aggregateDailyAlertMetrics();
+      console.log("✓ Aggregated alert metrics after import");
+    } catch (err) {
+      console.error("Failed to aggregate alert metrics:", err);
+    }
+
+    // Update import batch metadata to record analytics completion
+    try {
+      const currentBatch = await prisma.importBatch.findUnique({
+        where: { id: importBatchId },
+        select: { metadata: true },
+      });
+
+      await prisma.importBatch.update({
+        where: { id: importBatchId },
+        data: {
+          metadata: {
+            ...(currentBatch?.metadata as object || {}),
+            analytics_completed: true,
+            snapshot_created_at: new Date().toISOString(),
+            risk_scores_calculated: true,
+            alert_metrics_aggregated: true,
+          },
+        },
+      });
+    } catch (err) {
+      console.error("Failed to update analytics metadata:", err);
+    }
 
     return {
       status: "completed",
