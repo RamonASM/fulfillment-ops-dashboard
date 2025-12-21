@@ -16,8 +16,8 @@ import {
   Area,
   ComposedChart,
 } from "recharts";
-import { TrendingUp, Camera } from "lucide-react";
-import html2canvas from "html2canvas";
+import { TrendingUp, Camera, Loader2 } from "lucide-react";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 import { api } from "@/api/client";
 
 interface MonthlyBudgetData {
@@ -39,6 +39,12 @@ export function BudgetVsActualChart({
 }: BudgetVsActualChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
 
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef: chartRef,
+    title: "Budget_vs_Actual",
+  });
+
   // Fetch budget time series data
   const { data: chartData, isLoading } = useQuery({
     queryKey: ["budget-vs-actual", clientId, periodMonths],
@@ -50,23 +56,6 @@ export function BudgetVsActualChart({
   });
 
   const data = chartData?.data || [];
-
-  // Export to PNG
-  const exportToPNG = async () => {
-    if (!chartRef.current) return;
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `budget_vs_actual_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting chart:", error);
-    }
-  };
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -157,11 +146,16 @@ export function BudgetVsActualChart({
         </div>
         <button
           onClick={exportToPNG}
-          className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+          disabled={isExporting}
+          className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
           title="Export as PNG"
           aria-label="Export budget chart as PNG image"
         >
-          <Camera className="w-4 h-4" />
+          {isExporting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Camera className="w-4 h-4" />
+          )}
         </button>
       </div>
 

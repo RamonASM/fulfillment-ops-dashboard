@@ -6,8 +6,8 @@
 import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import { DollarSign, Camera } from "lucide-react";
-import html2canvas from "html2canvas";
+import { DollarSign, Camera, Loader2 } from "lucide-react";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 import { api } from "@/api/client";
 
 interface CostBreakdown {
@@ -34,6 +34,12 @@ export function CostBreakdownWidget({ clientId }: CostBreakdownWidgetProps) {
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef: chartRef,
+    title: "Cost_Breakdown",
   });
 
   // Fetch cost breakdown
@@ -88,23 +94,6 @@ export function CostBreakdownWidget({ clientId }: CostBreakdownWidgetProps) {
       options.push({ value, label });
     }
     return options;
-  };
-
-  // Export to PNG
-  const exportToPNG = async () => {
-    if (!chartRef.current) return;
-    try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `cost_breakdown_${selectedMonth}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting chart:", error);
-    }
   };
 
   // Custom label with percentages
@@ -178,11 +167,16 @@ export function CostBreakdownWidget({ clientId }: CostBreakdownWidgetProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={exportToPNG}
-            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            disabled={isExporting}
+            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
             title="Export as PNG"
             aria-label="Export cost breakdown as PNG image"
           >
-            <Camera className="w-4 h-4" />
+            {isExporting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Camera className="w-4 h-4" />
+            )}
           </button>
           <select
             value={selectedMonth}

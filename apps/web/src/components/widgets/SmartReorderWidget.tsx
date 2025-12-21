@@ -16,9 +16,10 @@ import {
   Camera,
   FileSpreadsheet,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import html2canvas from "html2canvas";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 import { api } from "@/api/client";
 import { format } from "date-fns";
 import { ConfidenceBadge } from "../shared/ConfidenceBadge";
@@ -98,6 +99,12 @@ export function SmartReorderWidget({
 }: SmartReorderWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
 
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef,
+    title: "Smart_Reorder_Recommendations",
+  });
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["reorder-recommendations", clientId],
     queryFn: () =>
@@ -106,22 +113,6 @@ export function SmartReorderWidget({
       ),
     refetchInterval: 5 * 60 * 1000, // Refresh every 5 minutes
   });
-
-  const exportToPNG = async () => {
-    if (!widgetRef.current) return;
-    try {
-      const canvas = await html2canvas(widgetRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `Smart_Reorder_Recommendations_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting widget:", error);
-    }
-  };
 
   const exportToCSV = () => {
     if (!data?.data) return;
@@ -235,11 +226,16 @@ export function SmartReorderWidget({
           <div className="flex gap-2">
             <button
               onClick={exportToPNG}
-              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              disabled={isExporting}
+              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
               title="Export as PNG"
               aria-label="Export reorder recommendations as PNG image"
             >
-              <Camera className="h-4 w-4" />
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Camera className="h-4 w-4" />
+              )}
             </button>
             <button
               onClick={exportToCSV}

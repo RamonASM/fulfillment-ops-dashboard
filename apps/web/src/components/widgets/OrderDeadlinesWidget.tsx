@@ -11,10 +11,11 @@ import {
   ArrowRight,
   Camera,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
-import html2canvas from "html2canvas";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 export type UrgencyLevel =
   | "safe"
@@ -100,6 +101,13 @@ export function OrderDeadlinesWidget({
   showExport = true,
 }: OrderDeadlinesWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
+
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef,
+    title,
+  });
+
   const displayDeadlines = deadlines.slice(0, limit);
 
   // Summary counts by urgency
@@ -110,23 +118,6 @@ export function OrderDeadlinesWidget({
     (d) => d.urgencyLevel === "critical",
   ).length;
   const soonCount = deadlines.filter((d) => d.urgencyLevel === "soon").length;
-
-  // Export as PNG
-  const exportToPNG = async () => {
-    if (!widgetRef.current) return;
-    try {
-      const canvas = await html2canvas(widgetRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting widget:", error);
-    }
-  };
 
   // Export as CSV
   const exportToCSV = () => {
@@ -182,11 +173,16 @@ export function OrderDeadlinesWidget({
             <div className="flex gap-1 mr-2">
               <button
                 onClick={exportToPNG}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                disabled={isExporting}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
                 title="Export as PNG"
                 aria-label="Export order deadlines as PNG image"
               >
-                <Camera className="w-4 h-4" />
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={exportToCSV}

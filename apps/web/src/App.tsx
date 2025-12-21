@@ -1,29 +1,43 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth.store";
 
-// Layouts
+// Layouts - keep eager loaded
 import MainLayout from "@/components/layouts/MainLayout";
 import AuthLayout from "@/components/layouts/AuthLayout";
 
-// Pages
+// Core pages - eager loaded for fast initial navigation
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/auth/Login";
-import ForgotPassword from "@/pages/auth/ForgotPassword";
-import ResetPassword from "@/pages/auth/ResetPassword";
 import Clients from "@/pages/Clients";
-import ClientDetail from "@/pages/ClientDetail";
 import Alerts from "@/pages/Alerts";
-import Orders from "@/pages/Orders";
-import Reports from "@/pages/Reports";
-import Settings from "@/pages/Settings";
-import FeedbackAnalytics from "@/pages/FeedbackAnalytics";
-import ClientLocations from "@/pages/ClientLocations";
-import ClientAnalytics from "@/pages/ClientAnalytics";
-import Imports from "@/pages/Imports";
-import Help from "@/pages/Help";
-import MLAnalytics from "@/pages/MLAnalytics";
-import AnalyticsSettings from "@/pages/admin/AnalyticsSettings";
-import OrphanReconciliation from "@/pages/OrphanReconciliation";
+
+// Large pages - lazy loaded for better performance
+const ClientDetail = lazy(() => import("@/pages/ClientDetail"));
+const Orders = lazy(() => import("@/pages/Orders"));
+
+// Secondary pages - lazy loaded for smaller initial bundle
+const ForgotPassword = lazy(() => import("@/pages/auth/ForgotPassword"));
+const ResetPassword = lazy(() => import("@/pages/auth/ResetPassword"));
+const Reports = lazy(() => import("@/pages/Reports"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const FeedbackAnalytics = lazy(() => import("@/pages/FeedbackAnalytics"));
+const ClientLocations = lazy(() => import("@/pages/ClientLocations"));
+const ClientAnalytics = lazy(() => import("@/pages/ClientAnalytics"));
+const Imports = lazy(() => import("@/pages/Imports"));
+const Help = lazy(() => import("@/pages/Help"));
+const MLAnalytics = lazy(() => import("@/pages/MLAnalytics"));
+const AnalyticsSettings = lazy(() => import("@/pages/admin/AnalyticsSettings"));
+const OrphanReconciliation = lazy(() => import("@/pages/OrphanReconciliation"));
+
+// Loading fallback for lazy-loaded pages
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -65,7 +79,9 @@ export default function App() {
         element={
           <PublicRoute>
             <AuthLayout>
-              <ForgotPassword />
+              <Suspense fallback={<PageLoader />}>
+                <ForgotPassword />
+              </Suspense>
             </AuthLayout>
           </PublicRoute>
         }
@@ -75,7 +91,9 @@ export default function App() {
         element={
           <PublicRoute>
             <AuthLayout>
-              <ResetPassword />
+              <Suspense fallback={<PageLoader />}>
+                <ResetPassword />
+              </Suspense>
             </AuthLayout>
           </PublicRoute>
         }
@@ -92,28 +110,28 @@ export default function App() {
       >
         <Route index element={<Dashboard />} />
         <Route path="clients" element={<Clients />} />
-        <Route path="clients/:clientId" element={<ClientDetail />} />
+        <Route path="clients/:clientId" element={<Suspense fallback={<PageLoader />}><ClientDetail /></Suspense>} />
         <Route
           path="clients/:clientId/locations"
-          element={<ClientLocations />}
+          element={<Suspense fallback={<PageLoader />}><ClientLocations /></Suspense>}
         />
         <Route
           path="clients/:clientId/analytics"
-          element={<ClientAnalytics />}
+          element={<Suspense fallback={<PageLoader />}><ClientAnalytics /></Suspense>}
         />
         <Route
           path="clients/:clientId/orphans"
-          element={<OrphanReconciliation />}
+          element={<Suspense fallback={<PageLoader />}><OrphanReconciliation /></Suspense>}
         />
         <Route path="alerts" element={<Alerts />} />
-        <Route path="orders" element={<Orders />} />
-        <Route path="reports" element={<Reports />} />
-        <Route path="ml-analytics" element={<MLAnalytics />} />
-        <Route path="feedback" element={<FeedbackAnalytics />} />
-        <Route path="imports" element={<Imports />} />
-        <Route path="help" element={<Help />} />
-        <Route path="settings" element={<Settings />} />
-        <Route path="admin/analytics" element={<AnalyticsSettings />} />
+        <Route path="orders" element={<Suspense fallback={<PageLoader />}><Orders /></Suspense>} />
+        <Route path="reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
+        <Route path="ml-analytics" element={<Suspense fallback={<PageLoader />}><MLAnalytics /></Suspense>} />
+        <Route path="feedback" element={<Suspense fallback={<PageLoader />}><FeedbackAnalytics /></Suspense>} />
+        <Route path="imports" element={<Suspense fallback={<PageLoader />}><Imports /></Suspense>} />
+        <Route path="help" element={<Suspense fallback={<PageLoader />}><Help /></Suspense>} />
+        <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+        <Route path="admin/analytics" element={<Suspense fallback={<PageLoader />}><AnalyticsSettings /></Suspense>} />
       </Route>
 
       {/* Catch-all redirect */}

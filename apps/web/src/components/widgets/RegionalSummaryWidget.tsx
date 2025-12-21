@@ -14,8 +14,9 @@ import {
   ChevronDown,
   ChevronUp,
   Building2,
+  Loader2,
 } from "lucide-react";
-import html2canvas from "html2canvas";
+import { useWidgetExport } from "@/hooks/useWidgetExport";
 
 interface StateSummary {
   state: string;
@@ -52,6 +53,12 @@ export function RegionalSummaryWidget({
 }: RegionalSummaryWidgetProps) {
   const widgetRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
+
+  // Use shared export hook with lazy-loaded html2canvas
+  const { exportToPNG, isExporting } = useWidgetExport({
+    widgetRef,
+    title,
+  });
 
   const displayStates = expanded
     ? data?.states || []
@@ -95,23 +102,6 @@ export function RegionalSummaryWidget({
           borderColor: "border-gray-200",
           label: "Unknown",
         };
-    }
-  };
-
-  // Export as PNG
-  const exportToPNG = async () => {
-    if (!widgetRef.current) return;
-    try {
-      const canvas = await html2canvas(widgetRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-      });
-      const link = document.createElement("a");
-      link.download = `${title.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (error) {
-      console.error("Error exporting widget:", error);
     }
   };
 
@@ -173,11 +163,16 @@ export function RegionalSummaryWidget({
             <div className="flex gap-1">
               <button
                 onClick={exportToPNG}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                disabled={isExporting}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
                 title="Export as PNG"
                 aria-label="Export regional summary as PNG image"
               >
-                <Camera className="w-4 h-4" />
+                {isExporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
               </button>
               <button
                 onClick={exportToCSV}
