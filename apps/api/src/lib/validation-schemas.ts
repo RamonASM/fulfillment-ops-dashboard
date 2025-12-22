@@ -7,7 +7,7 @@
  * Reduces duplication across 33+ route files.
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
 // =============================================================================
 // PAGINATION SCHEMAS
@@ -19,7 +19,7 @@ import { z } from 'zod';
  */
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(1000).default(20),
   offset: z.coerce.number().int().min(0).optional(),
 });
 
@@ -85,8 +85,8 @@ export const dateRangeSchema = z
     endDate: z.coerce.date(),
   })
   .refine((data) => data.endDate >= data.startDate, {
-    message: 'End date must be after or equal to start date',
-    path: ['endDate'],
+    message: "End date must be after or equal to start date",
+    path: ["endDate"],
   });
 
 export type DateRangeParams = z.infer<typeof dateRangeSchema>;
@@ -109,7 +109,16 @@ export type OptionalDateRangeParams = z.infer<typeof optionalDateRangeSchema>;
  * Generic status filter
  */
 export const statusFilterSchema = z.object({
-  status: z.enum(['pending', 'processing', 'completed', 'failed', 'active', 'inactive']).optional(),
+  status: z
+    .enum([
+      "pending",
+      "processing",
+      "completed",
+      "failed",
+      "active",
+      "inactive",
+    ])
+    .optional(),
 });
 
 export type StatusFilterParams = z.infer<typeof statusFilterSchema>;
@@ -118,7 +127,7 @@ export type StatusFilterParams = z.infer<typeof statusFilterSchema>;
  * Import status filter
  */
 export const importStatusSchema = z.object({
-  status: z.enum(['pending', 'processing', 'completed', 'failed']).optional(),
+  status: z.enum(["pending", "processing", "completed", "failed"]).optional(),
 });
 
 export type ImportStatusParams = z.infer<typeof importStatusSchema>;
@@ -127,7 +136,9 @@ export type ImportStatusParams = z.infer<typeof importStatusSchema>;
  * Order status filter
  */
 export const orderStatusSchema = z.object({
-  orderStatus: z.enum(['pending', 'processing', 'completed', 'cancelled']).optional(),
+  orderStatus: z
+    .enum(["pending", "processing", "completed", "cancelled"])
+    .optional(),
 });
 
 export type OrderStatusParams = z.infer<typeof orderStatusSchema>;
@@ -136,8 +147,8 @@ export type OrderStatusParams = z.infer<typeof orderStatusSchema>;
  * Alert status filter
  */
 export const alertStatusSchema = z.object({
-  status: z.enum(['active', 'dismissed', 'snoozed']).optional(),
-  severity: z.enum(['info', 'warning', 'error', 'critical']).optional(),
+  status: z.enum(["active", "dismissed", "snoozed"]).optional(),
+  severity: z.enum(["info", "warning", "error", "critical"]).optional(),
 });
 
 export type AlertStatusParams = z.infer<typeof alertStatusSchema>;
@@ -149,7 +160,7 @@ export type AlertStatusParams = z.infer<typeof alertStatusSchema>;
 /**
  * Sort direction
  */
-export const sortDirectionSchema = z.enum(['asc', 'desc']).default('desc');
+export const sortDirectionSchema = z.enum(["asc", "desc"]).default("desc");
 
 export type SortDirection = z.infer<typeof sortDirectionSchema>;
 
@@ -198,7 +209,9 @@ export type PaginatedSortParams = z.infer<typeof paginatedSortSchema>;
 /**
  * Pagination + Date Range
  */
-export const paginatedDateRangeSchema = paginationSchema.merge(optionalDateRangeSchema);
+export const paginatedDateRangeSchema = paginationSchema.merge(
+  optionalDateRangeSchema,
+);
 
 export type PaginatedDateRangeParams = z.infer<typeof paginatedDateRangeSchema>;
 
@@ -221,8 +234,8 @@ export type FullQueryParams = z.infer<typeof fullQuerySchema>;
  * Maps a source CSV column to a database field
  */
 export const columnMappingEntrySchema = z.object({
-  source: z.string().min(1, 'Source column name is required').max(255),
-  mapsTo: z.string().min(1, 'Target field name is required').max(255),
+  source: z.string().min(1, "Source column name is required").max(255),
+  mapsTo: z.string().min(1, "Target field name is required").max(255),
   isCustomField: z.boolean().optional().default(false),
 });
 
@@ -231,7 +244,9 @@ export type ColumnMappingEntry = z.infer<typeof columnMappingEntrySchema>;
 /**
  * Array of column mappings for import processing
  */
-export const columnMappingsSchema = z.array(columnMappingEntrySchema).min(1, 'At least one column mapping is required');
+export const columnMappingsSchema = z
+  .array(columnMappingEntrySchema)
+  .min(1, "At least one column mapping is required");
 
 export type ColumnMappings = z.infer<typeof columnMappingsSchema>;
 
@@ -259,7 +274,7 @@ export type ProcessImportBody = z.infer<typeof processImportSchema>;
 export function calculatePagination(
   total: number,
   page: number,
-  limit: number
+  limit: number,
 ): PaginationMeta {
   const totalPages = Math.ceil(total / limit);
 
