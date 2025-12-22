@@ -778,6 +778,19 @@ def clean_orders_data(
     if 'order_status' not in df.columns:
         df['order_status'] = 'completed'
 
+    # CRITICAL: Ensure quantity_packs is ALWAYS set (NOT NULL column in database)
+    # This must happen BEFORE the quantity_units fallback logic below
+    if 'quantity_packs' not in df.columns:
+        # If we have quantity_units, use that as the pack count; otherwise default to 0
+        if 'quantity_units' in df.columns:
+            df['quantity_packs'] = df['quantity_units'].fillna(0).astype(int)
+            log_diagnostic("info", "Created quantity_packs from quantity_units",
+                          {"rows_calculated": len(df)})
+        else:
+            df['quantity_packs'] = 0
+            log_diagnostic("warning", "No quantity columns found, defaulting quantity_packs to 0",
+                          {"rows_affected": len(df)})
+
     # Set defaults for required columns after reindex (to handle NaN/None values)
     # String columns that need defaults (database default is 'completed')
     if 'order_status' in df.columns and len(df) > 0:
@@ -785,8 +798,8 @@ def clean_orders_data(
         df['order_status'] = df['order_status'].fillna('completed').astype(str).str.lower()
 
     # Integer columns that need defaults (no database default - NOT NULL)
-    if 'quantity_packs' in df.columns:
-        df['quantity_packs'] = df['quantity_packs'].fillna(0).astype(int)
+    # Now quantity_packs is guaranteed to exist, just fill NaN values
+    df['quantity_packs'] = df['quantity_packs'].fillna(0).astype(int)
 
     # FALLBACK: Calculate quantity_units from quantity_packs if missing or all NaN
     # This handles files without a "Total Quantity" column
