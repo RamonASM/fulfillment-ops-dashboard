@@ -52,6 +52,10 @@
   ],
   "author": "Aerial Shots Media",
   "license": "UNLICENSED",
+  "overrides": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@testing-library/jest-dom": "^6.9.1",

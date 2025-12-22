@@ -32,16 +32,17 @@ test.describe("ML Analytics Features", () => {
   }) => {
     await page.goto("/");
 
-    // Click ML status badge
+    // Click ML status badge - wait for it to be visible first
     const mlBadge = page
       .locator('[data-testid="ml-status-badge"], button:has-text("ML")')
       .first();
-    if (await mlBadge.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await mlBadge.click();
 
-      // Should navigate to ML Analytics page
-      await expect(page).toHaveURL(/\/ml-analytics/, { timeout: 5000 });
-    }
+    // Use proper wait pattern instead of catch(() => false)
+    await expect(mlBadge).toBeVisible({ timeout: 5000 });
+    await mlBadge.click();
+
+    // Should navigate to ML Analytics page
+    await expect(page).toHaveURL(/\/ml-analytics/, { timeout: 5000 });
   });
 
   // ===========================================================================
@@ -79,6 +80,9 @@ test.describe("ML Analytics Features", () => {
     // Press G then M
     await page.keyboard.press("g");
     await page.keyboard.press("m");
+
+    // Wait for navigation to complete
+    await page.waitForURL(/\/ml-analytics/, { timeout: 5000 });
 
     // Should navigate to ML Analytics page
     await expect(page).toHaveURL(/\/ml-analytics/, { timeout: 5000 });
@@ -130,25 +134,24 @@ test.describe("ML Analytics Features", () => {
   }) => {
     // Navigate to a client detail page
     await page.goto("/clients");
+    await page.waitForLoadState("networkidle");
 
-    // Click first client
-    const firstClient = page
-      .getByRole("link", { name: /view|details/i })
-      .first();
-    if (await firstClient.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await firstClient.click();
+    // Click first client - use proper assertion pattern
+    const firstClient = page.getByRole("link", { name: /view|details/i }).first();
 
-      // Should see AI Insights column with Forecast buttons
-      const forecastButton = page.getByRole("button", { name: /forecast/i });
-      if (
-        await forecastButton
-          .first()
-          .isVisible({ timeout: 3000 })
-          .catch(() => false)
-      ) {
-        await expect(forecastButton.first()).toBeVisible();
-      }
-    }
+    // Skip test if no clients available
+    const hasClients = await firstClient.count() > 0;
+    test.skip(!hasClients, "No clients available for testing");
+
+    await firstClient.click();
+    await page.waitForLoadState("networkidle");
+
+    // Should see AI Insights column with Forecast buttons (or skip if not present)
+    const forecastButton = page.getByRole("button", { name: /forecast/i }).first();
+    const hasForecasts = await forecastButton.count() > 0;
+    test.skip(!hasForecasts, "No forecast buttons visible - ML service may be offline");
+
+    await expect(forecastButton).toBeVisible({ timeout: 5000 });
   });
 
   test("should open forecast modal when clicking forecast button", async ({
@@ -156,29 +159,27 @@ test.describe("ML Analytics Features", () => {
   }) => {
     // Navigate to a client detail page
     await page.goto("/clients");
+    await page.waitForLoadState("networkidle");
 
     // Click first client
-    const firstClient = page
-      .getByRole("link", { name: /view|details/i })
-      .first();
-    if (await firstClient.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await firstClient.click();
+    const firstClient = page.getByRole("link", { name: /view|details/i }).first();
+    const hasClients = await firstClient.count() > 0;
+    test.skip(!hasClients, "No clients available for testing");
 
-      // Click forecast button
-      const forecastButton = page
-        .getByRole("button", { name: /forecast/i })
-        .first();
-      if (
-        await forecastButton.isVisible({ timeout: 3000 }).catch(() => false)
-      ) {
-        await forecastButton.click();
+    await firstClient.click();
+    await page.waitForLoadState("networkidle");
 
-        // Should see forecast modal with charts
-        await expect(
-          page.locator('[data-testid="forecast-modal"], [role="dialog"]'),
-        ).toBeVisible({ timeout: 5000 });
-      }
-    }
+    // Click forecast button
+    const forecastButton = page.getByRole("button", { name: /forecast/i }).first();
+    const hasForecasts = await forecastButton.count() > 0;
+    test.skip(!hasForecasts, "No forecast buttons visible - ML service may be offline");
+
+    await forecastButton.click();
+
+    // Should see forecast modal with charts
+    await expect(
+      page.locator('[data-testid="forecast-modal"], [role="dialog"]'),
+    ).toBeVisible({ timeout: 5000 });
   });
 
   // ===========================================================================
@@ -190,25 +191,28 @@ test.describe("ML Analytics Features", () => {
   }) => {
     // Navigate to a client detail page
     await page.goto("/clients");
+    await page.waitForLoadState("networkidle");
 
     // Click first client
-    const firstClient = page
-      .getByRole("link", { name: /view|details/i })
-      .first();
-    if (await firstClient.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await firstClient.click();
+    const firstClient = page.getByRole("link", { name: /view|details/i }).first();
+    const hasClients = await firstClient.count() > 0;
+    test.skip(!hasClients, "No clients available for testing");
 
-      // Navigate to analytics tab
-      const analyticsTab = page.getByRole("link", { name: /analytics/i });
-      if (await analyticsTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await analyticsTab.click();
+    await firstClient.click();
+    await page.waitForLoadState("networkidle");
 
-        // Should see stockout risk widget
-        await expect(
-          page.locator("text=/stockout|risk|prediction/i"),
-        ).toBeVisible({ timeout: 5000 });
-      }
-    }
+    // Navigate to analytics tab
+    const analyticsTab = page.getByRole("link", { name: /analytics/i });
+    const hasAnalyticsTab = await analyticsTab.count() > 0;
+    test.skip(!hasAnalyticsTab, "Analytics tab not visible");
+
+    await analyticsTab.click();
+    await page.waitForLoadState("networkidle");
+
+    // Should see stockout risk widget
+    await expect(
+      page.locator("text=/stockout|risk|prediction/i"),
+    ).toBeVisible({ timeout: 5000 });
   });
 
   // ===========================================================================
