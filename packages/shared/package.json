@@ -12,6 +12,21 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./api": {
+      "types": "./dist/api/index.d.ts",
+      "import": "./dist/api/index.js",
+      "default": "./dist/api/index.js"
+    },
+    "./stores": {
+      "types": "./dist/stores/index.d.ts",
+      "import": "./dist/stores/index.js",
+      "default": "./dist/stores/index.js"
+    },
+    "./lib": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js",
+      "default": "./dist/lib/index.js"
+    },
     "./components/help": {
       "types": "./dist/components/help/index.d.ts",
       "import": "./dist/components/help/index.js",
@@ -26,11 +41,15 @@
     "lucide-react": "^0.460.0"
   },
   "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
     "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "zustand": "^4.0.0"
   },
   "devDependencies": {
+    "@tanstack/react-query": "^5.17.0",
     "@types/react": "^18.2.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "zustand": "^4.4.7"
   }
 }
