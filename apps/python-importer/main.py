@@ -198,6 +198,22 @@ def emit_progress(event_type: str, data: dict):
     print(json.dumps(progress_event), file=sys.stdout, flush=True)
 
 
+def _json_serializable(obj):
+    """Convert numpy types to native Python types for JSON serialization."""
+    import numpy as np
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: _json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_json_serializable(i) for i in obj]
+    return obj
+
+
 def log_diagnostic(level: str, message: str, context: dict = None):
     """
     Emit structured diagnostic log to stderr for Node.js capture.
@@ -207,11 +223,14 @@ def log_diagnostic(level: str, message: str, context: dict = None):
         message: Human-readable message
         context: Optional dict with additional context data
     """
+    # Convert numpy types to native Python types for JSON serialization
+    safe_context = _json_serializable(context) if context else {}
+
     log_entry = {
         "level": level,
         "message": message,
         "timestamp": datetime.now().isoformat(),
-        "context": context or {}
+        "context": safe_context
     }
     print(f"[DIAG] {json.dumps(log_entry)}", file=sys.stderr, flush=True)
 
@@ -710,6 +729,22 @@ def clean_orders_data(
 
     # Apply the rename mapping
     df.rename(columns=rename_map, inplace=True)
+
+    # Normalize item_type to lowercase and valid enums
+    if 'item_type' in df.columns:
+        # Convert to string, lower case, strip whitespace
+        df['item_type'] = df['item_type'].astype(str).str.lower().str.strip()
+
+        # Handle 'nan' strings resulting from None conversion if any
+        df['item_type'] = df['item_type'].replace({'nan': 'evergreen', 'none': 'evergreen', '': 'evergreen'})
+
+        # Map synonyms (e.g. typos or variations if known)
+        # For now, just ensure it's one of the valid types
+        valid_types = ['evergreen', 'event', 'completed']
+        df['item_type'] = df['item_type'].apply(lambda x: x if x in valid_types else 'evergreen')
+    else:
+        # If column missing, add it with default
+        df['item_type'] = 'evergreen'
 
     # Validate required columns exist (snake_case)
     required_columns = ['product_id', 'date_submitted']

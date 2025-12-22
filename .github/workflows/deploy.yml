@@ -81,12 +81,36 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+      - name: Security audit - npm dependencies
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
       - name: Type check
         run: npm run typecheck
 
       - name: Push database schema
         working-directory: apps/api
         run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: apps/python-importer/requirements.txt
+
+      - name: Install Python dependencies
+        working-directory: apps/python-importer
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run Python importer tests
+        working-directory: apps/python-importer
+        run: python -m pytest tests/ -v --tb=short --cov=. --cov-report=xml
         env:
           DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
 
@@ -314,8 +338,18 @@ jobs:
 
       - name: Run smoke tests
         run: |
+          echo "Testing frontend apps..."
           curl -f https://admin.yourtechassist.us || exit 1
           curl -f https://portal.yourtechassist.us || exit 1
+
+          echo "Testing Python services..."
+          # ML Analytics health check (if deployed)
+          curl -sf https://api.yourtechassist.us/api/ml/health || echo "ML Analytics not available (optional)"
+
+          # DS Analytics health check via API proxy (if deployed)
+          curl -sf https://api.yourtechassist.us/api/ds-analytics/health || echo "DS Analytics not available (optional)"
+
+          echo "All smoke tests passed!"
 
       - name: Rollback on failure
         if: failure()
