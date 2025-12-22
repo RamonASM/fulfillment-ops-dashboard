@@ -19,6 +19,13 @@ export const api = createApiClient({
     useAuthStore.getState().logout();
     window.location.href = '/login';
   },
+  onTokenRefreshed: (newToken) => {
+    // Update the stored access token after automatic refresh
+    const { user } = useAuthStore.getState();
+    if (user) {
+      useAuthStore.getState().setAuth(user, newToken);
+    }
+  },
   enableCsrf: true,
 });
 

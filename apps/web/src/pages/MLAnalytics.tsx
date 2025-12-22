@@ -13,7 +13,6 @@ import {
   Download,
   RefreshCw,
   CheckCircle,
-  XCircle,
   Clock,
   Sparkles,
   BookOpen,
@@ -195,7 +194,7 @@ export default function MLAnalytics() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Fetch ML readiness (primary source of truth)
-  const { data: readiness, isLoading: readinessLoading } = useQuery({
+  const { data: readiness } = useQuery({
     queryKey: ["ml-readiness"],
     queryFn: () => api.get<MLReadinessResponse>("/ml/readiness"),
     staleTime: 2 * 60 * 1000,

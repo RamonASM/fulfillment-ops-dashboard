@@ -15,6 +15,8 @@ export interface ApiClientConfig {
   baseUrl: string;
   getToken: () => string | null | undefined;
   onUnauthorized?: () => void;
+  /** Callback when token is refreshed - update your auth store with new token */
+  onTokenRefreshed?: (newToken: string) => void;
   /** Enable CSRF token handling (double-submit cookie pattern) */
   enableCsrf?: boolean;
 }
@@ -49,13 +51,59 @@ export class ApiClient {
   private baseUrl: string;
   private getToken: () => string | null | undefined;
   private onUnauthorized?: () => void;
+  private onTokenRefreshed?: (newToken: string) => void;
   private enableCsrf: boolean;
+
+  // Token refresh state
+  private isRefreshing = false;
+  private refreshPromise: Promise<boolean> | null = null;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl;
     this.getToken = config.getToken;
     this.onUnauthorized = config.onUnauthorized;
+    this.onTokenRefreshed = config.onTokenRefreshed;
     this.enableCsrf = config.enableCsrf ?? true;
+  }
+
+  /**
+   * Attempt to refresh the access token using refresh token cookie.
+   * Returns true if refresh succeeded, false otherwise.
+   * Deduplicates concurrent refresh attempts.
+   */
+  private async refreshAccessToken(): Promise<boolean> {
+    // If already refreshing, wait for that attempt
+    if (this.isRefreshing && this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.isRefreshing = true;
+    this.refreshPromise = (async () => {
+      try {
+        const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include', // Include refresh token cookie
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // Notify the app of the new token
+          if (this.onTokenRefreshed && data.accessToken) {
+            this.onTokenRefreshed(data.accessToken);
+          }
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      } finally {
+        this.isRefreshing = false;
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 
   /**
@@ -125,15 +173,32 @@ export class ApiClient {
   }
 
   /**
-   * Handle API response with error checking
+   * Handle API response with error checking and automatic token refresh on 401.
+   * @param response - The fetch response
+   * @param retryFn - Optional function to retry the request after token refresh
    */
-  private async handleResponse<T>(response: Response): Promise<T> {
-    // Handle 401 Unauthorized
+  private async handleResponse<T>(
+    response: Response,
+    retryFn?: () => Promise<Response>
+  ): Promise<T> {
+    // Handle 401 Unauthorized - try token refresh first
     if (response.status === 401) {
+      // Only try refresh if we have a retry function (first attempt)
+      if (retryFn) {
+        const refreshed = await this.refreshAccessToken();
+        if (refreshed) {
+          // Token refreshed successfully - retry the original request
+          const retryResponse = await retryFn();
+          // Don't pass retryFn to prevent infinite loops
+          return this.handleResponse<T>(retryResponse);
+        }
+      }
+
+      // Refresh failed or not available - redirect to login
       if (this.onUnauthorized) {
         this.onUnauthorized();
       }
-      throw new Error('Unauthorized - please log in again');
+      throw new Error('Session expired - please log in again');
     }
 
     // Check content type to avoid JSON parse errors on HTML error pages
@@ -172,142 +237,163 @@ export class ApiClient {
   }
 
   /**
-   * GET request
+   * GET request with automatic token refresh on 401
    */
   async get<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: this.getHeaders('GET'),
-      credentials: 'include',
-      ...options,
-    });
 
-    return this.handleResponse<T>(response);
+    const makeRequest = () =>
+      fetch(url, {
+        method: 'GET',
+        headers: this.getHeaders('GET'),
+        credentials: 'include',
+        ...options,
+      });
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * POST request
+   * POST request with automatic token refresh on 401
    */
   async post<T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: this.getHeaders('POST'),
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined,
-      ...options,
-    });
 
-    return this.handleResponse<T>(response);
+    const makeRequest = () =>
+      fetch(url, {
+        method: 'POST',
+        headers: this.getHeaders('POST'),
+        credentials: 'include',
+        body: body ? JSON.stringify(body) : undefined,
+        ...options,
+      });
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * PUT request
+   * PUT request with automatic token refresh on 401
    */
   async put<T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: this.getHeaders('PUT'),
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined,
-      ...options,
-    });
 
-    return this.handleResponse<T>(response);
+    const makeRequest = () =>
+      fetch(url, {
+        method: 'PUT',
+        headers: this.getHeaders('PUT'),
+        credentials: 'include',
+        body: body ? JSON.stringify(body) : undefined,
+        ...options,
+      });
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * PATCH request
+   * PATCH request with automatic token refresh on 401
    */
   async patch<T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
-    const response = await fetch(url, {
-      method: 'PATCH',
-      headers: this.getHeaders('PATCH'),
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined,
-      ...options,
-    });
 
-    return this.handleResponse<T>(response);
+    const makeRequest = () =>
+      fetch(url, {
+        method: 'PATCH',
+        headers: this.getHeaders('PATCH'),
+        credentials: 'include',
+        body: body ? JSON.stringify(body) : undefined,
+        ...options,
+      });
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * DELETE request
+   * DELETE request with automatic token refresh on 401
    */
   async delete<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     const url = this.buildUrl(endpoint, options?.params);
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: this.getHeaders('DELETE'),
-      credentials: 'include',
-      ...options,
-    });
 
-    return this.handleResponse<T>(response);
+    const makeRequest = () =>
+      fetch(url, {
+        method: 'DELETE',
+        headers: this.getHeaders('DELETE'),
+        credentials: 'include',
+        ...options,
+      });
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * Upload a single file
+   * Upload a single file with automatic token refresh on 401
    */
   async upload<T>(
     endpoint: string,
     file: File,
     additionalData?: Record<string, string>
   ): Promise<T> {
-    const formData = new FormData();
-    formData.append('file', file);
+    const makeRequest = () => {
+      const formData = new FormData();
+      formData.append('file', file);
 
-    if (additionalData) {
-      Object.entries(additionalData).forEach(([key, value]) => {
-        formData.append(key, value);
+      if (additionalData) {
+        Object.entries(additionalData).forEach(([key, value]) => {
+          formData.append(key, value);
+        });
+      }
+
+      const headers = this.getHeaders('POST', true); // Exclude Content-Type for FormData
+
+      return fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: formData,
       });
-    }
+    };
 
-    const headers = this.getHeaders('POST', true); // Exclude Content-Type for FormData
-
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: formData,
-    });
-
-    return this.handleResponse<T>(response);
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 
   /**
-   * Upload multiple files
+   * Upload multiple files with automatic token refresh on 401
    */
   async uploadMultiple<T>(
     endpoint: string,
     files: File[],
     additionalData?: Record<string, string>
   ): Promise<T> {
-    const formData = new FormData();
+    const makeRequest = () => {
+      const formData = new FormData();
 
-    files.forEach((file) => {
-      formData.append('files', file);
-    });
-
-    if (additionalData) {
-      Object.entries(additionalData).forEach(([key, value]) => {
-        formData.append(key, value);
+      files.forEach((f) => {
+        formData.append('files', f);
       });
-    }
 
-    const headers = this.getHeaders('POST', true); // Exclude Content-Type for FormData
+      if (additionalData) {
+        Object.entries(additionalData).forEach(([key, value]) => {
+          formData.append(key, value);
+        });
+      }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: formData,
-    });
+      const headers = this.getHeaders('POST', true); // Exclude Content-Type for FormData
 
-    return this.handleResponse<T>(response);
+      return fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: formData,
+      });
+    };
+
+    const response = await makeRequest();
+    return this.handleResponse<T>(response, makeRequest);
   }
 }
 

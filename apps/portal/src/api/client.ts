@@ -11,6 +11,16 @@ const PORTAL_API_BASE = '/api/portal';
 const DIRECT_API_BASE = '/api';
 
 /**
+ * Helper to update auth store when token is refreshed
+ */
+const handleTokenRefresh = (newToken: string) => {
+  const { user } = usePortalAuthStore.getState();
+  if (user) {
+    usePortalAuthStore.getState().setAuth(user, newToken);
+  }
+};
+
+/**
  * Configured API client for portal-specific endpoints (/api/portal/*)
  */
 export const portalApi = createApiClient({
@@ -20,6 +30,7 @@ export const portalApi = createApiClient({
     usePortalAuthStore.getState().logout();
     window.location.href = '/login';
   },
+  onTokenRefreshed: handleTokenRefresh,
   enableCsrf: true,
 });
 
@@ -33,6 +44,7 @@ export const directApi = createApiClient({
     usePortalAuthStore.getState().logout();
     window.location.href = '/login';
   },
+  onTokenRefreshed: handleTokenRefresh,
   enableCsrf: true,
 });
 
