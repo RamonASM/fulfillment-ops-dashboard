@@ -34,7 +34,7 @@ import { fadeInUp } from "@/lib/animations";
 import { CommentThread } from "@/components/CommentThread";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { TodoList } from "@/components/TodoList";
-import { ImportModal } from "@/components/ImportModal";
+import { ImportModal } from "@/components/ImportModal.lazy";
 import { CustomDataInsightsWidget } from "@/components/widgets/CustomDataInsightsWidget";
 import { ForecastModal } from "@/components/ForecastModal";
 import { useAuthStore } from "@/stores/auth.store";
@@ -42,6 +42,26 @@ import toast from "react-hot-toast";
 
 type ItemTypeTab = "evergreen" | "event" | "completed";
 type SectionTab = "products" | "comments" | "activity" | "tasks";
+
+// Extended product interface with additional fields from API
+interface PendingOrder {
+  orderId: string;
+  status: string;
+  quantityPacks: number;
+}
+
+// Types matching UsageTierBadge component expectations
+type UsageCalculationTier = '12_month' | '6_month' | '3_month' | 'weekly' | null | undefined;
+type UsageConfidence = 'high' | 'medium' | 'low' | null | undefined;
+
+interface ProductWithEnhancedMetrics extends ProductWithMetrics {
+  usageCalculationTier?: UsageCalculationTier;
+  usageConfidence?: UsageConfidence;
+  monthlyUsagePacks?: number;
+  hasOnOrder?: boolean;
+  onOrderPacks?: number;
+  pendingOrders?: PendingOrder[];
+}
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -118,6 +138,47 @@ export default function ClientDetail() {
 
   const products = productsData?.data || [];
   const statusCounts = productsData?.meta?.statusCounts || {};
+
+  // Fetch product counts by type for smart tab switching
+  const { data: productCounts } = useQuery({
+    queryKey: ["product-counts", clientId],
+    queryFn: async () => {
+      // Fetch all products to count by type
+      const response = await api.get<{
+        data: ProductWithMetrics[];
+      }>(`/clients/${clientId}/products`, {
+        params: {
+          includeOrphans: "true",
+          limit: 1000, // Get enough to count accurately
+        },
+      });
+
+      // Count by itemType
+      const counts = { evergreen: 0, event: 0, completed: 0 };
+      response.data.forEach((p: ProductWithMetrics) => {
+        if (p.itemType in counts) {
+          counts[p.itemType as keyof typeof counts]++;
+        }
+      });
+      return counts;
+    },
+    enabled: !!clientId,
+  });
+
+  // Smart default tab selection: Auto-switch to first tab with products if current tab is empty
+  useEffect(() => {
+    if (productsData && productsData.data.length === 0 && productCounts) {
+      const tabsWithProducts = (
+        Object.entries(productCounts) as [ItemTypeTab, number][]
+      )
+        .filter(([_, count]) => count > 0)
+        .map(([tab, _]) => tab);
+
+      if (tabsWithProducts.length > 0 && !tabsWithProducts.includes(activeTab)) {
+        setActiveTab(tabsWithProducts[0]);
+      }
+    }
+  }, [productsData, productCounts, activeTab]);
 
   // Update client mutation
   const updateClientMutation = useMutation({
@@ -466,6 +527,42 @@ export default function ClientDetail() {
               className="input w-64"
             />
           </div>
+
+          {/* Informational Banner - Show when current tab is empty but other tabs have products */}
+          {productsData?.data.length === 0 && productCounts && !search && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Package className="w-5 h-5 text-blue-600" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">
+                      No {activeTab} products found
+                    </p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Products available in other categories:
+                      {(Object.entries(productCounts) as [ItemTypeTab, number][])
+                        .filter(([tab, count]) => tab !== activeTab && count > 0)
+                        .map(([tab, count]) => ` ${tab} (${count})`)
+                        .join(", ") || " none"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {(Object.entries(productCounts) as [ItemTypeTab, number][])
+                    .filter(([tab, count]) => tab !== activeTab && count > 0)
+                    .map(([tab, count]) => (
+                      <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className="px-3 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded hover:bg-blue-200 transition-colors capitalize"
+                      >
+                        View {tab} ({count})
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Products Table */}
           <div className="card overflow-hidden">
@@ -964,8 +1061,8 @@ function ProductRow({
   product,
   onViewForecast,
 }: {
-  product: ProductWithMetrics;
-  onViewForecast: (product: ProductWithMetrics) => void;
+  product: ProductWithEnhancedMetrics;
+  onViewForecast: (product: ProductWithEnhancedMetrics) => void;
 }) {
   const status = product.status;
   const stockPercent = status.percentOfReorderPoint;
@@ -1007,33 +1104,33 @@ function ProductRow({
       </td>
       <td>
         <UsageTierBadge
-          tier={(product as any).usageCalculationTier}
-          confidence={(product as any).usageConfidence}
-          monthlyUsage={(product as any).monthlyUsagePacks}
+          tier={product.usageCalculationTier}
+          confidence={product.usageConfidence}
+          monthlyUsage={product.monthlyUsagePacks}
           showValue={true}
           compact={false}
         />
       </td>
       <td>
-        {(product as any).hasOnOrder ? (
+        {product.hasOnOrder ? (
           <div className="group relative">
             <div className="flex items-center gap-1.5 text-blue-600">
               <ShoppingCart className="w-4 h-4" />
               <span className="font-medium text-sm">
-                {(product as any).onOrderPacks} pks
+                {product.onOrderPacks} pks
               </span>
             </div>
             {/* Tooltip on hover showing order details */}
-            {(product as any).pendingOrders &&
-              (product as any).pendingOrders.length > 0 && (
+            {product.pendingOrders &&
+              product.pendingOrders.length > 0 && (
                 <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg py-2 px-3 -top-2 left-1/2 -translate-x-1/2 -translate-y-full w-48 shadow-lg">
                   <p className="font-semibold mb-1">
-                    {(product as any).pendingOrders.length} pending order
-                    {(product as any).pendingOrders.length > 1 ? "s" : ""}
+                    {product.pendingOrders.length} pending order
+                    {product.pendingOrders.length > 1 ? "s" : ""}
                   </p>
-                  {(product as any).pendingOrders
+                  {product.pendingOrders
                     .slice(0, 3)
-                    .map((order: any) => (
+                    .map((order: PendingOrder) => (
                       <div
                         key={order.orderId}
                         className="flex justify-between text-gray-300"
@@ -1042,9 +1139,9 @@ function ProductRow({
                         <span>{order.quantityPacks} pks</span>
                       </div>
                     ))}
-                  {(product as any).pendingOrders.length > 3 && (
+                  {product.pendingOrders.length > 3 && (
                     <p className="text-gray-400 mt-1">
-                      +{(product as any).pendingOrders.length - 3} more...
+                      +{product.pendingOrders.length - 3} more...
                     </p>
                   )}
                   <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full border-4 border-transparent border-t-gray-900" />

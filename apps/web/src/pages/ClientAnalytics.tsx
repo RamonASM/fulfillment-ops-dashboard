@@ -11,6 +11,14 @@ import { motion } from "framer-motion";
 import { api } from "@/api/client";
 import { fadeInUp } from "@/lib/animations";
 
+// Helper to safely extract error message
+function getErrorMessage(error: unknown, defaultMessage = "An error occurred"): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return defaultMessage;
+}
+
 // Import all analytics widgets
 import { StockHealthDonut } from "@/components/widgets/StockHealthDonut";
 import { TopProductsWidget } from "@/components/widgets/TopProductsWidget";
@@ -102,6 +110,61 @@ interface LocationAnalytics {
   lastOrderDate: string | null;
 }
 
+// Enhanced location performance from backend
+interface EnhancedLocationPerformance {
+  id: string;
+  name: string;
+  code: string;
+  city: string;
+  state: string;
+  performanceScore: number;
+  performanceRank: number;
+  performanceTier: "excellent" | "good" | "average" | "needs-attention";
+  volumeScore: number;
+  frequencyScore: number;
+  healthScore: number;
+  totalOrders: number;
+  totalUnits: number;
+  volumePercentOfClient: number;
+  orderFrequency: number;
+  frequencyConsistency: number;
+  lastOrderDate: string | null;
+  healthStatus: "healthy" | "watch" | "critical";
+  totalProducts: number;
+  stockoutCount: number;
+  topProducts: Array<{
+    productId: string;
+    productName: string;
+    totalUnits: number;
+    percentOfLocationVolume: number;
+    lastOrderDate: string | null;
+  }>;
+}
+
+// Regional summary types
+interface StateSummary {
+  state: string;
+  locationCount: number;
+  avgPerformanceScore: number;
+  totalOrders: number;
+  totalUnits: number;
+  topLocation: {
+    id: string;
+    name: string;
+    performanceScore: number;
+  };
+  performanceTier: "excellent" | "good" | "average" | "needs-attention";
+}
+
+interface RegionalPerformanceSummary {
+  states: StateSummary[];
+  totalLocations: number;
+  avgClientPerformance: number;
+}
+
+// Union type for location widgets (matches LocationAnalyticsWidget)
+type LocationDataType = LocationAnalytics | EnhancedLocationPerformance;
+
 interface MonthlyTrends {
   labels: string[];
   orders: number[];
@@ -186,7 +249,7 @@ export default function ClientAnalytics() {
     useQuery({
       queryKey: ["location-analytics-enhanced", clientId],
       queryFn: () =>
-        api.get<{ data: any[] }>(
+        api.get<{ data: EnhancedLocationPerformance[] }>(
           `/location-analytics/${clientId}/enhanced-performance`,
         ),
       enabled: !!clientId,
@@ -198,7 +261,7 @@ export default function ClientAnalytics() {
     useQuery({
       queryKey: ["location-analytics-regional", clientId],
       queryFn: () =>
-        api.get<{ data: any }>(
+        api.get<{ data: RegionalPerformanceSummary }>(
           `/location-analytics/${clientId}/regional-summary`,
         ),
       enabled: !!clientId,
@@ -369,8 +432,7 @@ export default function ClientAnalytics() {
                     <div className="bg-white p-2 rounded border border-red-200">
                       <strong className="text-red-800">Summary:</strong>{" "}
                       <span className="text-red-700">
-                        {(summaryError as any)?.message ||
-                          "Failed to load summary data"}
+                        {getErrorMessage(summaryError, "Failed to load summary data")}
                       </span>
                     </div>
                   )}
@@ -378,8 +440,7 @@ export default function ClientAnalytics() {
                     <div className="bg-white p-2 rounded border border-red-200">
                       <strong className="text-red-800">Anomalies:</strong>{" "}
                       <span className="text-red-700">
-                        {(anomaliesError as any)?.message ||
-                          "Failed to load anomaly data"}
+                        {getErrorMessage(anomaliesError, "Failed to load anomaly data")}
                       </span>
                     </div>
                   )}
@@ -387,8 +448,7 @@ export default function ClientAnalytics() {
                     <div className="bg-white p-2 rounded border border-red-200">
                       <strong className="text-red-800">Locations:</strong>{" "}
                       <span className="text-red-700">
-                        {(locationsError as any)?.message ||
-                          "Failed to load location data"}
+                        {getErrorMessage(locationsError, "Failed to load location data")}
                       </span>
                     </div>
                   )}
@@ -396,8 +456,7 @@ export default function ClientAnalytics() {
                     <div className="bg-white p-2 rounded border border-red-200">
                       <strong className="text-red-800">Trends:</strong>{" "}
                       <span className="text-red-700">
-                        {(trendsError as any)?.message ||
-                          "Failed to load trends data"}
+                        {getErrorMessage(trendsError, "Failed to load trends data")}
                       </span>
                     </div>
                   )}
@@ -495,7 +554,7 @@ export default function ClientAnalytics() {
             {/* Enhanced Location Analytics with performance scores */}
             {!enhancedLocationsLoading && enhancedLocations.length > 0 ? (
               <LocationAnalyticsWidget
-                locations={enhancedLocations as any}
+                locations={enhancedLocations as LocationDataType[]}
                 showEnhancedMetrics={true}
                 limit={showAllLocations ? 999 : 5}
                 onViewMore={() => setShowAllLocations(true)}
@@ -504,7 +563,7 @@ export default function ClientAnalytics() {
               !locationsLoading &&
               locations.length > 0 && (
                 <LocationAnalyticsWidget
-                  locations={locations as any}
+                  locations={locations as LocationDataType[]}
                   limit={showAllLocations ? 999 : 4}
                   onViewMore={() => setShowAllLocations(true)}
                 />

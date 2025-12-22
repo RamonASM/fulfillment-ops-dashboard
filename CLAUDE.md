@@ -149,7 +149,8 @@ e2e/                              # End-to-end Playwright tests
 - **Last Major Work**: Created 9 specialized agents including docs-keeper (Dec 21, 2025)
 - **Next Steps**: End-to-end testing of import → analytics → dashboard flow
 
-### Recently Completed (Dec 21, 2025)
+### Recently Completed (Dec 22, 2025)
+- **Enterprise Code Quality Remediation** - 10 critical/high priority fixes for production readiness
 - Security hardening deployed (SQL injection fix, Redis rate limiting, input validation)
 - Created 9 specialized slash command agents (db, api, python, ml, admin-ui, portal-ui, testing, devops, docs-keeper)
 - Automatic documentation behavior added to CLAUDE.md
@@ -257,6 +258,28 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 ---
 
 ## Deployment History
+
+### 2025-12-22: Enterprise Code Quality Remediation (DEPLOYING)
+- **What**: Comprehensive code quality audit and remediation - 10 critical/high priority fixes
+- **Commits**: `cf02848` - Enterprise code quality remediation
+- **Tier 1 Critical Fixes**:
+  - `MLInsightsSummaryWidget.tsx` - Replaced mock data with real API call + graceful fallback
+  - `scheduler.ts` - Added mutex lock pattern to prevent concurrent job execution (race condition fix)
+  - `shipment.routes.ts` - Added comprehensive Zod validation for all endpoints
+  - `usage.service.ts` - Combined two separate transactions into single atomic transaction
+  - Multiple files - Removed all `any` type casts with proper TypeScript interfaces
+- **Tier 2 High Priority Fixes**:
+  - `auth.routes.ts`, `portal/auth.routes.ts` - Added auth rate limiting (10 attempts/15 min)
+  - `validation-schemas.ts` - Reverted pagination limit from 1000 → 100 (security)
+  - `audit.routes.ts` - Added `requireClientAccess` middleware for authorization
+  - `portal/auth.routes.ts` - Fixed password minimum from 1 → 10 characters
+- **New TypeScript Interfaces Added**:
+  - `ProductWithEnhancedMetrics` (ClientDetail.tsx)
+  - `EnhancedLocationPerformance`, `RegionalPerformanceSummary`, `StateSummary` (ClientAnalytics.tsx)
+  - `PendingOrder`, `UsageCalculationTier`, `UsageConfidence` types
+- **Status**: 🟡 PENDING DEPLOYMENT
+
+---
 
 ### 2025-12-22 @ 22:05 PST: QA Audit Fixes - Import Concurrency, ML UX, Dead Code Cleanup (DEPLOYED)
 - **What**: Fixed multiple issues from deep QA audit - advisory locks, ML readiness UX, dead code removal
@@ -652,6 +675,16 @@ npm run db:seed
 
 This section tracks smaller details, quirks, and knowledge that shouldn't be forgotten.
 
+### Enterprise Remediation (Dec 22, 2025)
+- **Pagination limit reverted**: 1000 → 100 in `validation-schemas.ts` (security fix)
+- **Portal password minimum**: Changed from 1 → 10 characters in `portal/auth.routes.ts`
+- **Auth rate limiting**: Now applied to `/login` and `/refresh` endpoints (10 attempts/15 min)
+- **Shipment routes**: Now have comprehensive Zod validation (was manual type casting)
+- **Scheduler mutex**: Jobs now use lock pattern to prevent concurrent execution
+- **Usage service**: Two separate transactions combined into single atomic transaction
+- **Audit routes**: Client activity endpoint now requires `requireClientAccess`
+- **Type safety**: All `any` casts removed from audit.routes.ts, ClientAnalytics.tsx, ClientDetail.tsx
+
 ### Rate Limiting Tiers (Added Dec 21, 2025)
 | Role | Default | Auth | Upload | AI | Report | Admin | Financial | Orders |
 |------|---------|------|--------|----|----|-------|-----------|--------|
@@ -712,6 +745,6 @@ FRONTEND_URL=https://admin.yourtechassist.us
 
 ---
 
-**Last Updated**: December 21, 2025 @ 17:15 PST
-**Last Major Change**: Fixed Python importer crash (relative import → absolute import), CSRF token issues, settings file cleanup
-**Next Update Due**: After successful test import or next production deployment
+**Last Updated**: December 22, 2025
+**Last Major Change**: Enterprise Code Quality Remediation - 10 critical/high priority fixes for production readiness
+**Next Update Due**: After successful production deployment verification

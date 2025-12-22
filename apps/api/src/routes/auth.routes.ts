@@ -10,8 +10,13 @@ import {
   requireRole,
 } from '../middleware/auth.js';
 import { UnauthorizedError, ValidationError } from '../middleware/error-handler.js';
+import { generateCsrfToken } from '../middleware/csrf.js';
+import { createAuthLimiter } from '../lib/rate-limiters.js';
 
 const router = Router();
+
+// Apply rate limiting to prevent brute force attacks
+const authLimiter = createAuthLimiter();
 
 // =============================================================================
 // VALIDATION SCHEMAS
@@ -37,7 +42,7 @@ const registerSchema = z.object({
  * POST /api/auth/login
  * Login with email and password
  */
-router.post('/login', async (req, res, next) => {
+router.post('/login', authLimiter, async (req, res, next) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
@@ -85,6 +90,15 @@ router.post('/login', async (req, res, next) => {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Issue CSRF token for double-submit cookie pattern
+    const csrfToken = generateCsrfToken();
+    res.cookie('csrf_token', csrfToken, {
+      httpOnly: false, // Must be readable by JavaScript for double-submit
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
     });
 
     res.json({
@@ -152,6 +166,7 @@ router.post('/register', authenticate, requireRole('admin'), async (req, res, ne
 router.post('/logout', (_req, res) => {
   res.clearCookie('accessToken');
   res.clearCookie('refreshToken');
+  res.clearCookie('csrf_token');
   res.json({ message: 'Logged out successfully' });
 });
 
@@ -159,7 +174,7 @@ router.post('/logout', (_req, res) => {
  * POST /api/auth/refresh
  * Refresh access token using refresh token
  */
-router.post('/refresh', async (req, res, next) => {
+router.post('/refresh', authLimiter, async (req, res, next) => {
   try {
     const refreshToken = req.cookies?.refreshToken;
 
@@ -192,6 +207,15 @@ router.post('/refresh', async (req, res, next) => {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 15 * 60 * 1000,
+    });
+
+    // Refresh CSRF token as well
+    const csrfToken = generateCsrfToken();
+    res.cookie('csrf_token', csrfToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000,
     });
 
     res.json({ accessToken });

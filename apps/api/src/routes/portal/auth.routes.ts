@@ -4,8 +4,13 @@ import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { generateCsrfToken } from '../../middleware/csrf.js';
+import { createAuthLimiter } from '../../lib/rate-limiters.js';
 
 const router = Router();
+
+// Apply rate limiting to prevent brute force attacks on portal
+const authLimiter = createAuthLimiter();
 
 // JWT secret validation - fail fast if not set
 // Environment validation at startup ensures this is set before the app starts
@@ -24,11 +29,11 @@ const JWT_EXPIRY = '7d';
 
 const portalLoginSchema = z.object({
   email: z.string().email('Invalid email address').max(255, 'Email too long'),
-  password: z.string().min(1, 'Password is required').max(128, 'Password too long'),
+  password: z.string().min(10, 'Password must be at least 10 characters').max(128, 'Password too long'),
 });
 
 // Portal user login
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authLimiter, async (req: Request, res: Response) => {
   try {
     // Validate input with Zod
     const { email, password } = portalLoginSchema.parse(req.body);
@@ -73,6 +78,15 @@ router.post('/login', async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
+    // Issue CSRF token for double-submit cookie pattern
+    const csrfToken = generateCsrfToken();
+    res.cookie('csrf_token', csrfToken, {
+      httpOnly: false, // Must be readable by JavaScript for double-submit
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
     res.json({
       user: {
         id: portalUser.id,
@@ -104,6 +118,7 @@ router.post('/login', async (req: Request, res: Response) => {
 // Logout
 router.post('/logout', (req: Request, res: Response) => {
   res.clearCookie('portal_token');
+  res.clearCookie('csrf_token');
   res.json({ message: 'Logged out successfully' });
 });
 

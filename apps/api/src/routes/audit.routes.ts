@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { authenticate } from '../middleware/auth.js';
+import { z } from 'zod';
+import { authenticate, requireClientAccess } from '../middleware/auth.js';
 import { logger } from '../lib/logger.js';
 import {
   getAuditLogs,
@@ -8,8 +9,27 @@ import {
   AuditAction,
   AuditCategory,
 } from '../services/audit.service.js';
+import { paginationSchema } from '../lib/validation-schemas.js';
 
 const router = Router();
+
+// =============================================================================
+// VALIDATION SCHEMAS
+// Phase 4.2: Using shared validation schemas
+// =============================================================================
+
+const auditLogsQuerySchema = paginationSchema.extend({
+  userId: z.string().uuid().optional(),
+  clientId: z.string().uuid().optional(),
+  action: z.string().optional(),
+  category: z.string().optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+});
+
+const activityQuerySchema = z.object({
+  days: z.coerce.number().int().positive().max(365).optional().default(30),
+});
 
 /**
  * GET /api/audit/logs
@@ -17,38 +37,30 @@ const router = Router();
  */
 router.get('/logs', authenticate, async (req: Request, res: Response) => {
   try {
-    const {
-      userId,
-      clientId,
-      action,
-      category,
-      startDate,
-      endDate,
-      limit,
-      offset,
-    } = req.query;
+    const query = auditLogsQuerySchema.parse(req.query);
+    const user = req.user;
 
-    const user = (req as any).user;
     // Only admins can view all logs, others only see their own
     const filterUserId = user?.role === 'admin'
-      ? userId as string
-      : user?.id;
+      ? query.userId
+      : user?.userId;
 
     const result = await getAuditLogs({
       userId: filterUserId,
-      clientId: clientId as string,
-      action: action as AuditAction,
-      category: category as AuditCategory,
-      startDate: startDate ? new Date(startDate as string) : undefined,
-      endDate: endDate ? new Date(endDate as string) : undefined,
-      limit: limit ? parseInt(limit as string, 10) : 50,
-      offset: offset ? parseInt(offset as string, 10) : 0,
+      clientId: query.clientId,
+      action: query.action as AuditAction,
+      category: query.category as AuditCategory,
+      startDate: query.startDate ? new Date(query.startDate) : undefined,
+      endDate: query.endDate ? new Date(query.endDate) : undefined,
+      limit: query.limit,
+      offset: query.offset || 0,
     });
 
     res.json(result);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Audit get logs error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to fetch audit logs' });
+    const message = error instanceof Error ? error.message : 'Failed to fetch audit logs';
+    res.status(500).json({ error: message });
   }
 });
 
@@ -59,31 +71,30 @@ router.get('/logs', authenticate, async (req: Request, res: Response) => {
 router.get('/user/:userId/activity', authenticate, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const { days } = req.query;
-    const user = (req as any).user;
+    const query = activityQuerySchema.parse(req.query);
+    const user = req.user;
 
     // Only admins can view other users' activity
-    if (user?.role !== 'admin' && userId !== user?.id) {
+    if (user?.role !== 'admin' && userId !== user?.userId) {
       return res.status(403).json({ error: 'Not authorized to view this activity' });
     }
 
-    const summary = await getUserActivitySummary(
-      userId,
-      days ? parseInt(days as string, 10) : 30
-    );
+    const summary = await getUserActivitySummary(userId, query.days);
 
     res.json(summary);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Audit user activity error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to fetch activity' });
+    const message = error instanceof Error ? error.message : 'Failed to fetch activity';
+    res.status(500).json({ error: message });
   }
 });
 
 /**
  * GET /api/audit/client/:clientId/activity
  * Get client activity summary
+ * Requires user to have access to the specified client
  */
-router.get('/client/:clientId/activity', authenticate, async (req: Request, res: Response) => {
+router.get('/client/:clientId/activity', authenticate, requireClientAccess, async (req: Request, res: Response) => {
   try {
     const { clientId } = req.params;
     const { days } = req.query;
@@ -94,9 +105,10 @@ router.get('/client/:clientId/activity', authenticate, async (req: Request, res:
     );
 
     res.json(summary);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Audit client activity error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to fetch activity' });
+    const message = error instanceof Error ? error.message : 'Failed to fetch activity';
+    res.status(500).json({ error: message });
   }
 });
 

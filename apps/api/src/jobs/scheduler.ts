@@ -12,13 +12,13 @@ import {
 } from "../services/order-timing.service.js";
 import { emitOrderDeadlineAlert } from "../services/notification.service.js";
 import { BenchmarkingService } from "../services/benchmarking.service.js";
-import { recalculateAllClientsUsage, isDsAnalyticsHealthy } from "../services/analytics-facade.service.js";
+import { recalculateAllClientsUsage, recalculateClientUsage, isDsAnalyticsHealthy } from "../services/analytics-facade.service.js";
 import { MLClientService } from "../services/ml-client.service.js";
 import { dsAnalyticsService } from "../services/ds-analytics.service.js";
 
 // =============================================================================
 // JOB SCHEDULER
-// Simple cron-like scheduler for periodic tasks
+// Simple cron-like scheduler for periodic tasks with mutex protection
 // =============================================================================
 
 interface ScheduledJob {
@@ -31,6 +31,31 @@ interface ScheduledJob {
 
 const jobs: ScheduledJob[] = [];
 
+// Mutex map to prevent concurrent job execution (prevents race condition)
+const jobLocks = new Map<string, Promise<void>>();
+
+/**
+ * Acquire a lock for a job - prevents concurrent execution
+ * Returns a release function if lock acquired, null if already locked
+ */
+function acquireJobLock(jobName: string): (() => void) | null {
+  if (jobLocks.has(jobName)) {
+    return null; // Job is already running
+  }
+
+  let releaseFn: () => void;
+  const lockPromise = new Promise<void>((resolve) => {
+    releaseFn = resolve;
+  });
+
+  jobLocks.set(jobName, lockPromise);
+
+  return () => {
+    jobLocks.delete(jobName);
+    releaseFn();
+  };
+}
+
 /**
  * Register a job with the scheduler
  */
@@ -39,6 +64,12 @@ export function registerJob(
   intervalMs: number,
   handler: () => Promise<void>,
 ): void {
+  // Prevent duplicate job registration
+  if (jobs.some(j => j.name === name)) {
+    logger.warn("Job already registered, skipping duplicate", { job: name });
+    return;
+  }
+
   jobs.push({
     name,
     intervalMs,
@@ -59,33 +90,43 @@ export function startScheduler(): void {
     const now = new Date();
 
     for (const job of jobs) {
-      // Skip if job is already running
-      if (job.isRunning) continue;
+      // Acquire lock atomically - this prevents the race condition
+      const release = acquireJobLock(job.name);
+      if (!release) {
+        // Job is already running, skip
+        continue;
+      }
 
       // Check if it's time to run
       const shouldRun =
         job.lastRun === null ||
         now.getTime() - job.lastRun.getTime() >= job.intervalMs;
 
-      if (shouldRun) {
-        job.isRunning = true;
-        const timer = logger.startTimer();
-        logger.info("Running scheduled job", { job: job.name });
+      if (!shouldRun) {
+        // Release lock immediately if we're not running
+        release();
+        continue;
+      }
 
-        try {
-          await job.run();
-          job.lastRun = now;
-          logger.info("Completed scheduled job", {
-            job: job.name,
-            durationMs: timer(),
-          });
-        } catch (error) {
-          logger.error(`Scheduled job failed: ${job.name}`, error as Error, {
-            job: job.name,
-          });
-        } finally {
-          job.isRunning = false;
-        }
+      // Mark as running and execute
+      job.isRunning = true;
+      const timer = logger.startTimer();
+      logger.info("Running scheduled job", { job: job.name });
+
+      try {
+        await job.run();
+        job.lastRun = now;
+        logger.info("Completed scheduled job", {
+          job: job.name,
+          durationMs: timer(),
+        });
+      } catch (error) {
+        logger.error(`Scheduled job failed: ${job.name}`, error as Error, {
+          job: job.name,
+        });
+      } finally {
+        job.isRunning = false;
+        release(); // Always release the lock
       }
     }
   }, 10000); // Check every 10 seconds
@@ -201,6 +242,134 @@ registerJob("daily-alert-metrics", 24 * 60 * 60 * 1000, async () => {
  */
 registerJob("hourly-risk-cache", 60 * 60 * 1000, async () => {
   await refreshRiskScoreCache();
+});
+
+/**
+ * Retry failed import post-processing analytics
+ * Checks for imports with failed post-processing and retries them
+ * Runs every 15 minutes
+ */
+registerJob("retry-failed-import-analytics", 15 * 60 * 1000, async () => {
+  // Find imports from last 24 hours with failed post-processing
+  const recentImports = await prisma.importBatch.findMany({
+    where: {
+      status: { in: ["completed", "completed_with_errors"] },
+      createdAt: {
+        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      },
+    },
+    select: {
+      id: true,
+      clientId: true,
+      metadata: true,
+      createdAt: true,
+    },
+  });
+
+  interface ServiceResult {
+    success: boolean;
+    error: string | null;
+    duration: number;
+    retriedAt?: string;
+  }
+  interface PostProcessingResults {
+    usageRecalc?: ServiceResult;
+    alertGeneration?: ServiceResult;
+    dailySnapshot?: ServiceResult;
+    riskScoreRefresh?: ServiceResult;
+    alertMetrics?: ServiceResult;
+  }
+
+  let retriedCount = 0;
+  let successCount = 0;
+
+  for (const importBatch of recentImports) {
+    const batchMetadata = importBatch.metadata as Record<string, unknown> | null;
+    const results = batchMetadata?.postProcessingResults as PostProcessingResults | undefined;
+
+    if (!results) continue;
+
+    // Check for any failed services that haven't been retried yet
+    const failedServices = Object.entries(results).filter(
+      ([, r]) => r && !r.success && !r.retriedAt,
+    );
+
+    if (failedServices.length === 0) continue;
+
+    logger.info("Retrying failed import analytics", {
+      importId: importBatch.id,
+      failedServices: failedServices.map(([name]) => name),
+    });
+
+    const retryResults: Record<string, ServiceResult> = {};
+
+    for (const [serviceName] of failedServices) {
+      const startTime = Date.now();
+      try {
+        switch (serviceName) {
+          case "usageRecalc":
+            await recalculateClientUsage(importBatch.clientId);
+            break;
+          case "alertGeneration":
+            await runAlertGeneration(importBatch.clientId);
+            break;
+          case "dailySnapshot":
+            await createDailySnapshot();
+            break;
+          case "riskScoreRefresh":
+            await refreshRiskScoreCache();
+            break;
+          case "alertMetrics":
+            await aggregateDailyAlertMetrics();
+            break;
+        }
+        retryResults[serviceName] = {
+          success: true,
+          error: null,
+          duration: Date.now() - startTime,
+          retriedAt: new Date().toISOString(),
+        };
+        successCount++;
+        logger.info(`✓ Retry succeeded: ${serviceName}`, { importId: importBatch.id });
+      } catch (error) {
+        retryResults[serviceName] = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration: Date.now() - startTime,
+          retriedAt: new Date().toISOString(),
+        };
+        logger.error(`✗ Retry failed: ${serviceName}`, error as Error, {
+          importId: importBatch.id,
+        });
+      }
+      retriedCount++;
+    }
+
+    // Update import metadata with retry results
+    const updatedResults: PostProcessingResults = { ...results };
+    for (const [serviceName, result] of Object.entries(retryResults)) {
+      updatedResults[serviceName as keyof PostProcessingResults] = result;
+    }
+
+    await prisma.importBatch.update({
+      where: { id: importBatch.id },
+      data: {
+        metadata: JSON.parse(JSON.stringify({
+          ...batchMetadata,
+          postProcessingResults: updatedResults,
+          lastRetryAt: new Date().toISOString(),
+        })),
+      },
+    });
+  }
+
+  if (retriedCount > 0) {
+    logger.info("Import analytics retry completed", {
+      retriedCount,
+      successCount,
+      failedCount: retriedCount - successCount,
+    });
+  }
 });
 
 /**

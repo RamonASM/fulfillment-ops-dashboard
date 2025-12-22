@@ -16,6 +16,7 @@ import {
 import { MLStatusBadge } from "@/components/MLStatusBadge";
 import { useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
+import { api } from "@/api/client";
 
 interface MLSummary {
   status: "healthy" | "degraded" | "offline";
@@ -23,31 +24,42 @@ interface MLSummary {
   totalStockoutPredictions: number;
   averageAccuracy: number;
   activePredictions: number;
-  criticalStockouts: number; // Products predicted to stock out in d7 days
+  criticalStockouts: number;
+}
+
+interface MLSummaryResponse {
+  data: MLSummary;
 }
 
 export function MLInsightsSummaryWidget() {
   const navigate = useNavigate();
 
-  // Fetch ML summary (TODO: Implement /ml/summary endpoint)
-  const { data: mlSummary, isLoading } = useQuery({
+  // Fetch ML summary from actual API endpoint
+  const { data: mlSummary, isLoading, isError } = useQuery({
     queryKey: ["ml-summary"],
     queryFn: async () => {
-      // Mock data for now
-      return {
-        status: "healthy" as const,
-        totalForecasts: 0,
-        totalStockoutPredictions: 0,
-        averageAccuracy: 0,
-        activePredictions: 0,
-        criticalStockouts: 0,
-      } as MLSummary;
+      try {
+        const response = await api.get<MLSummaryResponse>("/ml/summary");
+        return response.data;
+      } catch {
+        // Return offline status when ML service is not configured/available
+        return {
+          status: "offline" as const,
+          totalForecasts: 0,
+          totalStockoutPredictions: 0,
+          averageAccuracy: 0,
+          activePredictions: 0,
+          criticalStockouts: 0,
+        };
+      }
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 1, // Only retry once for ML service
   });
 
-  const summary = mlSummary || {
-    status: "offline",
+  // Default to offline when no data or error
+  const summary: MLSummary = mlSummary || {
+    status: isError ? "offline" : "healthy",
     totalForecasts: 0,
     totalStockoutPredictions: 0,
     averageAccuracy: 0,
@@ -57,6 +69,7 @@ export function MLInsightsSummaryWidget() {
 
   const isHealthy = summary.status === "healthy";
   const isOffline = summary.status === "offline";
+  const hasNoPredictions = summary.totalForecasts === 0 && summary.totalStockoutPredictions === 0;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -82,12 +95,44 @@ export function MLInsightsSummaryWidget() {
                 <XCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-semibold text-red-900">
-                    ML Service Offline
+                    ML Service Unavailable
                   </p>
                   <p className="text-xs text-red-700 mt-1">
-                    AI-powered predictions are currently unavailable. Contact
-                    your administrator if this issue persists.
+                    The ML Analytics service cannot be reached. Please contact your administrator.
                   </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {hasNoPredictions && !isOffline && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <Activity className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-blue-900">
+                    Collecting Transaction Data
+                  </p>
+                  <p className="text-xs text-blue-700 mt-1">
+                    AI predictions require 30+ days of transaction history. The system automatically collects data with each order.
+                  </p>
+
+                  {/* Data Collection Progress */}
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between text-xs text-blue-700 mb-1.5">
+                      <span>ML Data Requirements</span>
+                      <span className="font-medium">0 of 30+ days</span>
+                    </div>
+                    <div className="w-full bg-blue-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: '0%' }}
+                      />
+                    </div>
+                    <p className="text-xs text-blue-600 mt-2">
+                      📊 Start importing transaction data or placing orders to enable predictions
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

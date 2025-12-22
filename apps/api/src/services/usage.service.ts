@@ -98,7 +98,7 @@ export async function calculateUsage(
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: "completed",
+      orderStatus: { in: ["completed", "Completed"] },
     },
     orderBy: { dateSubmitted: "asc" },
   });
@@ -398,7 +398,7 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
   const allTransactions = await prisma.transaction.findMany({
     where: {
       productId: { in: productIds },
-      orderStatus: "completed",
+      orderStatus: { in: ["completed", "Completed"] },
     },
     orderBy: { dateSubmitted: "asc" },
   });
@@ -490,9 +490,11 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
     });
   }
 
-  // OPTIMIZATION: Batch update all products in a transaction
-  await prisma.$transaction(
-    productUpdates.map((update) =>
+  // CRITICAL: Combine all operations in a single transaction for data consistency
+  // This ensures product updates and metrics are atomic - no partial state on failure
+  await prisma.$transaction([
+    // Update all products
+    ...productUpdates.map((update) =>
       prisma.product.update({
         where: { id: update.id },
         data: {
@@ -501,12 +503,8 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
         },
       }),
     ),
-  );
-
-  // OPTIMIZATION: Batch upsert all metrics
-  // Note: Prisma doesn't support bulk upsert, but batching in a transaction is still faster
-  await prisma.$transaction(
-    metricsUpserts.map((metric) =>
+    // Upsert all metrics
+    ...metricsUpserts.map((metric) =>
       prisma.usageMetric.upsert({
         where: {
           productId_periodType_periodStart: {
@@ -524,7 +522,7 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
         },
       }),
     ),
-  );
+  ]);
 }
 
 /**
@@ -601,7 +599,7 @@ export async function recalculateProductUsage(
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: "completed",
+      orderStatus: { in: ["completed", "Completed"] },
     },
   });
 
@@ -663,7 +661,7 @@ export async function calculateMonthlyUsage(
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: "completed",
+      orderStatus: { in: ["completed", "Completed"] },
     },
     orderBy: { dateSubmitted: "asc" },
   });
@@ -805,7 +803,7 @@ export async function storeMonthlyUsageSnapshots(
   const transactions = await prisma.transaction.findMany({
     where: {
       productId,
-      orderStatus: "completed",
+      orderStatus: { in: ["completed", "Completed"] },
     },
     orderBy: { dateSubmitted: "asc" },
   });
@@ -854,13 +852,77 @@ export async function storeMonthlyUsageSnapshots(
 }
 
 /**
+ * Calculate stock status based on weeks remaining.
+ * Status thresholds:
+ * - stockout: 0 units in stock
+ * - critical: <= 2 weeks remaining
+ * - low: <= 4 weeks remaining
+ * - watch: <= 6 weeks remaining
+ * - healthy: > 6 weeks remaining
+ * - overstock: > 16 weeks remaining (optional consideration)
+ */
+export function calculateStockStatus(
+  currentStockUnits: number,
+  weeksRemaining: number | null,
+): "stockout" | "critical" | "low" | "watch" | "healthy" {
+  if (currentStockUnits <= 0) {
+    return "stockout";
+  }
+
+  if (weeksRemaining === null) {
+    // No usage data - assume healthy if there's stock
+    return currentStockUnits > 0 ? "healthy" : "stockout";
+  }
+
+  if (weeksRemaining <= 2) {
+    return "critical";
+  }
+  if (weeksRemaining <= 4) {
+    return "low";
+  }
+  if (weeksRemaining <= 6) {
+    return "watch";
+  }
+
+  return "healthy";
+}
+
+/**
  * Update product with calculated monthly usage fields.
  * This should be called after calculateMonthlyUsage.
+ *
+ * IMPORTANT: This function now also calculates and saves:
+ * - weeksRemaining: based on currentStockUnits / weeklyUsage
+ * - stockStatus: based on weeksRemaining thresholds
  */
 export async function updateProductMonthlyUsage(
   productId: string,
 ): Promise<void> {
+  // First get the product's current stock
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    select: {
+      currentStockUnits: true,
+      currentStockPacks: true,
+      packSize: true,
+    },
+  });
+
+  if (!product) {
+    throw new Error("Product not found");
+  }
+
   const usageResult = await calculateMonthlyUsage(productId);
+
+  // Calculate weeks remaining
+  let weeksRemaining: number | null = null;
+  if (usageResult.monthlyUsageUnits > 0) {
+    const weeklyUsage = usageResult.monthlyUsageUnits / 4.33; // Average weeks per month
+    weeksRemaining = Math.round((product.currentStockUnits / weeklyUsage) * 10) / 10; // Round to 1 decimal
+  }
+
+  // Calculate stock status based on weeks remaining
+  const stockStatus = calculateStockStatus(product.currentStockUnits, weeksRemaining);
 
   await prisma.product.update({
     where: { id: productId },
@@ -871,6 +933,9 @@ export async function updateProductMonthlyUsage(
       usageCalculationTier: usageResult.calculationTier,
       usageConfidence: usageResult.confidence,
       usageLastCalculated: usageResult.calculatedAt,
+      // NEW: Also save weeksRemaining and stockStatus
+      weeksRemaining: weeksRemaining !== null ? Math.round(weeksRemaining) : null,
+      stockStatus,
     },
   });
 
