@@ -99,13 +99,16 @@ export default function ClientDetail() {
     enabled: !!clientId,
   });
 
-  // Fetch products
+  // Fetch products with item type counts in meta
   const { data: productsData, isLoading: productsLoading } = useQuery({
     queryKey: ["products", clientId, activeTab, search],
     queryFn: () =>
       api.get<{
         data: ProductWithMetrics[];
-        meta: { statusCounts: Record<string, number> };
+        meta: {
+          statusCounts: Record<string, number>;
+          itemTypeCounts: Record<string, number>;
+        };
       }>(`/clients/${clientId}/products`, {
         params: {
           type: activeTab,
@@ -119,29 +122,8 @@ export default function ClientDetail() {
   const products = (productsData?.data || []) as ProductWithEnhancedMetrics[];
   const statusCounts = productsData?.meta?.statusCounts || {};
 
-  // Fetch product counts by type for smart tab switching
-  const { data: productCounts } = useQuery({
-    queryKey: ["product-counts", clientId],
-    queryFn: async () => {
-      const response = await api.get<{
-        data: ProductWithMetrics[];
-      }>(`/clients/${clientId}/products`, {
-        params: {
-          includeOrphans: "true",
-          limit: 1000,
-        },
-      });
-
-      const counts = { evergreen: 0, event: 0, completed: 0 };
-      response.data.forEach((p: ProductWithMetrics) => {
-        if (p.itemType in counts) {
-          counts[p.itemType as keyof typeof counts]++;
-        }
-      });
-      return counts;
-    },
-    enabled: !!clientId,
-  });
+  // Use itemTypeCounts from meta instead of separate query (efficient groupBy on server)
+  const productCounts = productsData?.meta?.itemTypeCounts || null;
 
   // Smart default tab selection
   useEffect(() => {

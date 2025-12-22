@@ -368,6 +368,29 @@ router.get("/", async (req, res, next) => {
         .length,
     };
 
+    // Get item type counts for smart tab switching (efficient groupBy query)
+    const itemTypeGrouped = await prisma.product.groupBy({
+      by: ["itemType"],
+      where: {
+        clientId,
+        isActive: true,
+        ...(query.includeOrphans !== "true" ? { isOrphan: false } : {}),
+      },
+      _count: true,
+    });
+
+    const itemTypeCounts: Record<string, number> = {
+      evergreen: 0,
+      event: 0,
+      completed: 0,
+    };
+    itemTypeGrouped.forEach((group) => {
+      const type = group.itemType?.toLowerCase();
+      if (type && type in itemTypeCounts) {
+        itemTypeCounts[type] = group._count;
+      }
+    });
+
     res.json({
       data: filteredProducts,
       pagination: {
@@ -378,6 +401,7 @@ router.get("/", async (req, res, next) => {
       },
       meta: {
         statusCounts,
+        itemTypeCounts,
       },
     });
   } catch (error) {
