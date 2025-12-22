@@ -62,7 +62,7 @@ describe('Rate Limiters', () => {
         user: undefined,
         portalUser: undefined,
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -99,7 +99,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         body: { email: 'test@example.com' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -137,7 +137,7 @@ describe('Rate Limiters', () => {
         user: undefined,
         portalUser: undefined,
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       let wasBlocked = false;
       const mockRes = {
@@ -178,7 +178,7 @@ describe('Rate Limiters', () => {
         user: { userId: 'admin-123', role: 'admin' },
         portalUser: undefined,
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -214,7 +214,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         user: { userId: 'user-123', role: 'user' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -250,7 +250,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         user: { userId: 'user-123', role: 'user' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -288,7 +288,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         portalUser: { id: 'portal-user-123', role: 'client' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -324,7 +324,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         user: { userId: 'user-123', role: 'account_manager' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -353,7 +353,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         user: { userId: 'unique-user-123', role: 'user' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -382,7 +382,7 @@ describe('Rate Limiters', () => {
         user: undefined,
         portalUser: undefined,
         ip: '192.168.1.100',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
@@ -412,7 +412,7 @@ describe('Rate Limiters', () => {
       const mockReq = {
         user: { userId: 'user-123', role: 'user' },
         ip: '127.0.0.1',
-      } as Partial<Request>;
+      } as unknown as Partial<Request>;
 
       const mockRes = {
         setHeader: vi.fn(),
