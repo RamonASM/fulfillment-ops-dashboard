@@ -190,58 +190,74 @@ export async function getBatchClientStats(
 
 /**
  * Batch load usage metrics for multiple products
+ * Now reads from Product table directly (populated by DS Analytics)
+ * instead of the legacy usageMetric table
  */
 export async function getBatchUsageMetrics(
   productIds: string[],
 ): Promise<Map<string, UsageMetrics | null>> {
   const metricsMap = new Map<string, UsageMetrics | null>();
-  const uncachedIds: string[] = [];
 
   if (productIds.length === 0) {
     return metricsMap;
   }
 
-  // Check cache first
-  for (const productId of productIds) {
-    const cacheKey = CacheKeys.usageMetrics(productId, "latest");
-    const cached = await cache.get<UsageMetrics>(cacheKey);
-    if (cached !== null) {
-      metricsMap.set(productId, cached);
-    } else {
-      uncachedIds.push(productId);
-      metricsMap.set(productId, null); // Initialize as null
+  // Fetch usage data directly from Product table (populated by DS Analytics)
+  const products = await prisma.product.findMany({
+    where: {
+      id: { in: productIds },
+    },
+    select: {
+      id: true,
+      monthlyUsageUnits: true,
+      monthlyUsagePacks: true,
+      usageDataMonths: true,
+      usageCalculationTier: true,
+      usageConfidence: true,
+      usageLastCalculated: true,
+    },
+  });
+
+  for (const product of products) {
+    // Map calculation tier to basis format
+    let calculationBasis: UsageMetrics["calculationBasis"] = "none";
+    if (product.usageCalculationTier) {
+      const tier = product.usageCalculationTier.toLowerCase();
+      if (tier.includes("12") || tier === "12_month") {
+        calculationBasis = "12-mo";
+      } else if (
+        tier.includes("3") ||
+        tier === "3_month" ||
+        tier === "6_month"
+      ) {
+        calculationBasis = "3-mo";
+      } else if (tier === "weekly") {
+        calculationBasis = "weekly";
+      }
     }
+
+    // Calculate daily/weekly from monthly
+    const monthlyUnits = product.monthlyUsageUnits || 0;
+    const avgDailyUnits = monthlyUnits / 30.44;
+
+    const usage: UsageMetrics = {
+      calculationBasis,
+      avgMonthlyUnits: monthlyUnits,
+      avgDailyUnits,
+      avgWeeklyUnits: avgDailyUnits * 7,
+      confidence:
+        (product.usageConfidence as UsageMetrics["confidence"]) || "low",
+      dataPointCount: product.usageDataMonths || 0,
+      calculatedAt: product.usageLastCalculated,
+    };
+
+    metricsMap.set(product.id, usage);
   }
 
-  // Fetch uncached metrics from database
-  if (uncachedIds.length > 0) {
-    // Get latest metric for each product
-    const latestMetrics = await prisma.usageMetric.findMany({
-      where: {
-        productId: { in: uncachedIds },
-      },
-      orderBy: {
-        calculatedAt: "desc",
-      },
-      distinct: ["productId"],
-    });
-
-    for (const metric of latestMetrics) {
-      const usage: UsageMetrics = {
-        calculationBasis: metric.periodType as UsageMetrics["calculationBasis"],
-        avgMonthlyUnits: Number(metric.avgDailyUnits || 0) * 30.44,
-        avgDailyUnits: Number(metric.avgDailyUnits || 0),
-        avgWeeklyUnits: Number(metric.avgDailyUnits || 0) * 7,
-        confidence: getConfidenceLevel(metric.transactionCount || 0),
-        dataPointCount: metric.transactionCount || 0,
-        calculatedAt: metric.calculatedAt,
-      };
-
-      metricsMap.set(metric.productId, usage);
-
-      // Cache the result (fire and forget for batch operations)
-      const cacheKey = CacheKeys.usageMetrics(metric.productId, "latest");
-      void cache.set(cacheKey, usage, CacheTTL.USAGE_METRICS);
+  // Initialize any missing products with null
+  for (const productId of productIds) {
+    if (!metricsMap.has(productId)) {
+      metricsMap.set(productId, null);
     }
   }
 
