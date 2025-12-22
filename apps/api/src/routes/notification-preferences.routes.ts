@@ -5,6 +5,7 @@
 
 import { Router } from "express";
 import { authenticate } from "../middleware/auth.js";
+import { logger } from "../lib/logger.js";
 import * as notificationPrefService from "../services/notification-preference.service.js";
 
 const router = Router();
@@ -45,7 +46,7 @@ router.get("/", async (req, res) => {
       data: prefs,
     });
   } catch (error) {
-    console.error("Error fetching notification preferences:", error);
+    logger.error("Error fetching notification preferences", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to fetch notification preferences",

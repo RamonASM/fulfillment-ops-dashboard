@@ -1,11 +1,11 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import readline from "readline";
 import xlsx from "xlsx";
 import { spawn, execSync } from "child_process";
-import { prisma } from "../lib/prisma.js";
+import { prisma, Prisma } from "../lib/prisma.js";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
@@ -244,7 +244,7 @@ const upload = multer({
 });
 
 // Multer error handler
-const handleMulterError = (err: any, req: any, res: any, next: any) => {
+const handleMulterError = (err: Error | multer.MulterError, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
@@ -330,7 +330,7 @@ function calculateProgress(importBatch: {
   return Math.min(100, Math.round((processed / total) * 100));
 }
 
-function generateWarnings(headers: string[], rows: any[]): string[] {
+function generateWarnings(headers: string[], rows: Record<string, unknown>[]): string[] {
   const warnings: string[] = [];
 
   // Check for empty columns
@@ -372,7 +372,7 @@ router.get("/history", async (req, res, next) => {
   try {
     const { clientId, status, limit = "50", offset = "0" } = req.query;
 
-    const where: any = {};
+    const where: Prisma.ImportBatchWhereInput = {};
 
     // Filter by clientId if provided
     if (clientId && typeof clientId === "string") {
@@ -1593,11 +1593,11 @@ function generateDiagnosticRecommendations(
   importBatch: {
     status: string;
     importType: string | null;
-    errors: any;
+    errors: Prisma.JsonValue;
     filePath: string | null;
     rowCount: number | null;
     processedCount: number;
-    metadata: any;
+    metadata: Prisma.JsonValue;
   },
   env: {
     pythonPath: string | null;
@@ -1607,7 +1607,8 @@ function generateDiagnosticRecommendations(
   },
 ): string[] {
   const recommendations: string[] = [];
-  const reconciliation = importBatch.metadata?.reconciliation;
+  const metadata = importBatch.metadata as Record<string, unknown> | null;
+  const reconciliation = metadata?.reconciliation as Record<string, unknown> | undefined;
 
   // Check Python environment
   if (!env.pythonPath) {
@@ -1679,21 +1680,25 @@ function generateDiagnosticRecommendations(
 
   // Check for data quality issues from drop_reasons
   if (reconciliation?.drop_reasons) {
-    const dropReasons = reconciliation.drop_reasons;
+    const dropReasons = reconciliation.drop_reasons as {
+      invalid_dates?: number;
+      missing_required?: number;
+      data_validation?: number;
+    };
 
-    if (dropReasons.invalid_dates > 0) {
+    if (dropReasons.invalid_dates && dropReasons.invalid_dates > 0) {
       recommendations.push(
         `${dropReasons.invalid_dates} rows dropped due to invalid dates. Ensure date columns are in format YYYY-MM-DD or MM/DD/YYYY.`,
       );
     }
 
-    if (dropReasons.missing_required > 0) {
+    if (dropReasons.missing_required && dropReasons.missing_required > 0) {
       recommendations.push(
         `${dropReasons.missing_required} rows dropped due to missing required fields. Check that all required columns have data.`,
       );
     }
 
-    if (dropReasons.data_validation > 0) {
+    if (dropReasons.data_validation && dropReasons.data_validation > 0) {
       recommendations.push(
         `${dropReasons.data_validation} rows failed data validation. Check for invalid numeric values, special characters, or formatting issues.`,
       );
@@ -1701,9 +1706,10 @@ function generateDiagnosticRecommendations(
   }
 
   // Check for low success rate
-  if (reconciliation?.total_rows_seen > 0) {
-    const successRate =
-      (reconciliation.rows_inserted / reconciliation.total_rows_seen) * 100;
+  const totalRowsSeen = reconciliation?.total_rows_seen as number | undefined;
+  const rowsInserted = reconciliation?.rows_inserted as number | undefined;
+  if (totalRowsSeen && totalRowsSeen > 0 && rowsInserted !== undefined) {
+    const successRate = (rowsInserted / totalRowsSeen) * 100;
     if (successRate < 50 && successRate > 0) {
       recommendations.push(
         `Low success rate: Only ${successRate.toFixed(1)}% of rows were successfully imported. Review column mappings and data format.`,

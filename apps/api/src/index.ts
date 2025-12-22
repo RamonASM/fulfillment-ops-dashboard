@@ -22,6 +22,7 @@ import { requestLogger } from "./middleware/request-logger.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
 import { csrfProtection, getCsrfTokenHandler } from "./middleware/csrf.js";
 import { logger } from "./lib/logger.js";
+import { metricsMiddleware, metricsHandler } from "./lib/metrics.js";
 import {
   validateEnvironment,
   printEnvironmentWarnings,
@@ -150,6 +151,9 @@ app.use(requestIdMiddleware);
 // Request logging
 app.use(requestLogger);
 
+// Metrics collection
+app.use(metricsMiddleware);
+
 // CSRF protection (after cookie parser, before routes)
 // Uses double-submit cookie pattern, safe methods (GET, HEAD, OPTIONS) and exempt paths are skipped
 app.use(csrfProtection);
@@ -176,6 +180,9 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// Metrics endpoint (JSON or Prometheus format)
+app.get("/metrics", metricsHandler);
+
 // CSRF token endpoint
 app.get("/api/csrf-token", getCsrfTokenHandler);
 
@@ -186,7 +193,7 @@ app.use("/api/health", healthRoutes);
 // API routes with specific rate limiters
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/auth", authLimiter, passwordResetRoutes); // Password reset routes
-app.use("/api/clients", adminLimiter, clientRoutes);
+app.use("/api/clients", defaultLimiter, clientRoutes);
 app.use("/api/clients/:clientId/products", productRoutes);
 app.use("/api/clients/:clientId/orphans", orphanReconciliationRoutes);
 app.use("/api/clients/:clientId/locations", locationRoutes);

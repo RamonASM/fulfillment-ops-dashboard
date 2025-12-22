@@ -241,17 +241,20 @@ export const createReportLimiter = () =>
 export const createAdminLimiter = () =>
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
+    // Skip rate limiting for non-privileged users - auth middleware handles access control
+    skip: (req) => {
+      const role = getUserRole(req);
+      return role === 'anonymous' || role === 'user';
+    },
     max: (req) => {
       const role = getUserRole(req);
-      // Admin endpoints have strict limits - block non-privileged users
+      // Admin endpoints have strict limits for privileged users
       const adminLimits = {
-        anonymous: 0,
-        user: 0,
         account_manager: 10,
         operations_manager: 20,
         admin: 30,
       };
-      return adminLimits[role] || 0;
+      return adminLimits[role as keyof typeof adminLimits] || 10;
     },
     store: createStore('rl:admin:'),
     message: { error: "Too many admin requests. Please slow down." },
@@ -268,16 +271,20 @@ export const createAdminLimiter = () =>
 export const createUserManagementLimiter = () =>
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
+    // Skip rate limiting for anonymous users - auth middleware handles access control
+    skip: (req) => {
+      const role = getUserRole(req);
+      return role === 'anonymous';
+    },
     max: (req) => {
       const role = getUserRole(req);
       const userMgmtLimits = {
-        anonymous: 0,
         user: 5,
         account_manager: 10,
         operations_manager: 15,
         admin: 20,
       };
-      return userMgmtLimits[role] || 5;
+      return userMgmtLimits[role as keyof typeof userMgmtLimits] || 5;
     },
     store: createStore('rl:users:'),
     message: { error: "Too many user management requests." },
@@ -294,16 +301,20 @@ export const createUserManagementLimiter = () =>
 export const createFinancialLimiter = () =>
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
+    // Skip rate limiting for anonymous users - auth middleware handles access control
+    skip: (req) => {
+      const role = getUserRole(req);
+      return role === 'anonymous';
+    },
     max: (req) => {
       const role = getUserRole(req);
       const financialLimits = {
-        anonymous: 0,
         user: 10,
         account_manager: 20,
         operations_manager: 30,
         admin: 40,
       };
-      return financialLimits[role] || 10;
+      return financialLimits[role as keyof typeof financialLimits] || 10;
     },
     store: createStore('rl:financial:'),
     message: { error: "Too many financial data requests." },
@@ -320,16 +331,20 @@ export const createFinancialLimiter = () =>
 export const createOrderLimiter = () =>
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
+    // Skip rate limiting for anonymous users - auth middleware handles access control
+    skip: (req) => {
+      const role = getUserRole(req);
+      return role === 'anonymous';
+    },
     max: (req) => {
       const role = getUserRole(req);
       const orderLimits = {
-        anonymous: 0,
         user: 20,
         account_manager: 40,
         operations_manager: 60,
         admin: 80,
       };
-      return orderLimits[role] || 20;
+      return orderLimits[role as keyof typeof orderLimits] || 20;
     },
     store: createStore('rl:orders:'),
     message: { error: "Too many order requests. Please slow down." },

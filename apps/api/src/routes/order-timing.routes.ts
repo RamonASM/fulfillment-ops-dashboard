@@ -6,6 +6,7 @@
 import { Router, Request, Response } from "express";
 import { authenticate } from "../middleware/auth.js";
 import * as OrderTimingService from "../services/order-timing.service.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -30,7 +31,7 @@ router.get("/:clientId", async (req: Request, res) => {
       data: summary,
     });
   } catch (error) {
-    console.error("Error fetching timing summary:", error);
+    logger.error("Error fetching timing summary:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to fetch timing summary",
@@ -53,10 +54,15 @@ router.get("/:clientId/deadlines", async (req: Request, res) => {
         )
       : undefined;
 
+    // Normalize itemType to lowercase for case-insensitive filtering
+    const normalizedItemType = itemType
+      ? String(itemType).toLowerCase()
+      : undefined;
+
     const deadlines = await OrderTimingService.getUpcomingDeadlines(clientId, {
       daysAhead: parseInt(daysAhead as string, 10),
       urgencyLevels,
-      itemType: itemType as string | undefined,
+      itemType: normalizedItemType,
       limit: parseInt(limit as string, 10),
     });
 
@@ -65,7 +71,7 @@ router.get("/:clientId/deadlines", async (req: Request, res) => {
       data: deadlines,
     });
   } catch (error) {
-    console.error("Error fetching deadlines:", error);
+    logger.error("Error fetching deadlines:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to fetch order deadlines",
@@ -95,7 +101,7 @@ router.get("/product/:productId", async (req: Request, res) => {
       data: timing,
     });
   } catch (error) {
-    console.error("Error fetching product timing:", error);
+    logger.error("Error fetching product timing:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to fetch product timing",
@@ -121,7 +127,7 @@ router.get("/:clientId/defaults", async (req: Request, res) => {
       data: defaults,
     });
   } catch (error) {
-    console.error("Error fetching timing defaults:", error);
+    logger.error("Error fetching timing defaults:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to fetch timing defaults",
@@ -160,7 +166,7 @@ router.put("/:clientId/defaults", async (req: Request, res) => {
       message: "Timing defaults updated successfully",
     });
   } catch (error) {
-    console.error("Error updating timing defaults:", error);
+    logger.error("Error updating timing defaults:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to update timing defaults",
@@ -203,7 +209,7 @@ router.patch("/product/:productId/lead-time", async (req: Request, res) => {
       message: "Product lead time updated successfully",
     });
   } catch (error) {
-    console.error("Error updating product lead time:", error);
+    logger.error("Error updating product lead time:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to update product lead time",
@@ -238,7 +244,7 @@ router.post("/:clientId/bulk-lead-times", async (req: Request, res) => {
       message: `Updated ${result.updated} products, ${result.notFound.length} not found`,
     });
   } catch (error) {
-    console.error("Error bulk updating lead times:", error);
+    logger.error("Error bulk updating lead times:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to bulk update lead times",
@@ -265,7 +271,7 @@ router.post("/:clientId/recalculate", async (req: Request, res) => {
       message: `Recalculated timing for ${result.updated} products`,
     });
   } catch (error) {
-    console.error("Error recalculating timing:", error);
+    logger.error("Error recalculating timing:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to recalculate timing",
@@ -289,7 +295,7 @@ router.post("/recalculate-stale", async (req: Request, res) => {
       message: `Updated ${result.productsUpdated} products across ${result.clientsUpdated} clients`,
     });
   } catch (error) {
-    console.error("Error recalculating stale caches:", error);
+    logger.error("Error recalculating stale caches:", error instanceof Error ? error : null);
     res.status(500).json({
       success: false,
       error: "Failed to recalculate stale caches",

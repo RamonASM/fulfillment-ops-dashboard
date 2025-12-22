@@ -33,14 +33,14 @@ router.get('/pdf/inventory/:clientId', authenticate, async (req: Request, res: R
       title: title as string,
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'inventory', 'pdf');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'inventory', 'pdf');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=inventory-status-${clientId}.pdf`);
     res.send(pdf);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export PDF inventory error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate PDF' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate PDF' });
   }
 });
 
@@ -61,14 +61,14 @@ router.get('/pdf/alerts/:clientId', authenticate, async (req: Request, res: Resp
       } : undefined,
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'alerts', 'pdf');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'alerts', 'pdf');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=alerts-report-${clientId}.pdf`);
     res.send(pdf);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export PDF alerts error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate PDF' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate PDF' });
   }
 });
 
@@ -85,14 +85,14 @@ router.get('/pdf/orders/:clientId', authenticate, async (req: Request, res: Resp
       title: title as string,
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'orders', 'pdf');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'orders', 'pdf');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=order-history-${clientId}.pdf`);
     res.send(pdf);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export PDF orders error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate PDF' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate PDF' });
   }
 });
 
@@ -113,14 +113,14 @@ router.get('/excel/inventory/:clientId', authenticate, async (req: Request, res:
       includeHistory: includeHistory === 'true',
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'inventory', 'excel');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'inventory', 'excel');
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=inventory-${clientId}.xlsx`);
     res.send(excel);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export Excel inventory error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate Excel' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate Excel' });
   }
 });
 
@@ -140,14 +140,14 @@ router.get('/excel/transactions/:clientId', authenticate, async (req: Request, r
       } : undefined,
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'transactions', 'excel');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'transactions', 'excel');
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=transactions-${clientId}.xlsx`);
     res.send(excel);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export Excel transactions error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate Excel' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate Excel' });
   }
 });
 
@@ -167,14 +167,14 @@ router.get('/excel/alerts/:clientId', authenticate, async (req: Request, res: Re
       } : undefined,
     });
 
-    await logReportGeneration((req as any).user?.id, clientId, 'alerts', 'excel');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'alerts', 'excel');
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=alerts-${clientId}.xlsx`);
     res.send(excel);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export Excel alerts error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate Excel' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate Excel' });
   }
 });
 
@@ -192,14 +192,14 @@ router.get('/csv/inventory/:clientId', authenticate, async (req: Request, res: R
 
     const csv = await generateInventoryCSV(clientId);
 
-    await logReportGeneration((req as any).user?.id, clientId, 'inventory', 'csv');
+    await logReportGeneration(req.user?.userId || 'anonymous', clientId, 'inventory', 'csv');
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=inventory-${clientId}.csv`);
     res.send(csv);
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Export CSV error', error as Error);
-    res.status(500).json({ error: error.message || 'Failed to generate CSV' });
+    res.status(500).json({ error: (error as Error).message || 'Failed to generate CSV' });
   }
 });
 
