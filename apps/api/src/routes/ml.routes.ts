@@ -8,6 +8,7 @@ import { MLClientService } from "../services/ml-client.service.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireClientAccess } from "../middleware/auth.js";
 import { prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
 
 const router = express.Router();
 
@@ -29,12 +30,135 @@ router.get("/health", async (_req, res) => {
       status: isHealthy ? "healthy" : "offline",
       service: "ml-analytics",
       database: isHealthy ? "connected" : "unknown",
+      serviceUrl: process.env.ML_SERVICE_URL || "not configured",
+      lastCheck: new Date().toISOString(),
     });
   } catch (error) {
     res.json({
       status: "offline",
       service: "ml-analytics",
       database: "unknown",
+      serviceUrl: process.env.ML_SERVICE_URL || "not configured",
+      lastCheck: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * GET /api/ml/readiness
+ * Check if ML service is available AND if there's enough data for predictions
+ * Returns setup wizard state or "gathering data" state with progress
+ */
+router.get("/readiness", async (req, res) => {
+  try {
+    // Check ML service availability
+    let mlServiceAvailable = false;
+    try {
+      mlServiceAvailable = await MLClientService.healthCheck();
+    } catch {
+      mlServiceAvailable = false;
+    }
+
+    // Get client ID from authenticated user
+    const user = (req as any).user;
+    const clientId = user?.clientId;
+
+    // Get data readiness metrics
+    const [ordersStats, productsWithHistory, dateRange] = await Promise.all([
+      // Total orders count
+      prisma.transaction.count({
+        where: clientId ? { product: { clientId } } : undefined,
+      }),
+      // Products with at least 10 orders (enough for predictions)
+      prisma.product.count({
+        where: {
+          ...(clientId ? { clientId } : {}),
+          transactions: { some: {} },
+        },
+      }),
+      // Date range of orders
+      prisma.transaction.aggregate({
+        where: clientId ? { product: { clientId } } : undefined,
+        _min: { dateSubmitted: true },
+        _max: { dateSubmitted: true },
+      }),
+    ]);
+
+    // Calculate data quality metrics
+    const ordersCount = ordersStats;
+    const oldestOrder = dateRange._min.dateSubmitted;
+    const newestOrder = dateRange._max.dateSubmitted;
+
+    // Calculate days of history
+    const daysOfHistory = oldestOrder && newestOrder
+      ? Math.ceil((newestOrder.getTime() - oldestOrder.getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    // Minimum requirements: 100 orders AND 30 days of history
+    const MIN_ORDERS = 100;
+    const MIN_DAYS = 30;
+    const meetsMinimumRequirements = ordersCount >= MIN_ORDERS && daysOfHistory >= MIN_DAYS;
+
+    // Calculate progress (weighted: 60% orders, 40% days)
+    const ordersProgress = Math.min(ordersCount / MIN_ORDERS, 1);
+    const daysProgress = Math.min(daysOfHistory / MIN_DAYS, 1);
+    const progressPercent = Math.round((ordersProgress * 0.6 + daysProgress * 0.4) * 100);
+
+    // Witty messages based on progress
+    const wittyMessages = [
+      "Teaching our AI the ways of your inventory...",
+      "Crunching numbers so you don't have to...",
+      "Our crystal ball is charging...",
+      "Gathering intelligence on your products...",
+      "Building your prediction engine...",
+      "Training the forecasting hamsters...",
+      "Brewing data into insights...",
+      "Good things come to those who import...",
+    ];
+    const wittyMessage = wittyMessages[Math.floor(Math.random() * wittyMessages.length)];
+
+    // Determine overall state
+    let state: "not_deployed" | "gathering_data" | "ready";
+    if (!mlServiceAvailable && !process.env.DS_ANALYTICS_URL && !process.env.ML_SERVICE_URL) {
+      state = "not_deployed";
+    } else if (!meetsMinimumRequirements) {
+      state = "gathering_data";
+    } else {
+      state = "ready";
+    }
+
+    res.json({
+      state,
+      mlServiceAvailable,
+      mlServiceUrl: process.env.DS_ANALYTICS_URL || process.env.ML_SERVICE_URL || null,
+      dataReadiness: {
+        ordersCount,
+        productsWithHistory,
+        oldestOrder,
+        newestOrder,
+        daysOfHistory,
+        meetsMinimumRequirements,
+        progressPercent,
+        requirements: {
+          minOrders: MIN_ORDERS,
+          minDays: MIN_DAYS,
+        },
+      },
+      wittyMessage,
+      tips: meetsMinimumRequirements
+        ? ["Your data is ready for ML predictions!", "Try forecasting demand for your top products."]
+        : [
+            `Import ${Math.max(0, MIN_ORDERS - ordersCount)} more orders to unlock predictions`,
+            "Import 3+ months of order history for accurate forecasting",
+            "The more data you import, the smarter our predictions become",
+          ],
+    });
+  } catch (error) {
+    logger.error("ML readiness check failed", { error });
+    res.status(500).json({
+      state: "error",
+      error: "Failed to check ML readiness",
+      mlServiceAvailable: false,
     });
   }
 });
@@ -108,7 +232,7 @@ router.get("/forecast/:productId", async (req, res) => {
     };
 
     // Log detailed error
-    console.error("[ML Forecast Error]", errorDetails);
+    logger.error("ML Forecast Error", error as Error, errorDetails);
 
     const message = (error as Error).message;
     res.status(500).json({
@@ -219,7 +343,7 @@ router.post("/forecast/batch", async (req, res) => {
     };
 
     // Log detailed error
-    console.error("[ML Batch Forecast Error]", errorDetails);
+    logger.error("ML Batch Forecast Error", error as Error, errorDetails);
 
     res.status(500).json({
       success: false,
@@ -317,7 +441,7 @@ router.get("/stockout/:productId", async (req, res) => {
     };
 
     // Log detailed error
-    console.error("[ML Stockout Error]", errorDetails);
+    logger.error("ML Stockout Error", error as Error, errorDetails);
 
     const message = (error as Error).message;
     res.status(500).json({

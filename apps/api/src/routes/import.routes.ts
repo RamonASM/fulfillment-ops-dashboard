@@ -40,6 +40,40 @@ import { columnMappingsSchema } from "../lib/validation-schemas.js";
 type ImportType = "inventory" | "orders" | "both";
 
 /**
+ * Convert UUID string to a numeric lock key for PostgreSQL advisory locks.
+ * Uses a simple hash to convert the UUID to a 32-bit integer.
+ */
+function uuidToLockKey(uuid: string): number {
+  let hash = 0;
+  for (let i = 0; i < uuid.length; i++) {
+    const char = uuid.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Acquire a PostgreSQL advisory lock for a client.
+ * Returns true if lock acquired, false if another process holds it.
+ */
+async function acquireClientImportLock(clientId: string): Promise<boolean> {
+  const lockKey = uuidToLockKey(clientId);
+  const result = await prisma.$queryRaw<Array<{ pg_try_advisory_lock: boolean }>>`
+    SELECT pg_try_advisory_lock(${lockKey})
+  `;
+  return result[0]?.pg_try_advisory_lock ?? false;
+}
+
+/**
+ * Release a PostgreSQL advisory lock for a client.
+ */
+async function releaseClientImportLock(clientId: string): Promise<void> {
+  const lockKey = uuidToLockKey(clientId);
+  await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})`;
+}
+
+/**
  * Get the monorepo root path by walking up from the current directory.
  * This works regardless of how the API is started (PM2, npm workspace, direct).
  */
@@ -818,6 +852,9 @@ router.post(
  * Confirm and process an import
  */
 router.post("/:importId/confirm", async (req, res, next) => {
+  // Track clientId for lock release in catch block
+  let clientIdForLock: string | null = null;
+
   try {
     const { importId } = req.params;
     const { columnMapping: rawColumnMapping, originalMapping } = req.body;
@@ -840,21 +877,26 @@ router.post("/:importId/confirm", async (req, res, next) => {
       throw new ValidationError("Import has already been processed");
     }
 
-    // Check for concurrent imports for the same client
-    const concurrentImport = await prisma.importBatch.findFirst({
-      where: {
-        clientId: importBatch.clientId,
-        status: "processing",
-        id: { not: importId },
-      },
-      select: { id: true, filename: true },
-    });
-
-    if (concurrentImport) {
+    // Acquire PostgreSQL advisory lock for this client to prevent concurrent imports
+    // This is race-condition safe unlike a simple status check
+    const lockAcquired = await acquireClientImportLock(importBatch.clientId);
+    if (!lockAcquired) {
+      // Secondary check: find which import is blocking
+      const concurrentImport = await prisma.importBatch.findFirst({
+        where: {
+          clientId: importBatch.clientId,
+          status: "processing",
+          id: { not: importId },
+        },
+        select: { id: true, filename: true },
+      });
       throw new ValidationError(
-        `Another import is currently processing for this client${concurrentImport.filename ? ` (${concurrentImport.filename})` : ""}. Please wait for it to complete before starting a new import.`,
+        `Another import is currently processing for this client${concurrentImport?.filename ? ` (${concurrentImport.filename})` : ""}. Please wait for it to complete before starting a new import.`,
       );
     }
+
+    // Track clientId so we can release lock in catch block if needed
+    clientIdForLock = importBatch.clientId;
 
     // Handle import type "both" - auto-detect based on column mappings
     let effectiveImportType = importBatch.importType;
@@ -1296,6 +1338,13 @@ router.post("/:importId/confirm", async (req, res, next) => {
           });
         }
       }
+
+      // Release advisory lock when import completes (success or failure)
+      try {
+        await releaseClientImportLock(importBatch.clientId);
+      } catch (lockError) {
+        console.warn("Failed to release import lock:", lockError);
+      }
     });
 
     pythonProcess.on("error", async (err) => {
@@ -1309,6 +1358,12 @@ router.post("/:importId/confirm", async (req, res, next) => {
           ],
         },
       });
+      // Release advisory lock on error
+      try {
+        await releaseClientImportLock(importBatch.clientId);
+      } catch (lockError) {
+        console.warn("Failed to release import lock:", lockError);
+      }
     });
 
     // Update status to processing
@@ -1326,6 +1381,14 @@ router.post("/:importId/confirm", async (req, res, next) => {
       message: "Import process started",
     });
   } catch (error) {
+    // Release advisory lock if we acquired it and there was an error before Python started
+    if (clientIdForLock) {
+      try {
+        await releaseClientImportLock(clientIdForLock);
+      } catch (lockError) {
+        console.warn("Failed to release import lock in error handler:", lockError);
+      }
+    }
     next(error);
   }
 });

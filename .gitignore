@@ -51,3 +51,11 @@ dev-dist
 # Temporary files
 tmp
 temp
+
+# Python virtual environments
+**/venv/
+**/.venv/
+**/env/
+**/__pycache__/
+*.pyc
+*.pyo

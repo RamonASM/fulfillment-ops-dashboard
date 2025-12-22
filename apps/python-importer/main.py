@@ -792,6 +792,14 @@ def clean_orders_data(
             df['quantity_packs'] = 0
             log_diagnostic("warning", "No quantity columns found, defaulting quantity_packs to 0",
                           {"rows_affected": len(df)})
+            # Add user-facing warning so this shows in import results
+            errors_encountered.append({
+                "type": "warning",
+                "message": "No quantity columns found in CSV",
+                "details": "All orders will have quantity set to 0. This may affect analytics accuracy. "
+                          "Consider mapping a 'Quantity' or 'Total Quantity' column.",
+                "row_range": f"All {len(df)} rows"
+            })
 
     # Set defaults for required columns after reindex (to handle NaN/None values)
     # String columns that need defaults (database default is 'completed')

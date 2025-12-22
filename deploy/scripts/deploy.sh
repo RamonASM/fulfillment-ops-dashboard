@@ -127,6 +127,21 @@ npm run db:push
 echo -e "${GREEN}Database schema synced.${NC}"
 
 # =============================================================================
+# Run data normalization scripts
+# =============================================================================
+echo -e "\n${YELLOW}[5.5/8] Running data normalization...${NC}"
+
+# Normalize item_type values (lowercase: evergreen, event, completed)
+echo -e "${BLUE}Normalizing item_type values...${NC}"
+npx tsx apps/api/scripts/normalize-item-types.ts
+
+# Clear Python cache
+echo -e "${BLUE}Clearing Python cache...${NC}"
+rm -rf apps/python-importer/__pycache__
+
+echo -e "${GREEN}Data normalization complete.${NC}"
+
+# =============================================================================
 # Deploy static files
 # =============================================================================
 echo -e "\n${YELLOW}[6/8] Deploying static files...${NC}"

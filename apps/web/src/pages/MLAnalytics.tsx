@@ -15,6 +15,10 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Sparkles,
+  BookOpen,
+  Lightbulb,
+  Rocket,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/api/client";
@@ -33,6 +37,27 @@ interface MLHealthResponse {
   database?: string;
   serviceUrl?: string;
   lastCheck?: string;
+}
+
+interface MLReadinessResponse {
+  state: "not_deployed" | "gathering_data" | "ready" | "error";
+  mlServiceAvailable: boolean;
+  mlServiceUrl: string | null;
+  dataReadiness: {
+    ordersCount: number;
+    productsWithHistory: number;
+    oldestOrder: string | null;
+    newestOrder: string | null;
+    daysOfHistory: number;
+    meetsMinimumRequirements: boolean;
+    progressPercent: number;
+    requirements: {
+      minOrders: number;
+      minDays: number;
+    };
+  };
+  wittyMessage: string;
+  tips: string[];
 }
 
 interface ProductPrediction {
@@ -169,14 +194,25 @@ function PredictionRow({ prediction }: { prediction: ProductPrediction }) {
 export default function MLAnalytics() {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Fetch ML service health
+  // Fetch ML readiness (primary source of truth)
+  const { data: readiness, isLoading: readinessLoading } = useQuery({
+    queryKey: ["ml-readiness"],
+    queryFn: () => api.get<MLReadinessResponse>("/ml/readiness"),
+    staleTime: 2 * 60 * 1000,
+    refetchInterval: 60000, // Check every minute
+    retry: 1,
+    meta: { hideError: true },
+  });
+
+  // Fetch ML service health (for legacy compatibility)
   const { data: mlHealth, isLoading: healthLoading } = useQuery({
     queryKey: ["ml-health"],
     queryFn: () => api.get<MLHealthResponse>("/ml/health"),
     staleTime: 2 * 60 * 1000,
-    refetchInterval: 30000, // Check every 30 seconds
+    refetchInterval: 30000,
     retry: 1,
     meta: { hideError: true },
+    enabled: readiness?.state === "ready",
   });
 
   // Fetch recent predictions (mock data for now - will be implemented)
@@ -194,7 +230,7 @@ export default function MLAnalytics() {
         },
       };
     },
-    enabled: mlHealth?.status === "healthy",
+    enabled: readiness?.state === "ready" && mlHealth?.status === "healthy",
   });
 
   const predictions = predictionsData?.data || [];
@@ -207,6 +243,7 @@ export default function MLAnalytics() {
 
   const isHealthy = mlHealth?.status === "healthy";
   const isOffline = !mlHealth || mlHealth?.status === "offline";
+  const mlState = readiness?.state || "not_deployed";
 
   return (
     <motion.div
@@ -235,48 +272,146 @@ export default function MLAnalytics() {
         </button>
       </div>
 
-      {/* ML Service Status Banner */}
-      {isOffline && (
+      {/* ML State Banners - New UX */}
+
+      {/* State 1: Not Deployed - Setup Wizard */}
+      {mlState === "not_deployed" && (
         <motion.div
           variants={fadeInUp}
-          className="bg-red-50 border border-red-200 rounded-lg p-4"
+          className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-8"
         >
-          <div className="flex items-start gap-3">
-            <XCircle className="w-5 h-5 text-red-600 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-red-900">
-                ML Analytics Service Offline
-              </h3>
-              <p className="text-sm text-red-700 mt-1">
-                The ML service is currently unavailable. Demand forecasting and stockout predictions cannot be generated.
-              </p>
-              {mlHealth?.serviceUrl && (
-                <p className="text-xs text-red-600 mt-2">
-                  Service URL: <code className="bg-red-100 px-1 py-0.5 rounded">{mlHealth.serviceUrl}</code>
-                </p>
-              )}
-              {mlHealth?.lastCheck && (
-                <p className="text-xs text-red-600 mt-1">
-                  Last check: {new Date(mlHealth.lastCheck).toLocaleString()}
-                </p>
-              )}
-              <div className="mt-3 p-3 bg-red-100 rounded-lg">
-                <p className="text-xs font-medium text-red-800 mb-2">To resolve:</p>
-                <ol className="text-xs text-red-700 list-decimal list-inside space-y-1">
-                  <li>Ensure <code className="bg-white/50 px-1 rounded">DS_ANALYTICS_URL</code> or <code className="bg-white/50 px-1 rounded">ML_SERVICE_URL</code> is set in production environment</li>
-                  <li>Start the DS Analytics service: <code className="bg-white/50 px-1 rounded">cd apps/ds-analytics && python -m uvicorn main:app --port 8000</code></li>
-                  <li>Verify the service is reachable from the API server</li>
-                </ol>
-                <p className="text-xs text-red-600 mt-2 italic">
-                  Contact your system administrator if the issue persists.
-                </p>
+          <div className="flex flex-col items-center text-center max-w-2xl mx-auto">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg">
+              <Brain className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              ML Analytics Setup
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Unlock powerful AI-driven predictions for your inventory
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 w-full">
+              <div className="bg-white/80 rounded-lg p-4 text-left">
+                <TrendingUp className="w-6 h-6 text-indigo-600 mb-2" />
+                <h3 className="font-semibold text-gray-900 text-sm">Demand Forecasting</h3>
+                <p className="text-xs text-gray-500 mt-1">Predict future demand with Prophet ML</p>
               </div>
+              <div className="bg-white/80 rounded-lg p-4 text-left">
+                <AlertTriangle className="w-6 h-6 text-amber-600 mb-2" />
+                <h3 className="font-semibold text-gray-900 text-sm">Stockout Predictions</h3>
+                <p className="text-xs text-gray-500 mt-1">Know exactly when to reorder</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-4 text-left">
+                <Rocket className="w-6 h-6 text-purple-600 mb-2" />
+                <h3 className="font-semibold text-gray-900 text-sm">Smart Recommendations</h3>
+                <p className="text-xs text-gray-500 mt-1">Automated reorder suggestions</p>
+              </div>
+            </div>
+
+            <div className="bg-white/80 rounded-lg p-6 w-full text-left">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-600" />
+                Setup Steps
+              </h3>
+              <ol className="space-y-3">
+                <li className="flex items-start gap-3">
+                  <span className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-sm font-medium">1</span>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Set Environment Variables</p>
+                    <code className="text-xs bg-gray-100 px-2 py-1 rounded mt-1 inline-block">DS_ANALYTICS_URL=http://your-ml-server:8000</code>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-sm font-medium">2</span>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Deploy the ML Service</p>
+                    <code className="text-xs bg-gray-100 px-2 py-1 rounded mt-1 inline-block">cd apps/ds-analytics && python -m uvicorn main:app --port 8000</code>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-sm font-medium">3</span>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Refresh This Page</p>
+                    <p className="text-xs text-gray-500 mt-1">The ML service will be detected automatically</p>
+                  </div>
+                </li>
+              </ol>
             </div>
           </div>
         </motion.div>
       )}
 
-      {mlHealth?.status === "degraded" && (
+      {/* State 2: Gathering Data - Witty Progress */}
+      {mlState === "gathering_data" && readiness && (
+        <motion.div
+          variants={fadeInUp}
+          className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-8"
+        >
+          <div className="flex flex-col items-center text-center max-w-2xl mx-auto">
+            <div className="w-16 h-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg animate-pulse">
+              <Sparkles className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Brewing Your Predictions...
+            </h2>
+            <p className="text-gray-600 mb-6 italic">
+              "{readiness.wittyMessage}"
+            </p>
+
+            {/* Progress Bar */}
+            <div className="w-full max-w-md mb-6">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-600">Data Collection Progress</span>
+                <span className="font-semibold text-amber-700">{readiness.dataReadiness.progressPercent}%</span>
+              </div>
+              <div className="h-4 bg-amber-100 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${readiness.dataReadiness.progressPercent}%` }}
+                  transition={{ duration: 1, ease: "easeOut" }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-gray-500 mt-2">
+                <span>{readiness.dataReadiness.ordersCount} / {readiness.dataReadiness.requirements.minOrders} orders</span>
+                <span>{readiness.dataReadiness.daysOfHistory} / {readiness.dataReadiness.requirements.minDays} days of history</span>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-4 w-full max-w-md mb-6">
+              <div className="bg-white/80 rounded-lg p-4">
+                <p className="text-2xl font-bold text-gray-900">{readiness.dataReadiness.ordersCount}</p>
+                <p className="text-xs text-gray-500">Orders imported</p>
+              </div>
+              <div className="bg-white/80 rounded-lg p-4">
+                <p className="text-2xl font-bold text-gray-900">{readiness.dataReadiness.productsWithHistory}</p>
+                <p className="text-xs text-gray-500">Products tracked</p>
+              </div>
+            </div>
+
+            {/* Tips */}
+            <div className="bg-white/80 rounded-lg p-4 w-full max-w-md text-left">
+              <div className="flex items-center gap-2 mb-2">
+                <Lightbulb className="w-4 h-4 text-amber-600" />
+                <span className="text-sm font-semibold text-gray-900">Tips to Speed Up</span>
+              </div>
+              <ul className="space-y-2">
+                {readiness.tips.map((tip, i) => (
+                  <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
+                    <CheckCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <span>{tip}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* State 3: Ready but Degraded */}
+      {mlState === "ready" && mlHealth?.status === "degraded" && (
         <motion.div
           variants={fadeInUp}
           className="bg-amber-50 border border-amber-200 rounded-lg p-4"
@@ -288,15 +423,15 @@ export default function MLAnalytics() {
                 ML Service Degraded
               </h3>
               <p className="text-sm text-amber-700 mt-1">
-                The ML service is experiencing issues. Some predictions may be
-                slower than usual.
+                The ML service is experiencing issues. Some predictions may be slower than usual.
               </p>
             </div>
           </div>
         </motion.div>
       )}
 
-      {isHealthy && (
+      {/* State 4: Ready and Healthy */}
+      {mlState === "ready" && isHealthy && (
         <motion.div
           variants={fadeInUp}
           className="bg-green-50 border border-green-200 rounded-lg p-4"
@@ -308,8 +443,7 @@ export default function MLAnalytics() {
                 ML Service Active
               </h3>
               <p className="text-sm text-green-700 mt-1">
-                All ML prediction services are operating normally. Forecasts are
-                being generated in real-time.
+                All ML prediction services are operating normally. Forecasts are being generated in real-time.
               </p>
             </div>
           </div>
