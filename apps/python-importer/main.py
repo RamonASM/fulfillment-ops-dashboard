@@ -45,7 +45,8 @@ def validate_file_path(file_path: str, base_dirs: List[str] = None) -> str:
     """
     if base_dirs is None:
         # Default: uploads directory relative to monorepo root
-        monorepo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Go 3 levels up: main.py → python-importer → apps → monorepo root
+        monorepo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         base_dirs = [
             os.path.join(monorepo_root, 'uploads'),
             '/tmp',  # Allow temp files during testing
