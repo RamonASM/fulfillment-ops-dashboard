@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
 import { NotFoundError } from "../middleware/error-handler.js";
+import { paginationSchema, searchSchema } from "../lib/validation-schemas.js";
 import {
   getBatchUsageMetrics,
   getDefaultUsageMetrics,
@@ -34,20 +35,20 @@ router.use(requireClientAccess);
 
 // =============================================================================
 // VALIDATION SCHEMAS
+// Phase 4.2: Using shared validation schemas
 // =============================================================================
 
-const productQuerySchema = z.object({
-  type: z.enum(["evergreen", "event", "completed"]).optional(),
-  status: z.string().optional(), // comma-separated status values
-  includeOrphans: z.enum(["true", "false"]).optional(),
-  search: z.string().optional(),
-  page: z.coerce.number().int().positive().optional().default(1),
-  limit: z.coerce.number().int().positive().max(100).optional().default(50),
-  sort: z.string().optional().default("-updatedAt"),
-  // Date range filters
-  dateFrom: z.string().datetime().optional(),
-  dateTo: z.string().datetime().optional(),
-});
+const productQuerySchema = paginationSchema
+  .merge(searchSchema)
+  .extend({
+    type: z.enum(["evergreen", "event", "completed"]).optional(),
+    status: z.string().optional(), // comma-separated status values
+    includeOrphans: z.enum(["true", "false"]).optional(),
+    sort: z.string().optional().default("-updatedAt"),
+    // Date range filters
+    dateFrom: z.string().datetime().optional(),
+    dateTo: z.string().datetime().optional(),
+  });
 
 const createProductSchema = z.object({
   productId: z.string().min(1, "Product ID is required"),
@@ -97,8 +98,105 @@ const mergeProductsSchema = z.object({
 // =============================================================================
 
 /**
- * GET /api/clients/:clientId/products
- * List products for a client
+ * @openapi
+ * /clients/{clientId}/products:
+ *   get:
+ *     summary: List products for a client
+ *     description: Retrieve paginated list of products with filtering, search, and sorting
+ *     tags:
+ *       - Products
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - $ref: '#/components/parameters/ClientId'
+ *       - $ref: '#/components/parameters/Page'
+ *       - $ref: '#/components/parameters/Limit'
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search by product ID or name
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [evergreen, event, completed]
+ *         description: Filter by product type
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by stock status (comma-separated)
+ *       - in: query
+ *         name: includeOrphans
+ *         schema:
+ *           type: string
+ *           enum: ['true', 'false']
+ *         description: Include orphaned products
+ *       - in: query
+ *         name: sort
+ *         schema:
+ *           type: string
+ *           default: '-updatedAt'
+ *         description: Sort field (prefix with - for descending)
+ *       - in: query
+ *         name: dateFrom
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter by updated after this date
+ *       - in: query
+ *         name: dateTo
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter by updated before this date
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved products
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       productId:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       itemType:
+ *                         type: string
+ *                         enum: [evergreen, event, completed]
+ *                       stockStatus:
+ *                         type: string
+ *                       currentStockPacks:
+ *                         type: integer
+ *                       currentStockUnits:
+ *                         type: integer
+ *                       weeksRemaining:
+ *                         type: number
+ *                         nullable: true
+ *                 pagination:
+ *                   $ref: '#/components/schemas/PaginationMeta'
+ *       400:
+ *         description: Invalid request parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Client not found
+ *       500:
+ *         description: Server error
  */
 router.get("/", async (req, res, next) => {
   try {
@@ -341,8 +439,92 @@ router.get("/:productId", async (req, res, next) => {
 });
 
 /**
- * POST /api/clients/:clientId/products
- * Create a new product
+ * @openapi
+ * /clients/{clientId}/products:
+ *   post:
+ *     summary: Create a new product
+ *     description: Create a new product for a client
+ *     tags:
+ *       - Products
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - $ref: '#/components/parameters/ClientId'
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - productId
+ *               - name
+ *             properties:
+ *               productId:
+ *                 type: string
+ *                 description: Unique product identifier
+ *                 example: 'WIDGET-001'
+ *               name:
+ *                 type: string
+ *                 description: Product name
+ *                 example: 'Blue Widget'
+ *               itemType:
+ *                 type: string
+ *                 enum: [evergreen, event, completed]
+ *                 default: evergreen
+ *                 description: Product type
+ *               packSize:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Units per pack
+ *                 example: 12
+ *               notificationPoint:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Reorder point in packs
+ *                 example: 10
+ *               currentStockPacks:
+ *                 type: integer
+ *                 minimum: 0
+ *                 description: Current stock in packs
+ *                 example: 25
+ *               metadata:
+ *                 type: object
+ *                 description: Additional product metadata
+ *                 additionalProperties: true
+ *     responses:
+ *       201:
+ *         description: Product created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 productId:
+ *                   type: string
+ *                 name:
+ *                   type: string
+ *                 itemType:
+ *                   type: string
+ *                 packSize:
+ *                   type: integer
+ *                 currentStockPacks:
+ *                   type: integer
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Client not found
+ *       500:
+ *         description: Server error
  */
 router.post("/", async (req, res, next) => {
   try {
