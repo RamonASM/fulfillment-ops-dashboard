@@ -684,9 +684,10 @@ def clean_orders_data(
             except:
                 continue
 
-        # Fallback to pandas infer_datetime_format if no format worked well
+        # Fallback to pandas default parsing if no format worked well
         if parsed_dates is None or (parsed_dates.notna().sum() < rows_before * 0.5):
-            parsed_dates = pd.to_datetime(df[date_col], errors='coerce', infer_datetime_format=True)
+            # Note: infer_datetime_format is deprecated in pandas 2.0+, use default parsing instead
+            parsed_dates = pd.to_datetime(df[date_col], errors='coerce')
             successful_format = 'inferred'
 
         df[date_col] = parsed_dates

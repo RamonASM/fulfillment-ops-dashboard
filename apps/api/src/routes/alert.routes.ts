@@ -1,24 +1,26 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireClientAccess } from '../middleware/auth.js';
 import { NotFoundError } from '../middleware/error-handler.js';
+import { paginationSchema } from '../lib/validation-schemas.js';
 
 const router = Router();
 
-// Apply authentication to all routes
+// Apply authentication and client access control to all routes
 router.use(authenticate);
+router.use(requireClientAccess);
 
 // =============================================================================
 // VALIDATION SCHEMAS
+// Phase 4.2: Using shared validation schemas
 // =============================================================================
 
-const alertQuerySchema = z.object({
+const alertQuerySchema = paginationSchema.extend({
   severity: z.string().optional(),
   type: z.string().optional(),
   unreadOnly: z.enum(['true', 'false']).optional(),
-  page: z.coerce.number().int().positive().optional().default(1),
-  limit: z.coerce.number().int().positive().max(100).optional().default(50),
+  limit: z.coerce.number().int().positive().max(1000).optional().default(50),
   // Date range filters
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),

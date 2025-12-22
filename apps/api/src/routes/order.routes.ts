@@ -21,14 +21,17 @@ import {
   checkSlaBreaches,
   type RequestStatus,
 } from '../services/workflow.service.js';
+import { paginationSchema } from '../lib/validation-schemas.js';
 
 const router = Router();
 
-// Apply authentication to all routes
+// Apply authentication and client access control to all routes
 router.use(authenticate);
+router.use(requireClientAccess);
 
 // =============================================================================
 // VALIDATION SCHEMAS
+// Phase 4.2: Using shared validation schemas
 // =============================================================================
 
 const acknowledgeSchema = z.object({
@@ -52,12 +55,11 @@ const cancelSchema = z.object({
   reason: z.string().min(1, 'Reason is required'),
 });
 
-const orderQuerySchema = z.object({
+const orderQuerySchema = paginationSchema.extend({
   clientId: z.string().uuid().optional(),
   status: z.string().optional(),
   slaBreached: z.enum(['true', 'false']).optional(),
-  limit: z.string().optional(),
-  page: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(1000).optional().default(50),
 });
 
 // =============================================================================
@@ -74,8 +76,8 @@ router.get('/', async (req, res, next) => {
     const userRole = req.user!.role;
     const query = orderQuerySchema.parse(req.query);
 
-    const take = Math.min(parseInt(query.limit || '50'), 100);
-    const skip = (parseInt(query.page || '1') - 1) * take;
+    const take = query.limit;
+    const skip = (query.page - 1) * take;
 
     const where: any = {
       status: { not: 'draft' }, // Don't show drafts to admins
@@ -196,7 +198,7 @@ router.get('/', async (req, res, next) => {
       data: ordersWithDetails,
       meta: {
         total,
-        page: parseInt(query.page || '1'),
+        page: query.page,
         limit: take,
         totalPages: Math.ceil(total / take),
         statusCounts: statusCounts.reduce((acc, item) => {
