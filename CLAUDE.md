@@ -258,6 +258,30 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-21 @ 20:46 PST: Pagination Limit Fix + Python Import Fixes (DEPLOYED)
+- **What**: Fixed pagination limit errors (max 100 → max 1000) across all route files
+- **Commits**:
+  - `6c1f5b7` - fix: Use shared paginationSchema in product.routes.ts
+  - `861b50b` - fix: Update pagination limits and remove deprecated pandas warning
+  - `4ddf0fc` - fix: Increase pagination limit from 100 to 1000
+  - `e40310e` - fix: Ensure quantity_packs is always set in orders import
+  - `4a38f30` - fix: Correct monorepo_root calculation in file path validation
+- **Root Cause Analysis**:
+  - Products endpoint was using inline schema with `max(100)` instead of shared `paginationSchema`
+  - Order and alert routes also had inline `max(100)` overrides
+  - Python importer had path validation calculating wrong monorepo root (2 levels instead of 3)
+  - Orders import failed when `quantity_packs` column was missing from CSV
+- **Files Changed**:
+  - `apps/api/src/routes/product.routes.ts` - Refactored to use shared `paginationSchema`
+  - `apps/api/src/routes/order.routes.ts` - Changed `max(100)` to `max(1000)`
+  - `apps/api/src/routes/alert.routes.ts` - Changed `max(100)` to `max(1000)`
+  - `apps/api/src/lib/validation-schemas.ts` - Already had `max(1000)` (baseline)
+  - `apps/python-importer/main.py` - Fixed path validation, added quantity_packs fallback, removed deprecated `infer_datetime_format`
+- **Status**: ✅ DEPLOYED to production at 04:46 UTC (20:46 PST Dec 21)
+- **Verification**: Products endpoint returns 308 products with `limit=500`
+
+---
+
 ### 2025-12-21 @ 18:55 PST: P0/P1 Security + Health Endpoints + Python Hardening (DEPLOYED)
 - **What**: Comprehensive security and reliability improvements from codebase audit
 - **Commits**:
@@ -452,6 +476,41 @@ from . import models
 
 # RIGHT (absolute import)
 import models
+```
+
+### Issue: "ZodError: Number must be less than or equal to 100" on pagination
+**Cause**: Route file has inline schema with `max(100)` instead of using shared `paginationSchema`
+**Fix**: Ensure all route files use `paginationSchema` from `validation-schemas.ts`:
+```typescript
+// WRONG (inline schema with limit)
+const querySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+});
+
+// RIGHT (use shared paginationSchema)
+import { paginationSchema } from '../lib/validation-schemas.js';
+const querySchema = paginationSchema.extend({ ... });
+```
+**Files to check**: `product.routes.ts`, `order.routes.ts`, `alert.routes.ts`
+
+### Issue: "null value in column 'quantity_packs' violates not-null constraint"
+**Cause**: Orders CSV doesn't have a "Quantity" column, so `quantity_packs` is never set
+**Fix**: Python importer must ALWAYS set `quantity_packs` before insert:
+```python
+if 'quantity_packs' not in df.columns:
+    if 'quantity_units' in df.columns:
+        df['quantity_packs'] = df['quantity_units'].fillna(0).astype(int)
+    else:
+        df['quantity_packs'] = 0
+```
+
+### Issue: "File path outside allowed directories" during import
+**Cause**: `monorepo_root` in `main.py` calculated incorrectly (wrong number of `os.path.dirname()` calls)
+**Fix**: Count directory levels from script to monorepo root:
+```python
+# main.py is at apps/python-importer/main.py
+# Need 3 levels up: main.py → python-importer → apps → monorepo root
+monorepo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ```
 **Why**: `main.py` adds the package directory to `sys.path` and imports modules directly. Relative imports only work when running as a package with `-m` flag.
 
