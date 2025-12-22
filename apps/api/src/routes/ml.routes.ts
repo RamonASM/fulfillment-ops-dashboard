@@ -153,11 +153,11 @@ router.get("/readiness", async (req, res) => {
             "The more data you import, the smarter our predictions become",
           ],
     });
-  } catch (error) {
-    logger.error("ML readiness check failed", { error });
+  } catch (err) {
+    logger.error("ML readiness check failed", { error: err });
     res.status(500).json({
       state: "error",
-      error: "Failed to check ML readiness",
+      message: "Failed to check ML readiness",
       mlServiceAvailable: false,
     });
   }
