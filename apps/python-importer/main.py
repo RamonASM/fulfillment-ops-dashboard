@@ -524,8 +524,9 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
                 df[col] = 1 if col == 'pack_size' else 0
             elif col == 'item_type':
                 df[col] = 'evergreen'
-            elif col == 'metadata':
-                df[col] = '{}'
+            elif col == 'product_metadata':
+                # Note: Model attribute is 'product_metadata', maps to DB column 'metadata'
+                df[col] = [{} for _ in range(len(df))]
             elif col in ('created_at', 'updated_at'):
                 df[col] = datetime.now()
             # Other columns will be added as None by bulk_insert_mappings
@@ -1093,15 +1094,16 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                                 'product_id': pid_str,                     # snake_case (database column)
                                 'name': pid_str,
                                 'item_type': 'evergreen',                  # Required default
-                                # Mark as non-orphan so these show up in the product list by default
-                                'is_orphan': False,
+                                # Mark as orphan - these were created from orders referencing non-existent products
+                                # Orphan reconciliation service will find them with isOrphan=true
+                                'is_orphan': True,
                                 'is_active': True,                         # snake_case (database column)
                                 'pack_size': 1,                            # snake_case (database column)
                                 'current_stock_packs': 0,                  # snake_case (database column)
                                 'current_stock_units': 0,                  # snake_case (database column)
                                 'notification_point': 0,                   # Required default
                                 'feedback_count': 0,                       # Required default
-                                'product_metadata': {},                    # Required default (JSON)
+                                'metadata': {},                            # Required default (JSON) - uses 'metadata' not 'product_metadata'
                                 'created_at': datetime.now(),              # snake_case (database column)
                                 'updated_at': datetime.now()               # snake_case (database column)
                             })

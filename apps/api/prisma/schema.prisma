@@ -292,8 +292,8 @@ model Transaction {
   id             String   @id @default(uuid()) @db.Uuid
   productId      String   @map("product_id") @db.Uuid
   orderId        String   @map("order_id") @db.VarChar(100)
-  quantityPacks  Int      @map("quantity_packs")
-  quantityUnits  Int      @map("quantity_units")
+  quantityPacks  Int      @default(0) @map("quantity_packs")
+  quantityUnits  Int      @default(0) @map("quantity_units")
   dateSubmitted  DateTime @map("date_submitted") @db.Date
   orderStatus    String   @default("completed") @map("order_status") @db.VarChar(50)
   shipToLocation String?  @map("ship_to_location") @db.VarChar(255)
@@ -461,6 +461,9 @@ model Alert {
   @@index([clientId, alertType, createdAt])
   // Phase 2.3: Performance optimization - Alert filtering by status and severity
   @@index([status, severity])
+  // Phase 3: Performance optimization - Dashboard alert queries
+  @@index([clientId, createdAt, isDismissed])
+  @@index([createdAt])
   @@map("alerts")
 }
 
@@ -645,6 +648,10 @@ model OrderRequest {
   @@index([locationId])
   @@index([submittedAt])
   @@index([slaDeadline, slaBreached])
+  // Phase 3: Performance optimization - Common order workflow queries
+  @@index([clientId, status, submittedAt])
+  @@index([clientId, status, slaDeadline])
+  @@index([status, submittedAt, slaBreached])
   @@map("order_requests")
 }
 

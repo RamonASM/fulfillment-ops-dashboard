@@ -290,7 +290,7 @@ def bulk_insert_products_ignore_conflicts(
                 'feedback_count': int(p.get('feedback_count', 0)) if p.get('feedback_count') else 0,
                 'is_active': bool(p.get('is_active', True)),
                 'is_orphan': bool(p.get('is_orphan', False)),
-                'metadata': p.get('product_metadata', '{}') if isinstance(p.get('product_metadata'), str) else '{}',
+                'metadata': p.get('product_metadata') if isinstance(p.get('product_metadata'), dict) else (p.get('metadata') if isinstance(p.get('metadata'), dict) else {}),
                 'created_at': p.get('created_at', datetime.now()),
                 'updated_at': p.get('updated_at', datetime.now()),
             })
@@ -371,9 +371,9 @@ def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) ->
                 'pack_size': int(p.get('pack_size', 1)) if p.get('pack_size') else 1,
                 'is_active': bool(p.get('is_active', True)),
                 'is_orphan': bool(p.get('is_orphan', False)),
-                'metadata': '{}',
-                'created_at': datetime.now(),
-                'updated_at': datetime.now(),
+                'metadata': p.get('product_metadata') if isinstance(p.get('product_metadata'), dict) else (p.get('metadata') if isinstance(p.get('metadata'), dict) else {}),
+                'created_at': p.get('created_at', datetime.now()),
+                'updated_at': p.get('updated_at', datetime.now()),
             })
 
         try:
