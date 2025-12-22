@@ -258,6 +258,32 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-22 @ 22:05 PST: QA Audit Fixes - Import Concurrency, ML UX, Dead Code Cleanup (DEPLOYED)
+- **What**: Fixed multiple issues from deep QA audit - advisory locks, ML readiness UX, dead code removal
+- **Commits**:
+  - `33d6398` - QA audit fixes (import concurrency, ML UX, cleanup)
+  - `b5c10cf` - fix: Rename error property to message in ML readiness catch block
+  - `416d084` - fix: Correct logger.error signature in ML readiness endpoint
+- **Changes**:
+  - **Import Concurrency**: Added PostgreSQL advisory locks for per-client import locking (race-condition safe)
+    - `apps/api/src/routes/import.routes.ts` - added `acquireClientImportLock()` and `releaseClientImportLock()`
+  - **ML Readiness UX**: New endpoint and frontend states for better ML offline experience
+    - `apps/api/src/routes/ml.routes.ts` - added `/api/ml/readiness` endpoint with data progress
+    - `apps/web/src/pages/MLAnalytics.tsx` - 3 new UX states: Setup Wizard, Gathering Data, Ready
+    - Witty progress messages like "Teaching our AI the ways of your inventory..."
+  - **Zero Quantity Warning**: Python importer now warns when no quantity columns found
+    - `apps/python-importer/main.py` - added warning to `errors_encountered`
+  - **Dead Code Removed**:
+    - Deleted `apps/api/src/lib/import-queue.ts` (unused BullMQ queue)
+    - Deleted `apps/api/src/workers/import-worker.ts` (unused worker)
+    - Deleted redundant backfill scripts for item_type normalization
+  - **Deployment Script**: Added item_type normalization step to deploy.sh
+  - **.gitignore**: Added venv patterns
+- **Status**: ✅ DEPLOYED to production at 06:05 UTC (22:05 PST Dec 21)
+- **Verification**: API healthy, PM2 online, build successful
+
+---
+
 ### 2025-12-21 @ 20:46 PST: Pagination Limit Fix + Python Import Fixes (DEPLOYED)
 - **What**: Fixed pagination limit errors (max 100 → max 1000) across all route files
 - **Commits**:
