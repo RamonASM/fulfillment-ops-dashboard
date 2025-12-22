@@ -54,10 +54,48 @@ function uuidToLockKey(uuid: string): number {
 }
 
 /**
+ * Stale lock timeout - imports processing for longer than this are considered stuck
+ */
+const STALE_LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Clean up stale processing imports for a client.
+ * Marks them as failed and releases any advisory locks.
+ */
+async function cleanupStaleImports(clientId: string): Promise<void> {
+  const staleThreshold = new Date(Date.now() - STALE_LOCK_TIMEOUT_MS);
+
+  const staleImports = await prisma.importBatch.findMany({
+    where: {
+      clientId,
+      status: "processing",
+      startedAt: { lt: staleThreshold }
+    },
+    select: { id: true }
+  });
+
+  if (staleImports.length > 0) {
+    console.warn(`Found ${staleImports.length} stale imports for client ${clientId}, marking as failed`);
+    await prisma.importBatch.updateMany({
+      where: { id: { in: staleImports.map(i => i.id) } },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        errors: [{ message: "Import timed out - marked as stale after 30 minutes" }]
+      }
+    });
+  }
+}
+
+/**
  * Acquire a PostgreSQL advisory lock for a client.
+ * First cleans up any stale imports, then tries to acquire the lock.
  * Returns true if lock acquired, false if another process holds it.
  */
 async function acquireClientImportLock(clientId: string): Promise<boolean> {
+  // Clean up stale imports first
+  await cleanupStaleImports(clientId);
+
   const lockKey = uuidToLockKey(clientId);
   const result = await prisma.$queryRaw<Array<{ pg_try_advisory_lock: boolean }>>`
     SELECT pg_try_advisory_lock(${lockKey})
