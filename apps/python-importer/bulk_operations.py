@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from datetime import datetime
 
-from . import models
+import models
 
 
 def _log_structured(level: str, message: str, context: dict = None):
