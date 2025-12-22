@@ -1,13 +1,15 @@
 // =============================================================================
 // ANALYTICS ROUTES (Phase 11)
 // Pre-aggregated analytics and trend endpoints
+// Uses asyncHandler for standardized error handling via global error handler
 // =============================================================================
 
 import { Router, Request, Response } from "express";
 import { authenticate, requireClientAccess } from "../middleware/auth.js";
-import { logger } from "../lib/logger.js";
 import { createAnalyticsLimiter } from "../lib/rate-limiters.js";
+import { asyncHandler, successResponse } from "../lib/api-response.js";
 import * as analyticsService from "../services/analytics.service.js";
+import * as stockIntelligenceService from "../services/stock-intelligence.service.js";
 
 const router = Router();
 
@@ -29,18 +31,13 @@ router.use(analyticsLimiter);
 router.get(
   "/daily-summary/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const days = parseInt(req.query.days as string) || 30;
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const days = parseInt(req.query.days as string) || 30;
 
-      const summary = await analyticsService.getDailySummary(clientId, days);
-      res.json({ data: summary });
-    } catch (error) {
-      logger.error("Error fetching daily summary", error as Error);
-      res.status(500).json({ error: "Failed to fetch daily summary" });
-    }
-  },
+    const summary = await analyticsService.getDailySummary(clientId, days);
+    res.json(successResponse(summary));
+  })
 );
 
 // =============================================================================
@@ -51,15 +48,13 @@ router.get(
  * GET /api/analytics/inventory-health
  * Get overall inventory health metrics across all clients
  */
-router.get("/inventory-health", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/inventory-health",
+  asyncHandler(async (_req: Request, res: Response) => {
     const health = await analyticsService.getInventoryHealth();
-    res.json({ data: health });
-  } catch (error) {
-    logger.error("Error fetching inventory health", error as Error);
-    res.status(500).json({ error: "Failed to fetch inventory health" });
-  }
-});
+    res.json(successResponse(health));
+  })
+);
 
 // =============================================================================
 // Alert Trends
@@ -72,18 +67,13 @@ router.get("/inventory-health", async (req: Request, res: Response) => {
 router.get(
   "/alert-trends/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const days = parseInt(req.query.days as string) || 30;
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const days = parseInt(req.query.days as string) || 30;
 
-      const trends = await analyticsService.getAlertTrends(clientId, days);
-      res.json({ data: trends });
-    } catch (error) {
-      logger.error("Error fetching alert trends", error as Error);
-      res.status(500).json({ error: "Failed to fetch alert trends" });
-    }
-  },
+    const trends = await analyticsService.getAlertTrends(clientId, days);
+    res.json(successResponse(trends));
+  })
 );
 
 // =============================================================================
@@ -94,15 +84,13 @@ router.get(
  * GET /api/analytics/portfolio-risk
  * Get portfolio risk analysis across all clients
  */
-router.get("/portfolio-risk", async (req: Request, res: Response) => {
-  try {
+router.get(
+  "/portfolio-risk",
+  asyncHandler(async (_req: Request, res: Response) => {
     const risk = await analyticsService.getPortfolioRisk();
-    res.json({ data: risk });
-  } catch (error) {
-    logger.error("Error fetching portfolio risk", error as Error);
-    res.status(500).json({ error: "Failed to fetch portfolio risk" });
-  }
-});
+    res.json(successResponse(risk));
+  })
+);
 
 // =============================================================================
 // Inventory Turnover
@@ -115,21 +103,13 @@ router.get("/portfolio-risk", async (req: Request, res: Response) => {
 router.get(
   "/inventory-turnover/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const months = parseInt(req.query.months as string) || 12;
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const months = parseInt(req.query.months as string) || 12;
 
-      const turnover = await analyticsService.getInventoryTurnover(
-        clientId,
-        months,
-      );
-      res.json({ data: turnover });
-    } catch (error) {
-      logger.error("Error fetching inventory turnover", error as Error);
-      res.status(500).json({ error: "Failed to fetch inventory turnover" });
-    }
-  },
+    const turnover = await analyticsService.getInventoryTurnover(clientId, months);
+    res.json(successResponse(turnover));
+  })
 );
 
 // =============================================================================
@@ -143,21 +123,13 @@ router.get(
 router.get(
   "/forecast-accuracy/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const days = parseInt(req.query.days as string) || 30;
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const days = parseInt(req.query.days as string) || 30;
 
-      const accuracy = await analyticsService.getForecastAccuracy(
-        clientId,
-        days,
-      );
-      res.json({ data: accuracy });
-    } catch (error) {
-      logger.error("Error fetching forecast accuracy", error as Error);
-      res.status(500).json({ error: "Failed to fetch forecast accuracy" });
-    }
-  },
+    const accuracy = await analyticsService.getForecastAccuracy(clientId, days);
+    res.json(successResponse(accuracy));
+  })
 );
 
 // =============================================================================
@@ -171,16 +143,11 @@ router.get(
 router.get(
   "/products/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const analytics = await analyticsService.getProductAnalytics(clientId);
-      res.json({ data: analytics });
-    } catch (error) {
-      logger.error("Error fetching product analytics", error as Error);
-      res.status(500).json({ error: "Failed to fetch product analytics" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const analytics = await analyticsService.getProductAnalytics(clientId);
+    res.json(successResponse(analytics));
+  })
 );
 
 /**
@@ -190,16 +157,11 @@ router.get(
 router.get(
   "/locations/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const analytics = await analyticsService.getLocationAnalytics(clientId);
-      res.json({ data: analytics });
-    } catch (error) {
-      logger.error("Error fetching location analytics", error as Error);
-      res.status(500).json({ error: "Failed to fetch location analytics" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const analytics = await analyticsService.getLocationAnalytics(clientId);
+    res.json(successResponse(analytics));
+  })
 );
 
 /**
@@ -209,16 +171,11 @@ router.get(
 router.get(
   "/anomalies/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const anomalies = await analyticsService.detectAnomalies(clientId);
-      res.json({ data: anomalies });
-    } catch (error) {
-      logger.error("Error detecting anomalies", error as Error);
-      res.status(500).json({ error: "Failed to detect anomalies" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const anomalies = await analyticsService.detectAnomalies(clientId);
+    res.json(successResponse(anomalies));
+  })
 );
 
 /**
@@ -228,19 +185,11 @@ router.get(
 router.get(
   "/reorder-recommendations/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const recommendations =
-        await analyticsService.getReorderRecommendations(clientId);
-      res.json({ data: recommendations });
-    } catch (error) {
-      logger.error("Error fetching reorder recommendations", error as Error);
-      res
-        .status(500)
-        .json({ error: "Failed to fetch reorder recommendations" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const recommendations = await analyticsService.getReorderRecommendations(clientId);
+    res.json(successResponse(recommendations));
+  })
 );
 
 /**
@@ -250,17 +199,11 @@ router.get(
 router.get(
   "/stockout-predictions/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const predictions =
-        await analyticsService.getStockoutPredictions(clientId);
-      res.json({ data: predictions });
-    } catch (error) {
-      logger.error("Error fetching stockout predictions", error as Error);
-      res.status(500).json({ error: "Failed to fetch stockout predictions" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const predictions = await analyticsService.getStockoutPredictions(clientId);
+    res.json(successResponse(predictions));
+  })
 );
 
 /**
@@ -270,17 +213,11 @@ router.get(
 router.get(
   "/intelligent-summary/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const summary =
-        await analyticsService.getIntelligentDashboardSummary(clientId);
-      res.json({ data: summary });
-    } catch (error) {
-      logger.error("Error fetching intelligent summary", error as Error);
-      res.status(500).json({ error: "Failed to fetch intelligent summary" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const summary = await analyticsService.getIntelligentDashboardSummary(clientId);
+    res.json(successResponse(summary));
+  })
 );
 
 /**
@@ -290,17 +227,12 @@ router.get(
 router.get(
   "/monthly-trends/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const months = parseInt(req.query.months as string) || 12;
-      const trends = await analyticsService.getMonthlyTrends(clientId, months);
-      res.json({ data: trends });
-    } catch (error) {
-      logger.error("Error fetching monthly trends", error as Error);
-      res.status(500).json({ error: "Failed to fetch monthly trends" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const months = parseInt(req.query.months as string) || 12;
+    const trends = await analyticsService.getMonthlyTrends(clientId, months);
+    res.json(successResponse(trends));
+  })
 );
 
 // =============================================================================
@@ -314,23 +246,16 @@ router.get(
 router.get(
   "/stock-health/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const summary = await analyticsService.getStockHealthSummary(clientId);
-      res.json({ data: summary });
-    } catch (error) {
-      logger.error("Error fetching stock health summary", error as Error);
-      res.status(500).json({ error: "Failed to fetch stock health summary" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const summary = await analyticsService.getStockHealthSummary(clientId);
+    res.json(successResponse(summary));
+  })
 );
 
 // =============================================================================
 // Stock Intelligence - Configurable thresholds and detailed analysis
 // =============================================================================
-
-import * as stockIntelligenceService from "../services/stock-intelligence.service.js";
 
 /**
  * GET /api/analytics/stock-intelligence/:clientId
@@ -339,17 +264,11 @@ import * as stockIntelligenceService from "../services/stock-intelligence.servic
 router.get(
   "/stock-intelligence/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const intelligence =
-        await stockIntelligenceService.getClientStockIntelligence(clientId);
-      res.json({ data: intelligence });
-    } catch (error) {
-      logger.error("Error fetching stock intelligence", error as Error);
-      res.status(500).json({ error: "Failed to fetch stock intelligence" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const intelligence = await stockIntelligenceService.getClientStockIntelligence(clientId);
+    res.json(successResponse(intelligence));
+  })
 );
 
 /**
@@ -359,17 +278,11 @@ router.get(
 router.get(
   "/stock-config/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const config =
-        await stockIntelligenceService.getClientStockHealthConfig(clientId);
-      res.json({ data: config });
-    } catch (error) {
-      logger.error("Error fetching stock config", error as Error);
-      res.status(500).json({ error: "Failed to fetch stock config" });
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const config = await stockIntelligenceService.getClientStockHealthConfig(clientId);
+    res.json(successResponse(config));
+  })
 );
 
 /**
@@ -379,25 +292,19 @@ router.get(
 router.patch(
   "/stock-config/:clientId",
   requireClientAccess,
-  async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.params as { clientId: string };
-      const { criticalWeeks, lowWeeks, watchWeeks, overstockMonths } = req.body;
+  asyncHandler(async (req: Request, res: Response) => {
+    const { clientId } = req.params as { clientId: string };
+    const { criticalWeeks, lowWeeks, watchWeeks, overstockMonths } = req.body;
 
-      const config =
-        await stockIntelligenceService.updateClientStockHealthConfig(clientId, {
-          criticalWeeks,
-          lowWeeks,
-          watchWeeks,
-          overstockMonths,
-        });
+    const config = await stockIntelligenceService.updateClientStockHealthConfig(clientId, {
+      criticalWeeks,
+      lowWeeks,
+      watchWeeks,
+      overstockMonths,
+    });
 
-      res.json({ data: config });
-    } catch (error) {
-      logger.error("Error updating stock config", error as Error);
-      res.status(500).json({ error: "Failed to update stock config" });
-    }
-  },
+    res.json(successResponse(config));
+  })
 );
 
 export default router;

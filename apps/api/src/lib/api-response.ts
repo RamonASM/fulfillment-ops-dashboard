@@ -1,10 +1,48 @@
 import crypto from 'crypto';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
 
 // =============================================================================
 // STANDARD API RESPONSE FORMATS
 // =============================================================================
 // Provides consistent response structures across all API endpoints.
 // All error responses include a unique request ID for debugging.
+
+// =============================================================================
+// ASYNC HANDLER UTILITY
+// =============================================================================
+// Wraps async route handlers to automatically catch errors and forward to
+// the global error handler. Eliminates the need for try-catch in every route.
+
+/**
+ * Type for async Express route handlers
+ */
+type AsyncRequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => Promise<unknown>;
+
+/**
+ * Wrap an async route handler to automatically catch errors
+ * and forward them to the global error handler.
+ *
+ * @param fn - Async route handler function
+ * @returns Express middleware that handles async errors
+ *
+ * @example
+ * ```typescript
+ * router.get('/products', asyncHandler(async (req, res) => {
+ *   const products = await prisma.product.findMany();
+ *   res.json(successResponse(products));
+ *   // No try-catch needed - errors automatically go to error handler
+ * }));
+ * ```
+ */
+export function asyncHandler(fn: AsyncRequestHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
 
 /**
  * Standard error codes used across the API

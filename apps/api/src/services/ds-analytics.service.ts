@@ -1,12 +1,18 @@
 /**
  * Data Science Analytics Service Integration
  * Connects Node.js backend with Python DS Analytics service
+ * Includes retry logic with exponential backoff for transient failures
  */
-import axios, { AxiosInstance } from "axios";
-import { prisma } from "../lib/prisma";
+import axios, { AxiosInstance, AxiosError } from "axios";
+import { prisma } from "../lib/prisma.js";
+import { logger } from "../lib/logger.js";
 
 const DS_ANALYTICS_URL =
   process.env.DS_ANALYTICS_URL || "http://localhost:8000";
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 interface UsageCalculationResult {
   product_id: string;
@@ -46,12 +52,6 @@ interface UsageCalculationResult {
   calculated_at: string;
 }
 
-interface BatchCalculationRequest {
-  product_ids: string[];
-  client_id: string;
-  force_recalculate?: boolean;
-}
-
 interface HealthCheckResponse {
   status: string;
   database_connected: boolean;
@@ -59,10 +59,145 @@ interface HealthCheckResponse {
   timestamp: string;
 }
 
+interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  backoffMultiplier: number;
+}
+
+// =============================================================================
+// RETRY UTILITY
+// =============================================================================
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 30000,
+  backoffMultiplier: 2,
+};
+
+/**
+ * Calculate delay for exponential backoff with jitter
+ */
+function calculateBackoffDelay(
+  attempt: number,
+  config: RetryConfig
+): number {
+  // Exponential backoff: baseDelay * (multiplier ^ attempt)
+  const exponentialDelay =
+    config.baseDelayMs * Math.pow(config.backoffMultiplier, attempt);
+
+  // Cap at max delay
+  const cappedDelay = Math.min(exponentialDelay, config.maxDelayMs);
+
+  // Add jitter (±25%) to prevent thundering herd
+  const jitter = cappedDelay * 0.25 * (Math.random() * 2 - 1);
+
+  return Math.floor(cappedDelay + jitter);
+}
+
+/**
+ * Check if an error is retryable
+ */
+function isRetryableError(error: unknown): boolean {
+  if (axios.isAxiosError(error)) {
+    const axiosError = error as AxiosError;
+
+    // Network errors are retryable
+    if (!axiosError.response) {
+      return true;
+    }
+
+    // 5xx server errors are retryable
+    const status = axiosError.response.status;
+    if (status >= 500 && status < 600) {
+      return true;
+    }
+
+    // 429 Too Many Requests is retryable
+    if (status === 429) {
+      return true;
+    }
+
+    // 408 Request Timeout is retryable
+    if (status === 408) {
+      return true;
+    }
+  }
+
+  // Connection errors
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    const retryableMessages = [
+      'econnreset',
+      'econnrefused',
+      'etimedout',
+      'socket hang up',
+      'network error',
+    ];
+    return retryableMessages.some(msg => message.includes(msg));
+  }
+
+  return false;
+}
+
+/**
+ * Sleep for specified milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute a function with retry logic and exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  operation: string,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      // Don't retry if it's not a retryable error
+      if (!isRetryableError(error)) {
+        throw error;
+      }
+
+      // Don't retry if we've exhausted all attempts
+      if (attempt >= config.maxRetries) {
+        logger.error(`${operation} failed after ${config.maxRetries + 1} attempts`, error as Error);
+        throw error;
+      }
+
+      const delay = calculateBackoffDelay(attempt, config);
+      logger.warn(`${operation} failed (attempt ${attempt + 1}/${config.maxRetries + 1}), retrying in ${delay}ms`, {
+        error: (error as Error).message,
+      });
+
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+}
+
+// =============================================================================
+// DS ANALYTICS SERVICE
+// =============================================================================
+
 class DSAnalyticsService {
   private client: AxiosInstance;
+  private retryConfig: RetryConfig;
 
-  constructor() {
+  constructor(retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG) {
+    this.retryConfig = retryConfig;
     this.client = axios.create({
       baseURL: DS_ANALYTICS_URL,
       timeout: 120000, // 2 minutes timeout for batch calculations
@@ -77,10 +212,14 @@ class DSAnalyticsService {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.get<HealthCheckResponse>("/health");
+      const response = await withRetry(
+        () => this.client.get<HealthCheckResponse>("/health"),
+        "DS Analytics health check",
+        { ...this.retryConfig, maxRetries: 1 } // Fewer retries for health check
+      );
       return response.data.status === "healthy";
     } catch (error) {
-      console.error("DS Analytics health check failed:", error);
+      logger.warn("DS Analytics health check failed", { error: (error as Error).message });
       return false;
     }
   }
@@ -93,44 +232,47 @@ class DSAnalyticsService {
     clientId: string,
     forceRecalculate = false,
   ): Promise<UsageCalculationResult[]> {
-    try {
-      const response = await this.client.post<UsageCalculationResult[]>(
-        "/calculate-usage",
-        {
-          product_ids: productIds,
-          client_id: clientId,
-          force_recalculate: forceRecalculate,
-        },
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error("Failed to calculate usage via DS service:", error);
-      throw new Error("Usage calculation failed");
-    }
+    return withRetry(
+      async () => {
+        const response = await this.client.post<UsageCalculationResult[]>(
+          "/calculate-usage",
+          {
+            product_ids: productIds,
+            client_id: clientId,
+            force_recalculate: forceRecalculate,
+          },
+        );
+        return response.data;
+      },
+      `Calculate usage for ${productIds.length} products`,
+      this.retryConfig
+    );
   }
 
   /**
    * Trigger background recalculation for entire client
    */
   async recalculateClient(clientId: string): Promise<void> {
-    try {
-      await this.client.post(`/calculate-usage/client/${clientId}`);
-    } catch (error) {
-      console.error("Failed to trigger client recalculation:", error);
-      throw error;
-    }
+    await withRetry(
+      () => this.client.post(`/calculate-usage/client/${clientId}`),
+      `Recalculate usage for client ${clientId}`,
+      this.retryConfig
+    );
   }
 
   /**
    * Get DS Analytics service statistics
    */
-  async getStats(): Promise<any> {
+  async getStats(): Promise<Record<string, unknown> | null> {
     try {
-      const response = await this.client.get("/stats");
+      const response = await withRetry(
+        () => this.client.get("/stats"),
+        "Get DS analytics stats",
+        { ...this.retryConfig, maxRetries: 1 }
+      );
       return response.data;
     } catch (error) {
-      console.error("Failed to get DS analytics stats:", error);
+      logger.error("Failed to get DS analytics stats", error as Error);
       return null;
     }
   }
@@ -138,6 +280,10 @@ class DSAnalyticsService {
 
 // Singleton instance
 export const dsAnalyticsService = new DSAnalyticsService();
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
 
 /**
  * Calculate usage for products after import
@@ -148,37 +294,47 @@ export async function calculateUsageAfterImport(
   clientId: string,
 ): Promise<void> {
   try {
-    console.log(
-      `Calculating usage for ${productIds.length} products after import...`,
-    );
+    logger.info("Calculating usage after import", { productCount: productIds.length, clientId });
 
     // Check if DS service is available
     const isHealthy = await dsAnalyticsService.healthCheck();
 
     if (!isHealthy) {
-      console.warn(
-        "DS Analytics service unavailable, skipping usage calculation",
-      );
+      logger.warn("DS Analytics service unavailable, skipping usage calculation");
       return;
     }
 
     // Calculate usage in batches of 100
     const batchSize = 100;
+    let successCount = 0;
+    let failureCount = 0;
+
     for (let i = 0; i < productIds.length; i += batchSize) {
       const batch = productIds.slice(i, i + batchSize);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(productIds.length / batchSize);
 
       try {
         await dsAnalyticsService.calculateUsage(batch, clientId);
-        console.log(`Calculated usage for batch ${i / batchSize + 1}`);
+        successCount += batch.length;
+        logger.info(`Calculated usage for batch ${batchNumber}/${totalBatches}`, {
+          batchSize: batch.length,
+          successCount,
+        });
       } catch (error) {
-        console.error(`Failed to calculate batch ${i / batchSize + 1}:`, error);
+        failureCount += batch.length;
+        logger.error(`Failed to calculate batch ${batchNumber}/${totalBatches}`, error as Error);
         // Continue with next batch even if one fails
       }
     }
 
-    console.log("Usage calculation completed");
+    logger.info("Usage calculation completed", {
+      productCount: productIds.length,
+      successCount,
+      failureCount,
+    });
   } catch (error) {
-    console.error("Error in calculateUsageAfterImport:", error);
+    logger.error("Error in calculateUsageAfterImport", error as Error);
   }
 }
 
@@ -187,22 +343,14 @@ export async function calculateUsageAfterImport(
  * Can be called manually or on a schedule
  */
 export async function recalculateClientUsage(clientId: string): Promise<void> {
-  try {
-    const isHealthy = await dsAnalyticsService.healthCheck();
+  const isHealthy = await dsAnalyticsService.healthCheck();
 
-    if (!isHealthy) {
-      throw new Error("DS Analytics service is not available");
-    }
-
-    await dsAnalyticsService.recalculateClient(clientId);
-
-    console.log(
-      `Started background usage recalculation for client ${clientId}`,
-    );
-  } catch (error) {
-    console.error("Failed to recalculate client usage:", error);
-    throw error;
+  if (!isHealthy) {
+    throw new Error("DS Analytics service is not available");
   }
+
+  await dsAnalyticsService.recalculateClient(clientId);
+  logger.info("Started background usage recalculation", { clientId });
 }
 
 /**
@@ -210,32 +358,39 @@ export async function recalculateClientUsage(clientId: string): Promise<void> {
  * Should be run daily via scheduler
  */
 export async function recalculateAllClientsUsage(): Promise<void> {
-  try {
-    const clients = await prisma.client.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true },
-    });
+  const clients = await prisma.client.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true },
+  });
 
-    console.log(
-      `Starting usage recalculation for ${clients.length} clients...`,
-    );
+  logger.info("Starting usage recalculation for all clients", { clientCount: clients.length });
 
-    for (const client of clients) {
-      try {
-        await recalculateClientUsage(client.id);
-        console.log(`Triggered recalculation for ${client.name}`);
+  let successCount = 0;
+  let failureCount = 0;
 
-        // Small delay between clients to avoid overloading
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error(`Failed to recalculate ${client.name}:`, error);
-        // Continue with other clients
-      }
+  for (const client of clients) {
+    try {
+      await recalculateClientUsage(client.id);
+      successCount++;
+      logger.info("Triggered recalculation for client", {
+        clientId: client.id,
+        clientName: client.name,
+      });
+
+      // Small delay between clients to avoid overloading
+      await sleep(1000);
+    } catch (error) {
+      failureCount++;
+      logger.error("Failed to recalculate client", error as Error, {
+        clientName: client.name,
+      });
+      // Continue with other clients
     }
-
-    console.log("All client recalculations triggered");
-  } catch (error) {
-    console.error("Error in recalculateAllClientsUsage:", error);
-    throw error;
   }
+
+  logger.info("All client recalculations completed", {
+    total: clients.length,
+    success: successCount,
+    failed: failureCount,
+  });
 }
