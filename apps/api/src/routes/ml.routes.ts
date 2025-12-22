@@ -154,7 +154,7 @@ router.get("/readiness", async (req, res) => {
           ],
     });
   } catch (err) {
-    logger.error("ML readiness check failed", { error: err });
+    logger.error("ML readiness check failed", err instanceof Error ? err : null);
     res.status(500).json({
       state: "error",
       message: "Failed to check ML readiness",
