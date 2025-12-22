@@ -126,7 +126,7 @@ class UsageCalculator:
             FROM transactions
             WHERE product_id = :product_id
               AND date_submitted >= NOW() - INTERVAL '12 months'
-              AND order_status = 'completed'
+              AND LOWER(order_status) = 'completed'
             GROUP BY DATE_TRUNC('month', date_submitted)
             ORDER BY month ASC
         """)
@@ -410,7 +410,7 @@ class UsageCalculator:
             FROM transactions
             WHERE product_id = :product_id
               AND date_submitted >= NOW() - INTERVAL '12 months'
-              AND order_status = 'completed'
+              AND LOWER(order_status) = 'completed'
             GROUP BY DATE_TRUNC('month', date_submitted)
             ORDER BY month ASC
         """)
