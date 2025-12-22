@@ -64,8 +64,10 @@ interface ImportPreview {
   importId: string;
   filename?: string;
   detectedType: "inventory" | "orders" | "both";
-  selectedType?: "inventory" | "orders" | "both";
+  selectedType?: "inventory" | "orders" | "both" | null;
   userOverride?: boolean;
+  requiresTypeSelection?: boolean;
+  message?: string;
   detection?: ImportDetectionResult;
   rowCount: number;
   columns: ColumnMapping[];
@@ -218,6 +220,12 @@ interface ImportResult {
   status: string;
   processedCount?: number;
   errorCount?: number;
+  errors?: Array<{
+    type?: string;
+    message?: string;
+    severity?: string;
+    row_range?: string;
+  }>;
   result?: {
     created: number;
     updated: number;
@@ -258,8 +266,13 @@ export function ImportModal({
   >({});
   const [currentImportId, setCurrentImportId] = useState<string | null>(null);
   const [isWaitingForCompletion, setIsWaitingForCompletion] = useState(false);
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
+  const [hasTimedOut, setHasTimedOut] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  // Timeout for import processing (2 minutes)
+  const IMPORT_TIMEOUT_MS = 120000;
 
   // Poll import progress during processing
   // NOTE: Backend returns ImportBatch directly (not wrapped in { data: ... })
@@ -271,6 +284,13 @@ export function ImportModal({
         status: string;
         processedCount: number;
         rowCount: number;
+        errorCount?: number;
+        errors?: Array<{
+          message?: string;
+          type?: string;
+          row_range?: string;
+          details?: string;
+        }>;
       }>(`/imports/${currentImportId}`),
     enabled:
       (importStep === "processing" || isWaitingForCompletion) &&
@@ -295,6 +315,7 @@ export function ImportModal({
         // Import actually finished - now safe to proceed
         setIsWaitingForCompletion(false);
         setCurrentImportId(null);
+        setProcessingStartTime(null);
 
         // Invalidate all relevant queries with exact: false to match partial keys
         queryClient.invalidateQueries({ queryKey: ["products"], exact: false });
@@ -331,6 +352,26 @@ export function ImportModal({
     onSuccess,
     queryClient,
   ]);
+
+  // Timeout check - stop polling if import takes too long
+  useEffect(() => {
+    if (!processingStartTime || !isWaitingForCompletion) return;
+
+    const checkTimeout = () => {
+      const elapsed = Date.now() - processingStartTime;
+      if (elapsed > IMPORT_TIMEOUT_MS) {
+        setHasTimedOut(true);
+        setIsWaitingForCompletion(false);
+        toast.error("Import timed out - please check server logs");
+      }
+    };
+
+    // Check immediately and set up interval
+    checkTimeout();
+    const interval = setInterval(checkTimeout, 5000);
+
+    return () => clearInterval(interval);
+  }, [processingStartTime, isWaitingForCompletion, IMPORT_TIMEOUT_MS]);
 
   // Upload mutation (single file)
   const uploadMutation = useMutation({
@@ -454,11 +495,14 @@ export function ImportModal({
       // The Python import runs async in the background after API returns.
       // We need to keep polling until status is terminal (completed/failed).
       setIsWaitingForCompletion(true);
+      setProcessingStartTime(Date.now());
+      setHasTimedOut(false);
       // The useEffect above will handle completion when polling shows terminal status
     },
     onError: (error: Error) => {
       setCurrentImportId(null);
       setIsWaitingForCompletion(false);
+      setProcessingStartTime(null);
       toast.error(error.message || "Failed to process import");
     },
   });
@@ -579,11 +623,133 @@ export function ImportModal({
     }
   };
 
+  // Helper function to poll and wait for terminal status
+  const waitForTerminalStatus = async (importId: string): Promise<ImportResult & { status: string }> => {
+    const POLL_INTERVAL = 2000; // 2 seconds
+    const TIMEOUT = 300000; // 5 minutes
+
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+
+      const pollStatus = async () => {
+        try {
+          const result = await api.get<{
+            id: string;
+            status: string;
+            processedCount?: number;
+            rowCount?: number;
+            errorCount?: number;
+            errors?: Array<{ message?: string; type?: string; row_range?: string }>;
+            result?: { created: number; updated: number; skipped: number; errors: string[] };
+          }>(`/imports/${importId}`);
+
+          const terminalStatuses = ["completed", "completed_with_errors", "failed"];
+          if (terminalStatuses.includes(result.status)) {
+            resolve(result as ImportResult & { status: string });
+            return;
+          }
+
+          // Check timeout
+          if (Date.now() - startTime > TIMEOUT) {
+            reject(new Error("Import timed out"));
+            return;
+          }
+
+          // Continue polling
+          setTimeout(pollStatus, POLL_INTERVAL);
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      pollStatus();
+    });
+  };
+
+  // Fixed confirm-all: waits for each import to actually complete, retries failed imports
   const handleConfirmAll = async () => {
     setImportStep("processing");
-    for (const preview of importPreviews) {
-      setCurrentImportId(preview.importId); // Track each import being processed
-      await confirmMutation.mutateAsync(preview.importId);
+    const results: ImportResult[] = [];
+    const failedPreviews: typeof importPreviews = [];
+
+    // Process all imports sequentially, waiting for each to complete
+    for (let i = 0; i < importPreviews.length; i++) {
+      const preview = importPreviews[i];
+      setCurrentImportId(preview.importId);
+      setCurrentPreviewIndex(i);
+
+      try {
+        // 1. Start the import (API returns quickly with "processing" status)
+        await confirmMutation.mutateAsync(preview.importId);
+
+        // 2. Wait for the import to ACTUALLY complete (Python runs async)
+        const finalResult = await waitForTerminalStatus(preview.importId);
+        results.push(finalResult);
+
+        if (finalResult.status === "failed") {
+          toast.error(`Import failed: ${preview.filename || `File ${i + 1}`}, will retry`);
+          failedPreviews.push(preview);
+        } else if (finalResult.status === "completed_with_errors") {
+          toast.success(`Import completed with warnings: ${preview.filename || `File ${i + 1}`}`);
+        } else {
+          toast.success(`Import completed: ${preview.filename || `File ${i + 1}`}`);
+        }
+      } catch (err) {
+        toast.error(`Import error: ${preview.filename || `File ${i + 1}`}, will retry`);
+        failedPreviews.push(preview);
+      }
+    }
+
+    // Retry failed imports once
+    if (failedPreviews.length > 0) {
+      toast(`Retrying ${failedPreviews.length} failed import(s)...`);
+
+      for (const preview of failedPreviews) {
+        setCurrentImportId(preview.importId);
+
+        try {
+          // Reset status to pending before retry
+          await api.patch(`/imports/${preview.importId}`, { status: "pending" });
+
+          // Retry the import
+          await confirmMutation.mutateAsync(preview.importId);
+          const retryResult = await waitForTerminalStatus(preview.importId);
+          results.push(retryResult);
+
+          if (retryResult.status === "failed") {
+            toast.error(`Retry failed: ${preview.filename || preview.importId}`);
+          } else {
+            toast.success(`Retry succeeded: ${preview.filename || preview.importId}`);
+          }
+        } catch (err) {
+          toast.error(`Retry error: ${preview.filename || preview.importId}`);
+        }
+      }
+    }
+
+    // Done with all imports
+    setImportResults(results);
+    setCurrentImportId(null);
+    setIsWaitingForCompletion(false);
+
+    // Invalidate queries to refresh data
+    queryClient.invalidateQueries({ queryKey: ["products"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["imports"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["orders"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["import-history"], exact: false });
+
+    setImportStep("complete");
+    onSuccess?.();
+
+    const successCount = results.filter((r) => r.status === "completed" || r.status === "completed_with_errors").length;
+    const failCount = results.filter((r) => r.status === "failed").length;
+
+    if (failCount === 0) {
+      toast.success(`All ${successCount} imports completed successfully`);
+    } else if (successCount > 0) {
+      toast.success(`${successCount} imports succeeded, ${failCount} failed`);
+    } else {
+      toast.error(`All ${failCount} imports failed`);
     }
   };
 
@@ -610,8 +776,11 @@ export function ImportModal({
       updated: acc.updated + (result.result?.updated || 0),
       skipped: acc.skipped + (result.result?.skipped || 0),
       errors: [...acc.errors, ...(result.result?.errors || [])],
+      // Include structured errors (data_quality warnings, etc.)
+      structuredErrors: [...acc.structuredErrors, ...(result.errors || [])],
+      hasWarnings: acc.hasWarnings || result.status === "completed_with_errors",
     }),
-    { created: 0, updated: 0, skipped: 0, errors: [] as string[] },
+    { created: 0, updated: 0, skipped: 0, errors: [] as string[], structuredErrors: [] as Array<{ type?: string; message?: string; severity?: string; row_range?: string }>, hasWarnings: false },
   );
 
   return (
@@ -802,6 +971,26 @@ export function ImportModal({
                     </div>
                   </div>
 
+                  {/* Type Selection Required Warning */}
+                  {currentPreview.requiresTypeSelection &&
+                    (currentPreview.selectedType === "both" ||
+                      currentPreview.selectedType === null) && (
+                      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-medium text-amber-800">
+                              Type Selection Required
+                            </p>
+                            <p className="text-sm text-amber-600 mt-1">
+                              This file contains both inventory and order data.
+                              Please select which type to import below.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                   {/* Import Type Selection */}
                   {currentPreview.detection && (
                     <ImportTypeSelector
@@ -903,29 +1092,55 @@ export function ImportModal({
                                   (f) => f.value === mappingTarget,
                                 );
 
+                              // Check if this mapping was dropped due to conflict
+                              const isDropped =
+                                !mappingTarget ||
+                                mappingTarget === "" ||
+                                col.warnings?.some(w => w.includes("dropped") || w.includes("conflict"));
+
+                              const dropWarning = col.warnings?.find(w =>
+                                w.includes("dropped") || w.includes("conflict")
+                              );
+
                               return (
                                 <tr
                                   key={i}
                                   className={clsx(
-                                    col.confidence < 0.5 &&
+                                    isDropped && "bg-red-50 border-l-4 border-l-red-500",
+                                    !isDropped && col.confidence < 0.5 &&
                                       !isCustomField &&
                                       "bg-amber-50",
-                                    isCustomField && "bg-blue-50/50",
+                                    !isDropped && isCustomField && "bg-blue-50/50",
                                   )}
                                 >
                                   <td className="px-4 py-2 text-gray-900">
-                                    <div className="flex items-center gap-2">
-                                      <span
-                                        className={clsx(
-                                          "w-2 h-2 rounded-full flex-shrink-0",
-                                          isCustomField
-                                            ? "bg-blue-500"
-                                            : "bg-primary-500",
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={clsx(
+                                            "w-2 h-2 rounded-full flex-shrink-0",
+                                            isDropped
+                                              ? "bg-red-500"
+                                              : isCustomField
+                                                ? "bg-blue-500"
+                                                : "bg-primary-500",
+                                          )}
+                                        ></span>
+                                        <span className="font-medium">
+                                          {col.source}
+                                        </span>
+                                        {isDropped && (
+                                          <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded font-medium">
+                                            CONFLICT
+                                          </span>
                                         )}
-                                      ></span>
-                                      <span className="font-medium">
-                                        {col.source}
-                                      </span>
+                                      </div>
+                                      {isDropped && dropWarning && (
+                                        <div className="text-xs text-red-600 flex items-start gap-1 ml-4">
+                                          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                          <span>{dropWarning}</span>
+                                        </div>
+                                      )}
                                     </div>
                                   </td>
                                   <td className="px-4 py-2">
@@ -1018,25 +1233,62 @@ export function ImportModal({
                   </div>
 
                   <div className="flex justify-between gap-3">
-                    <button onClick={resetAndClose} className="btn-secondary">
+                    <button
+                      onClick={resetAndClose}
+                      className="btn-secondary"
+                      disabled={isWaitingForCompletion || confirmMutation.isPending}
+                    >
                       Cancel
                     </button>
                     <div className="flex gap-2">
                       {importPreviews.length > 1 && (
                         <button
                           onClick={handleConfirmAll}
-                          className="btn-secondary"
+                          disabled={isWaitingForCompletion || confirmMutation.isPending}
+                          className={clsx(
+                            "btn-secondary",
+                            (isWaitingForCompletion || confirmMutation.isPending) &&
+                              "opacity-50 cursor-not-allowed"
+                          )}
                         >
-                          Import All ({importPreviews.length})
+                          {isWaitingForCompletion || confirmMutation.isPending
+                            ? "Processing..."
+                            : `Import All (${importPreviews.length})`}
                         </button>
                       )}
                       <button
                         onClick={handleConfirmImport}
-                        className="btn-primary"
+                        disabled={
+                          isWaitingForCompletion ||
+                          confirmMutation.isPending ||
+                          (currentPreview?.requiresTypeSelection &&
+                            (currentPreview?.selectedType === "both" ||
+                              currentPreview?.selectedType === null))
+                        }
+                        className={clsx(
+                          "btn-primary",
+                          (isWaitingForCompletion ||
+                            confirmMutation.isPending ||
+                            (currentPreview?.requiresTypeSelection &&
+                              (currentPreview?.selectedType === "both" ||
+                                currentPreview?.selectedType === null))) &&
+                            "opacity-50 cursor-not-allowed"
+                        )}
+                        title={
+                          isWaitingForCompletion || confirmMutation.isPending
+                            ? "Import in progress..."
+                            : currentPreview?.requiresTypeSelection &&
+                              (currentPreview?.selectedType === "both" ||
+                                currentPreview?.selectedType === null)
+                              ? "Please select Inventory or Orders before confirming"
+                              : undefined
+                        }
                       >
-                        {importPreviews.length > 1
-                          ? "Import This File"
-                          : "Confirm Import"}
+                        {isWaitingForCompletion || confirmMutation.isPending
+                          ? "Processing..."
+                          : importPreviews.length > 1
+                            ? "Import This File"
+                            : "Confirm Import"}
                       </button>
                     </div>
                   </div>
@@ -1046,45 +1298,184 @@ export function ImportModal({
               {/* Processing Step */}
               {importStep === "processing" && (
                 <div className="text-center py-12">
-                  <Loader2 className="w-12 h-12 animate-spin text-primary-600 mx-auto" />
-                  <p className="mt-4 text-lg font-medium text-gray-900">
-                    Processing import...
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    {importPreviews.length > 1
-                      ? `Processing file ${importResults.length + 1} of ${importPreviews.length}`
-                      : "This may take a few moments"}
-                  </p>
-                  {importProgress?.processedCount !== undefined &&
-                    importProgress?.rowCount && (
-                      <div className="mt-6 max-w-xs mx-auto">
-                        <div className="flex justify-between text-sm text-gray-600 mb-1">
-                          <span>
-                            {importProgress.processedCount.toLocaleString()}{" "}
-                            rows
-                          </span>
-                          <span>
-                            {importProgress.rowCount.toLocaleString()} total
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                            style={{
-                              width: `${Math.min(100, (importProgress.processedCount / importProgress.rowCount) * 100)}%`,
-                            }}
-                          />
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {Math.round(
-                            (importProgress.processedCount /
-                              importProgress.rowCount) *
-                              100,
-                          )}
-                          % complete
+                  {/* Show timeout error */}
+                  {hasTimedOut ? (
+                    <div className="space-y-4">
+                      <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+                        <AlertTriangle className="w-8 h-8 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-lg font-medium text-gray-900">Import Timed Out</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          The import is taking longer than expected. It may still be processing in the background.
                         </p>
                       </div>
-                    )}
+                      <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-left max-w-md mx-auto">
+                        <p className="text-sm text-amber-700">
+                          Check the import history page to see if your import completed. If it's still processing, please wait a few more minutes.
+                        </p>
+                      </div>
+                      <div className="flex justify-center gap-3 mt-4">
+                        <button
+                          onClick={onClose}
+                          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Close
+                        </button>
+                        <button
+                          onClick={() => {
+                            setImportStep("upload");
+                            setImportPreviews([]);
+                            setImportResults([]);
+                            setCurrentImportId(null);
+                            setHasTimedOut(false);
+                            setProcessingStartTime(null);
+                          }}
+                          className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                        >
+                          Start New Import
+                        </button>
+                      </div>
+                    </div>
+                  ) : importProgress?.status === "failed" ? (
+                    <div className="space-y-4">
+                      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+                        <AlertTriangle className="w-8 h-8 text-red-600" />
+                      </div>
+                      <div>
+                        <p className="text-lg font-medium text-gray-900">Import Failed</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          An error occurred while processing your import
+                        </p>
+                      </div>
+
+                      {/* Error details */}
+                      {importProgress?.errors && importProgress.errors.length > 0 && (
+                        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-left max-w-md mx-auto">
+                          <h4 className="font-medium text-red-800 mb-2">
+                            Error Details ({importProgress.errors.length})
+                          </h4>
+                          <ul className="text-sm text-red-600 space-y-2 max-h-48 overflow-y-auto">
+                            {importProgress.errors.slice(0, 5).map((err, i) => (
+                              <li key={i} className="border-b border-red-100 pb-2 last:border-0 last:pb-0">
+                                <div className="font-medium">
+                                  {err.type || "Error"}: {err.message}
+                                </div>
+                                {err.row_range && (
+                                  <div className="text-red-400 text-xs mt-0.5">
+                                    Rows {err.row_range}
+                                  </div>
+                                )}
+                                {err.details && (
+                                  <details className="mt-1">
+                                    <summary className="text-xs text-red-400 cursor-pointer hover:text-red-500">
+                                      Technical details
+                                    </summary>
+                                    <pre className="mt-1 text-xs bg-red-100 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                                      {err.details}
+                                    </pre>
+                                  </details>
+                                )}
+                              </li>
+                            ))}
+                            {importProgress.errors.length > 5 && (
+                              <li className="text-red-400 text-xs pt-2">
+                                +{importProgress.errors.length - 5} more errors
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="flex justify-center gap-3 mt-4">
+                        <button
+                          onClick={onClose}
+                          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Close
+                        </button>
+                        <button
+                          onClick={() => {
+                            setImportStep("upload");
+                            setImportPreviews([]);
+                            setImportResults([]);
+                            setCurrentImportId(null);
+                          }}
+                          className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                        >
+                          Try Again
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Loader2 className="w-12 h-12 animate-spin text-primary-600 mx-auto" />
+                      <p className="mt-4 text-lg font-medium text-gray-900">
+                        Processing import...
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {importPreviews.length > 1
+                          ? `Processing file ${importResults.length + 1} of ${importPreviews.length}`
+                          : importProgress?.status === "post_processing"
+                            ? "Calculating usage metrics..."
+                            : "This may take a few moments"}
+                      </p>
+                      {importProgress?.processedCount !== undefined &&
+                        importProgress?.rowCount && (
+                          <div className="mt-6 max-w-xs mx-auto">
+                            <div className="flex justify-between text-sm text-gray-600 mb-1">
+                              <span>
+                                {importProgress.processedCount.toLocaleString()}{" "}
+                                rows
+                              </span>
+                              <span>
+                                {importProgress.rowCount.toLocaleString()} total
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div
+                                className="bg-primary-600 h-2 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.min(100, (importProgress.processedCount / importProgress.rowCount) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {Math.round(
+                                (importProgress.processedCount /
+                                  importProgress.rowCount) *
+                                  100,
+                              )}
+                              % complete
+                            </p>
+                          </div>
+                        )}
+
+                      {/* Show warnings/errors during processing */}
+                      {importProgress?.errors && importProgress.errors.length > 0 && (
+                        <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-left max-w-md mx-auto">
+                          <div className="flex items-center gap-2 mb-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                            <h4 className="font-medium text-amber-800 text-sm">
+                              Data Quality Warnings ({importProgress.errors.length})
+                            </h4>
+                          </div>
+                          <ul className="text-xs text-amber-700 space-y-1 max-h-24 overflow-y-auto">
+                            {importProgress.errors.slice(0, 3).map((err, i) => (
+                              <li key={i} className="truncate">
+                                {err.type && <span className="font-medium">{err.type}:</span>} {err.message}
+                              </li>
+                            ))}
+                            {importProgress.errors.length > 3 && (
+                              <li className="text-amber-500 italic">
+                                +{importProgress.errors.length - 3} more...
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 
@@ -1092,13 +1483,25 @@ export function ImportModal({
               {importStep === "complete" && (
                 <div className="space-y-4">
                   <div className="text-center py-6">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-                      <Check className="w-8 h-8 text-green-600" />
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${
+                      totals.hasWarnings || totals.structuredErrors.length > 0
+                        ? "bg-amber-100"
+                        : "bg-green-100"
+                    }`}>
+                      {totals.hasWarnings || totals.structuredErrors.length > 0 ? (
+                        <AlertTriangle className="w-8 h-8 text-amber-600" />
+                      ) : (
+                        <Check className="w-8 h-8 text-green-600" />
+                      )}
                     </div>
                     <h3 className="mt-4 text-xl font-semibold text-gray-900">
-                      {importResults.length > 1
-                        ? `${importResults.length} Imports Successful`
-                        : "Import Successful"}
+                      {totals.hasWarnings || totals.structuredErrors.length > 0
+                        ? importResults.length > 1
+                          ? `${importResults.length} Imports Completed with Warnings`
+                          : "Import Completed with Warnings"
+                        : importResults.length > 1
+                          ? `${importResults.length} Imports Successful`
+                          : "Import Successful"}
                     </h3>
                   </div>
 
@@ -1123,6 +1526,33 @@ export function ImportModal({
                     </div>
                   </div>
 
+                  {/* Data quality warnings (dropped rows, etc.) */}
+                  {totals.structuredErrors.length > 0 && (
+                    <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <h4 className="font-medium text-amber-800 mb-2 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4" />
+                        Data Quality Warnings ({totals.structuredErrors.length})
+                      </h4>
+                      <ul className="text-sm text-amber-700 space-y-2 max-h-32 overflow-y-auto">
+                        {totals.structuredErrors.slice(0, 5).map((err, i) => (
+                          <li key={i} className="border-b border-amber-100 pb-1 last:border-0">
+                            <span className="font-medium">{err.type || "Warning"}:</span>{" "}
+                            {err.message}
+                            {err.row_range && (
+                              <span className="text-amber-500 text-xs ml-1">({err.row_range})</span>
+                            )}
+                          </li>
+                        ))}
+                        {totals.structuredErrors.length > 5 && (
+                          <li className="text-amber-500 text-xs pt-1">
+                            +{totals.structuredErrors.length - 5} more warnings
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* String errors from import result */}
                   {totals.errors.length > 0 && (
                     <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
                       <h4 className="font-medium text-red-800 mb-2">

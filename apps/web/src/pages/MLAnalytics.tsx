@@ -31,6 +31,8 @@ interface MLHealthResponse {
   status: "healthy" | "degraded" | "offline";
   service: string;
   database?: string;
+  serviceUrl?: string;
+  lastCheck?: string;
 }
 
 interface ProductPrediction {
@@ -172,6 +174,7 @@ export default function MLAnalytics() {
     queryKey: ["ml-health"],
     queryFn: () => api.get<MLHealthResponse>("/ml/health"),
     staleTime: 2 * 60 * 1000,
+    refetchInterval: 30000, // Check every 30 seconds
     retry: 1,
     meta: { hideError: true },
   });
@@ -245,10 +248,29 @@ export default function MLAnalytics() {
                 ML Analytics Service Offline
               </h3>
               <p className="text-sm text-red-700 mt-1">
-                The ML service is currently unavailable. Predictions cannot be
-                generated at this time. Please contact your administrator if
-                this issue persists.
+                The ML service is currently unavailable. Demand forecasting and stockout predictions cannot be generated.
               </p>
+              {mlHealth?.serviceUrl && (
+                <p className="text-xs text-red-600 mt-2">
+                  Service URL: <code className="bg-red-100 px-1 py-0.5 rounded">{mlHealth.serviceUrl}</code>
+                </p>
+              )}
+              {mlHealth?.lastCheck && (
+                <p className="text-xs text-red-600 mt-1">
+                  Last check: {new Date(mlHealth.lastCheck).toLocaleString()}
+                </p>
+              )}
+              <div className="mt-3 p-3 bg-red-100 rounded-lg">
+                <p className="text-xs font-medium text-red-800 mb-2">To resolve:</p>
+                <ol className="text-xs text-red-700 list-decimal list-inside space-y-1">
+                  <li>Ensure <code className="bg-white/50 px-1 rounded">DS_ANALYTICS_URL</code> or <code className="bg-white/50 px-1 rounded">ML_SERVICE_URL</code> is set in production environment</li>
+                  <li>Start the DS Analytics service: <code className="bg-white/50 px-1 rounded">cd apps/ds-analytics && python -m uvicorn main:app --port 8000</code></li>
+                  <li>Verify the service is reachable from the API server</li>
+                </ol>
+                <p className="text-xs text-red-600 mt-2 italic">
+                  Contact your system administrator if the issue persists.
+                </p>
+              </div>
             </div>
           </div>
         </motion.div>

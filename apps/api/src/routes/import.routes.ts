@@ -856,11 +856,40 @@ router.post("/:importId/confirm", async (req, res, next) => {
       );
     }
 
-    // Validate import type - Python only supports "inventory" or "orders"
+    // Handle import type "both" - auto-detect based on column mappings
+    let effectiveImportType = importBatch.importType;
     if (importBatch.importType === "both") {
-      throw new ValidationError(
-        "Cannot process import type 'both'. Please select either 'inventory' or 'orders' using PATCH /api/imports/:id before confirming.",
-      );
+      // Auto-detect type based on mapped columns
+      const mappedFields = (columnMapping || []).map((m: { mapsTo: string }) => m.mapsTo.toLowerCase());
+
+      const inventoryFields = ['currentstockpacks', 'packsize', 'notificationpoint', 'reorderpointpacks', 'itemtype'];
+      const orderFields = ['orderid', 'quantityunits', 'quantitypacks', 'orderstatus', 'datesubmitted', 'shiptocompany'];
+
+      const hasInventoryFields = inventoryFields.some(f => mappedFields.includes(f));
+      const hasOrderFields = orderFields.some(f => mappedFields.includes(f));
+
+      if (hasInventoryFields && !hasOrderFields) {
+        effectiveImportType = 'inventory';
+        console.log(`[Import] Auto-detected type 'inventory' from column mappings`);
+      } else if (hasOrderFields && !hasInventoryFields) {
+        effectiveImportType = 'orders';
+        console.log(`[Import] Auto-detected type 'orders' from column mappings`);
+      } else if (hasOrderFields && hasInventoryFields) {
+        // Mixed signals - prefer orders if we see order-specific fields
+        effectiveImportType = 'orders';
+        console.log(`[Import] Mixed columns detected, defaulting to 'orders'`);
+      } else {
+        // No strong signals - require user to specify
+        throw new ValidationError(
+          "Cannot auto-detect import type from column mappings. Please select 'inventory' or 'orders' explicitly using PATCH /api/imports/:id before confirming. Inventory files typically have: Stock, Pack Size, Reorder Point. Order files typically have: Order ID, Quantity, Ship To."
+        );
+      }
+
+      // Update the import batch with detected type
+      await prisma.importBatch.update({
+        where: { id: importId },
+        data: { importType: effectiveImportType },
+      });
     }
 
     if (!importBatch.filePath || !fs.existsSync(importBatch.filePath)) {
@@ -907,7 +936,7 @@ router.post("/:importId/confirm", async (req, res, next) => {
         {
           importId,
           clientId: importBatch.clientId,
-          importType: importBatch.importType,
+          importType: effectiveImportType, // Use auto-detected type if original was "both"
           columnMappings: normalizedMappings,
         },
         null,
@@ -970,7 +999,7 @@ router.post("/:importId/confirm", async (req, res, next) => {
         process.env.DATABASE_URL,
         importId,
         absoluteFilePath,
-        importBatch.importType!,
+        effectiveImportType!, // Use auto-detected type if original was "both"
         absoluteMappingPath,
       ],
       {
