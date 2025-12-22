@@ -574,14 +574,53 @@ async def recalculate_client_usage_background(client_id: str):
                     client_id=client_id
                 )
 
-                # Update product
+                # Update product with ALL metrics (matching batch endpoint)
                 product = db.query(Product).filter(Product.id == product_id).first()
                 if product:
+                    # Core usage metrics
                     product.monthly_usage_units = usage_result.monthly_usage_units
                     product.monthly_usage_packs = usage_result.monthly_usage_packs
+                    product.usage_data_months = usage_result.data_months
+                    product.usage_calculation_tier = usage_result.calculation_tier
                     product.usage_confidence = usage_result.confidence_level
                     product.usage_last_calculated = datetime.now()
                     product.usage_calculation_method = usage_result.calculation_method
+                    product.usage_trend = usage_result.trend_direction
+                    product.seasonality_detected = usage_result.seasonality_detected
+
+                    # Calculate derivative metrics
+                    weeks_remaining = calculate_weeks_remaining(
+                        product.current_stock_packs or 0,
+                        usage_result.monthly_usage_packs
+                    )
+                    stock_status = classify_stock_status(weeks_remaining)
+
+                    product.weeks_remaining = weeks_remaining
+                    product.stock_status = stock_status
+
+                    # Stockout prediction
+                    if usage_result.monthly_usage_units > 0:
+                        daily_usage = usage_result.monthly_usage_units / 30.44
+                        stockout_info = predict_stockout_date(
+                            current_stock=product.current_stock_units or 0,
+                            daily_usage_rate=daily_usage,
+                            usage_variance=usage_result.variance
+                        )
+                        if stockout_info.get('predicted_date'):
+                            product.projected_stockout_date = datetime.fromisoformat(stockout_info['predicted_date'])
+                            product.stockout_confidence = stockout_info.get('confidence_score')
+
+                    # Reorder suggestion
+                    if usage_result.monthly_usage_units > 0:
+                        reorder_info = calculate_reorder_quantity(
+                            monthly_usage=usage_result.monthly_usage_units,
+                            lead_time_days=14,  # Default lead time
+                            safety_stock_weeks=2,  # Default safety stock
+                            current_stock=product.current_stock_packs or 0,
+                            pack_size=product.pack_size or 1
+                        )
+                        product.suggested_reorder_qty = reorder_info.get('suggested_quantity_packs')
+                        product.reorder_qty_last_updated = datetime.now()
 
                     db.commit()
                     consecutive_failures = 0  # Reset on success
