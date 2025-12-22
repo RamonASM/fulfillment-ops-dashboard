@@ -27,6 +27,8 @@ class ReorderSuggestion(BaseModel):
     reorder_point_packs: int
     safety_stock_packs: int
     lead_time_demand_packs: int
+    lead_time_days: Optional[int] = None
+    lead_time_source: Optional[str] = None  # 'product' | 'client_config' | 'default'
 
 class ConfidenceInterval(BaseModel):
     earliest: str  # ISO datetime
@@ -37,6 +39,16 @@ class StockoutPrediction(BaseModel):
     days_until_stockout: Optional[int]
     confidence_score: float
     confidence_interval: Optional[ConfidenceInterval]
+
+
+class FinancialMetrics(BaseModel):
+    inventory_value: Optional[float] = None
+    daily_holding_cost: Optional[float] = None
+    monthly_holding_cost: Optional[float] = None
+    annual_holding_cost: Optional[float] = None
+    reorder_cost: Optional[float] = None
+    stockout_risk_cost: Optional[float] = None
+    total_inventory_investment: Optional[float] = None
 
 class UsageCalculationResponse(BaseModel):
     product_id: str
@@ -55,6 +67,7 @@ class UsageCalculationResponse(BaseModel):
     outliers_detected: int
     predicted_stockout: Optional[StockoutPrediction]
     reorder_suggestion: Optional[ReorderSuggestion]
+    financial_metrics: Optional[FinancialMetrics] = None
     validation_messages: List[ValidationMessage]
     calculated_at: str  # ISO datetime
 

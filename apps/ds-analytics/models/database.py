@@ -51,6 +51,26 @@ class Product(Base):
     suggested_reorder_qty = Column(Integer)
     reorder_qty_last_updated = Column(DateTime)
 
+    # Financial tracking fields (synced with Prisma schema)
+    unit_cost = Column(Float)  # Cost per unit
+    unit_price = Column(Float)  # Selling price per unit
+    reorder_cost = Column(Float)  # Cost to place reorder
+    holding_cost_rate = Column(Float)  # Annual % of unit cost
+    last_cost_update = Column(DateTime)
+    cost_source = Column(String)  # 'manual' | 'imported' | 'calculated'
+
+    # Lead time fields (synced with Prisma schema)
+    supplier_lead_days = Column(Integer)  # Days from supplier
+    shipping_lead_days = Column(Integer)  # Transit days
+    processing_lead_days = Column(Integer)  # Internal processing
+    safety_buffer_days = Column(Integer)  # Extra cushion
+    total_lead_days = Column(Integer)  # Computed total
+    lead_time_source = Column(String)  # 'default' | 'override' | 'imported'
+
+    # Vendor fields
+    vendor_name = Column(String)
+    vendor_code = Column(String)
+
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
 
