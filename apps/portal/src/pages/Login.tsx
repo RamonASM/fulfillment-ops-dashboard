@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Package, Loader2 } from 'lucide-react';
 import { usePortalAuthStore } from '@/stores/auth.store';
+import { api } from '@/api/client';
 import toast from 'react-hot-toast';
 
 export default function Login() {
@@ -37,6 +38,10 @@ export default function Login() {
 
       const data = await response.json();
       setAuth(data.user, data.accessToken);
+
+      // Fetch CSRF token for subsequent requests
+      await api.refreshCsrfToken();
+
       toast.success('Welcome back!');
       navigate('/');
     } catch (error) {

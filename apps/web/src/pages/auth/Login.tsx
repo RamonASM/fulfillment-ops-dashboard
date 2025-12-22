@@ -37,6 +37,10 @@ export default function Login() {
       });
 
       setAuth(response.user, response.accessToken);
+
+      // Fetch CSRF token for subsequent requests
+      await api.refreshCsrfToken();
+
       toast.success(`Welcome back, ${response.user.name}!`);
       navigate('/');
     } catch (err) {

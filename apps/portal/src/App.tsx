@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { usePortalAuthStore } from "@/stores/auth.store";
+import { api } from "@/api/client";
 import PortalLayout from "@/components/PortalLayout";
 import Login from "@/pages/Login";
 import ForgotPassword from "@/pages/ForgotPassword";
@@ -32,6 +34,15 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { isAuthenticated } = usePortalAuthStore();
+
+  // Refresh CSRF token on app initialization if user is authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      api.refreshCsrfToken();
+    }
+  }, [isAuthenticated]);
+
   return (
     <Routes>
       <Route

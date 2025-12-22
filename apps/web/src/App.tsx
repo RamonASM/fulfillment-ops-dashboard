@@ -1,6 +1,7 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth.store";
+import { api } from "@/api/client";
 
 // Layouts - keep eager loaded
 import MainLayout from "@/components/layouts/MainLayout";
@@ -61,6 +62,15 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+
+  // Refresh CSRF token on app initialization if user is authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      api.refreshCsrfToken();
+    }
+  }, [isAuthenticated]);
+
   return (
     <Routes>
       {/* Auth routes */}
