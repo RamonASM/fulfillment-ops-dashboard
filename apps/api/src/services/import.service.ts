@@ -4,7 +4,7 @@ import crypto from "crypto";
 import Papa from "papaparse";
 import * as xlsx from "xlsx";
 import { prisma } from "../lib/prisma.js";
-import { Prisma, ItemType } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
   recalculateClientUsage,
   recalculateClientMonthlyUsage,
@@ -3053,12 +3053,12 @@ export async function processInventoryImport(
       // Use pre-fetched product map instead of individual query
       const existing = existingProductMap.get(String(row.productId));
 
-      // Normalize itemType to valid enum value
+      // Normalize itemType to valid value
       const rawItemType = String(row.itemType || "evergreen").toLowerCase();
-      const validItemTypes: ItemType[] = ["evergreen", "event", "completed"];
-      const itemType: ItemType = validItemTypes.includes(rawItemType as ItemType)
-        ? (rawItemType as ItemType)
-        : ItemType.evergreen;
+      const validItemTypes = ["evergreen", "event", "completed"];
+      const itemType = validItemTypes.includes(rawItemType)
+        ? rawItemType
+        : "evergreen";
 
       const productData = {
         name: String(row.name),
