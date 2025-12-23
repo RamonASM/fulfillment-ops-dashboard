@@ -1069,6 +1069,13 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                         except Exception as e:
                             # Fallback to standard bulk insert if COPY fails
                             print(f"  ⚠️  COPY failed, using bulk_insert_mappings: {e}")
+                            errors_encountered.append({
+                                "type": "performance_warning",
+                                "message": f"COPY insert failed, used slower fallback method: {str(e)[:150]}",
+                                "severity": "warning",
+                                "chunk_number": i + 1,
+                                "row_range": f"{(i*chunk_size)+1}-{(i+1)*chunk_size}"
+                            })
                             db.bulk_insert_mappings(models.Product, to_insert)
                             chunk_rows_committed += len(to_insert)
                             reconciliation["rows_inserted"] += len(to_insert)
@@ -1193,6 +1200,13 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                         except Exception as e:
                             # Fallback to standard bulk insert if COPY fails
                             print(f"  ⚠️  COPY failed, using bulk_insert_mappings: {e}")
+                            errors_encountered.append({
+                                "type": "performance_warning",
+                                "message": f"Transaction COPY insert failed, used slower fallback: {str(e)[:150]}",
+                                "severity": "warning",
+                                "chunk_number": i + 1,
+                                "row_range": f"{(i*chunk_size)+1}-{(i+1)*chunk_size}"
+                            })
                             db.bulk_insert_mappings(models.Transaction, valid_rows.to_dict(orient="records"))
                             chunk_rows_committed += len(valid_rows)
                             reconciliation["rows_inserted"] += len(valid_rows)

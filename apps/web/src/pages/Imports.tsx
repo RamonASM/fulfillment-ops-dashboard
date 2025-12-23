@@ -11,12 +11,14 @@ import {
   Search,
   Trash2,
   RotateCcw,
+  Info,
 } from "lucide-react";
 import { useState, useCallback, useRef } from "react";
 import { clsx } from "clsx";
 import { api } from "@/api/client";
 import { fadeInUp } from "@/lib/animations";
-import { ImportModal } from "@/components/ImportModal";
+import { ImportModal } from "@/components/ImportModal.lazy";
+import { ImportDiagnosticsModal } from "@/components/ImportDiagnosticsModal";
 import toast from "react-hot-toast";
 
 interface ImportHistory {
@@ -26,7 +28,7 @@ interface ImportHistory {
   filename: string;
   fileType: string;
   importType: string;
-  status: "pending" | "processing" | "completed" | "failed" | "rolled_back";
+  status: "pending" | "processing" | "post_processing" | "completed" | "completed_with_errors" | "failed" | "rolled_back";
   rowCount: number;
   processedCount?: number;
   errorCount?: number;
@@ -51,10 +53,20 @@ const statusConfig = {
     color: "text-blue-500 bg-blue-50",
     label: "Processing",
   },
+  post_processing: {
+    icon: Clock,
+    color: "text-blue-500 bg-blue-50",
+    label: "Finalizing",
+  },
   completed: {
     icon: CheckCircle,
     color: "text-green-500 bg-green-50",
     label: "Completed",
+  },
+  completed_with_errors: {
+    icon: AlertTriangle,
+    color: "text-amber-500 bg-amber-50",
+    label: "Completed with Errors",
   },
   failed: { icon: XCircle, color: "text-red-500 bg-red-50", label: "Failed" },
   rolled_back: {
@@ -76,6 +88,10 @@ export default function Imports() {
     importId: string;
     filename: string;
   } | null>(null);
+  const [diagnosticsModal, setDiagnosticsModal] = useState<{
+    isOpen: boolean;
+    importId: string | null;
+  }>({ isOpen: false, importId: null });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Delete import data mutation
@@ -96,6 +112,11 @@ export default function Imports() {
       toast.error(`Failed to delete import: ${error.message}`);
     },
   });
+
+  // Function to open diagnostics modal
+  const viewDiagnostics = (importId: string) => {
+    setDiagnosticsModal({ isOpen: true, importId });
+  };
 
   // Fetch clients for dropdown
   const { data: clientsData } = useQuery({
@@ -488,21 +509,33 @@ export default function Imports() {
                         {formatDate(imp.createdAt)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {imp.status === "completed" && (
-                          <button
-                            onClick={() =>
-                              setDeleteConfirm({
-                                show: true,
-                                importId: imp.id,
-                                filename: imp.filename,
-                              })
-                            }
-                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete import data"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {/* Show diagnostics for any completed/failed import */}
+                          {(imp.status === "failed" || imp.status === "completed_with_errors" || (imp.errorCount && imp.errorCount > 0)) && (
+                            <button
+                              onClick={() => viewDiagnostics(imp.id)}
+                              className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="View diagnostics"
+                            >
+                              <Info className="w-4 h-4" />
+                            </button>
+                          )}
+                          {imp.status === "completed" && (
+                            <button
+                              onClick={() =>
+                                setDeleteConfirm({
+                                  show: true,
+                                  importId: imp.id,
+                                  filename: imp.filename,
+                                })
+                              }
+                              className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete import data"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -588,6 +621,13 @@ export default function Imports() {
           </motion.div>
         </div>
       )}
+
+      {/* Diagnostics Modal */}
+      <ImportDiagnosticsModal
+        isOpen={diagnosticsModal.isOpen}
+        importId={diagnosticsModal.importId}
+        onClose={() => setDiagnosticsModal({ isOpen: false, importId: null })}
+      />
     </div>
   );
 }
