@@ -259,8 +259,9 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
-### 2025-12-23: Zero Defects Remediation (READY TO DEPLOY)
+### 2025-12-23 @ 10:21 PST: Zero Defects Remediation (DEPLOYED)
 - **What**: Comprehensive error handling and silent failure fixes for iOS-level reliability
+- **Commit**: `e6175ab` - fix: Zero Defects remediation - comprehensive error handling fixes
 - **Files Changed**:
   - `apps/api/scripts/cleanup/delete-failed-imports.ts` - NEW: Script to delete failed import batches
   - `apps/api/scripts/cleanup/cleanup-orphans.ts` - NEW: Script to cleanup orphan products
@@ -280,9 +281,12 @@ curl -s https://admin.yourtechassist.us/api/ | jq
   - `GET /api/diagnostics/errors` - Error summary endpoint (admin only)
   - `GET /api/diagnostics/errors/:category` - Detailed error logs by category
   - `POST /api/diagnostics/errors/cleanup` - Cleanup old error logs
-- **Database Status**: Already clean (0 failed imports, 0 orphan products)
-- **Diagnostic Result**: 21 passed, 2 failed (data issues), 8 warnings (empty clients)
-- **Status**: 🟡 READY TO DEPLOY
+- **Production Cleanup Executed**:
+  - Deleted 90 failed import batches (Dec 12-23, 2025 range)
+  - Root causes: missing quantity_packs column, file format issues, Python import errors
+  - Remaining: 6 completed + 8 completed_with_errors (clean data)
+- **Database Status**: 637 products, 6 clients, 0 failed imports
+- **Status**: ✅ DEPLOYED to production at 18:21 UTC (10:21 PST Dec 23)
 
 ---
 
@@ -523,6 +527,23 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
 ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 restart inventory-api"
 ```
 **Verify**: `pm2 list` should show `inventory-api` as `online`
+
+### Issue: "502 Bad Gateway" on api.yourtechassist.us
+**Cause**: nginx config at `/etc/nginx/sites-available/yourtechassist` may be pointing to wrong port
+**Fix**: Verify nginx is proxying to port 3001 (not 3002):
+```bash
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "grep proxy_pass /etc/nginx/sites-available/yourtechassist"
+# Should show: proxy_pass http://localhost:3001
+```
+If wrong, fix with: `sed -i 's/localhost:3002/localhost:3001/' /etc/nginx/sites-available/yourtechassist && nginx -t && systemctl reload nginx`
+
+### Issue: "Git pull shows success but code not updated"
+**Cause**: HEAD is detached from main branch (common after checkout to specific commit)
+**Fix**: Checkout main then pull:
+```bash
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "cd /var/www/inventory && git checkout main && git pull origin main"
+```
+**Verify**: `git log -1 --oneline` should show expected commit
 
 ### Issue: "Redis connection error"
 **Cause**: Redis isn't running (and doesn't need to be)
