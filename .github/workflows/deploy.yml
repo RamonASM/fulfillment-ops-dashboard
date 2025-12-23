@@ -194,7 +194,8 @@ jobs:
             NODE_OPTIONS='--max-old-space-size=2048' npm run build
 
             # Restart API with PM2 (zero-downtime reload)
-            pm2 reload inventory-api --env staging || pm2 start deploy/ecosystem.config.js --only inventory-api --env staging
+            # Use ecosystem.config.js to ensure env vars are loaded correctly
+            pm2 startOrReload deploy/ecosystem.config.js --only inventory-api --env staging
             pm2 save
 
             echo "Deployment completed successfully!"
@@ -272,7 +273,8 @@ jobs:
             NODE_OPTIONS='--max-old-space-size=2048' npm run build
 
             # Restart API with PM2 (zero-downtime reload)
-            pm2 reload inventory-api --env production || pm2 start deploy/ecosystem.config.js --only inventory-api --env production
+            # Use ecosystem.config.js to ensure env vars are loaded correctly
+            pm2 startOrReload deploy/ecosystem.config.js --only inventory-api --env production
             pm2 save
 
             echo "Production deployment completed successfully!"
@@ -303,7 +305,7 @@ jobs:
             npm ci
             npm run db:generate
             NODE_OPTIONS='--max-old-space-size=2048' npm run build
-            pm2 reload inventory-api --env production
+            pm2 startOrReload deploy/ecosystem.config.js --only inventory-api --env production
             pm2 save
 
             echo "Rollback completed!"
