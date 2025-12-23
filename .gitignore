@@ -59,3 +59,31 @@ temp
 **/__pycache__/
 *.pyc
 *.pyo
+
+# Uploads directory (contains user data)
+uploads/
+**/uploads/
+
+# Development shell scripts (debugging/testing)
+apps/api/*.sh
+apps/api/scripts/*.ts
+!apps/api/scripts/seed*.ts
+
+# Audit/debugging markdown files
+*_audit.md
+*_report.md
+*_codex.md
+*_fix.md
+*_resolution.md
+*_debug.md
+DIAGNOSTIC_SYSTEM.md
+handoff_report*.md
+
+# Service files (deployment specific)
+deploy/*.service
+
+# Husky duplicates (should only be at root)
+apps/**/.husky/
+
+# Test files in Python apps
+apps/python-importer/test_*.py

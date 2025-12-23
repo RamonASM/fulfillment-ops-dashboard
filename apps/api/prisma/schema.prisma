@@ -129,12 +129,19 @@ model UserClient {
 // PRODUCT MODELS
 // -----------------------------------------------------------------------------
 
+// Enum for valid item types - enforced at database level
+enum ItemType {
+  evergreen
+  event
+  completed
+}
+
 model Product {
   id                String   @id @default(uuid()) @db.Uuid
   clientId          String   @map("client_id") @db.Uuid
   productId         String   @map("product_id") @db.VarChar(100)
   name              String   @db.VarChar(500)
-  itemType          String   @default("evergreen") @map("item_type") @db.VarChar(50)
+  itemType          ItemType @default(evergreen) @map("item_type")
   packSize          Int      @default(1) @map("pack_size")
   notificationPoint Int?     @map("notification_point")
   currentStockPacks Int      @default(0) @map("current_stock_packs")
