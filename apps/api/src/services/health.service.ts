@@ -167,8 +167,8 @@ export function checkEmail(): ComponentHealth {
  * Check Python services (DS Analytics, ML Analytics)
  */
 export async function checkPythonServices(): Promise<ComponentHealth> {
-  const dsAnalyticsUrl = process.env.DS_ANALYTICS_URL || 'http://localhost:8001';
-  const mlAnalyticsUrl = process.env.ML_ANALYTICS_URL || 'http://localhost:8002';
+  const dsAnalyticsUrl = process.env.DS_ANALYTICS_URL || 'http://localhost:8000';
+  const mlAnalyticsUrl = process.env.ML_ANALYTICS_URL || 'http://localhost:8000';
 
   const services: Record<string, { status: 'up' | 'down'; latency?: number }> = {};
   let allUp = true;
