@@ -17,6 +17,13 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import {
+  getRecentErrors,
+  getErrorCount,
+  getErrorDetails,
+  cleanupOldErrors,
+  ErrorCategory,
+} from '../lib/error-tracker.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -338,6 +345,100 @@ router.get('/stats/categories', async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching category stats:', error);
     res.status(500).json({ error: 'Failed to fetch category stats' });
+  }
+});
+
+// =============================================================================
+// ERROR TRACKING ENDPOINTS
+// =============================================================================
+
+/**
+ * GET /diagnostics/errors
+ * Get recent errors with summary counts
+ *
+ * Query params:
+ * - hours: Number of hours to look back (default: 24)
+ * - category: Optional category filter
+ */
+router.get('/errors', requireRole('admin', 'operations_manager'), async (req: Request, res: Response) => {
+  try {
+    const hours = parseInt(req.query.hours as string) || 24;
+    const category = req.query.category as ErrorCategory | undefined;
+
+    const [errors, totalCount] = await Promise.all([
+      getRecentErrors(hours, category),
+      getErrorCount(hours),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        timeRange: `${hours} hours`,
+        totalErrors: totalCount,
+        byCategory: errors,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching errors:', error);
+    res.status(500).json({ error: 'Failed to fetch errors' });
+  }
+});
+
+/**
+ * GET /diagnostics/errors/:category
+ * Get detailed error logs for a specific category
+ *
+ * Query params:
+ * - hours: Number of hours to look back (default: 24)
+ * - limit: Maximum number of records (default: 100)
+ */
+router.get('/errors/:category', requireRole('admin', 'operations_manager'), async (req: Request, res: Response) => {
+  try {
+    const category = req.params.category as ErrorCategory;
+    const hours = parseInt(req.query.hours as string) || 24;
+    const limit = parseInt(req.query.limit as string) || 100;
+
+    const errors = await getErrorDetails(category, hours, limit);
+
+    res.json({
+      success: true,
+      data: {
+        category,
+        timeRange: `${hours} hours`,
+        count: errors.length,
+        errors,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching error details:', error);
+    res.status(500).json({ error: 'Failed to fetch error details' });
+  }
+});
+
+/**
+ * POST /diagnostics/errors/cleanup
+ * Clean up old error logs (admin only)
+ *
+ * Body params:
+ * - daysToKeep: Number of days to retain (default: 30)
+ */
+router.post('/errors/cleanup', requireRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const daysToKeep = parseInt(req.body.daysToKeep) || 30;
+
+    const deletedCount = await cleanupOldErrors(daysToKeep);
+
+    res.json({
+      success: true,
+      message: `Cleaned up ${deletedCount} old error logs`,
+      data: {
+        deleted: deletedCount,
+        retentionDays: daysToKeep,
+      },
+    });
+  } catch (error) {
+    console.error('Error cleaning up errors:', error);
+    res.status(500).json({ error: 'Failed to clean up errors' });
   }
 });
 

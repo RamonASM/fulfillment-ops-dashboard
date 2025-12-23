@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { logger } from "../lib/logger.js";
 import readline from "readline";
 import xlsx from "xlsx";
 import { spawn, execSync } from "child_process";
@@ -105,10 +106,49 @@ async function acquireClientImportLock(clientId: string): Promise<boolean> {
 
 /**
  * Release a PostgreSQL advisory lock for a client.
+ * Includes retry logic and emergency fallback to prevent deadlocks.
  */
 async function releaseClientImportLock(clientId: string): Promise<void> {
   const lockKey = uuidToLockKey(clientId);
-  await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})`;
+
+  try {
+    await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})`;
+    logger.debug("Advisory lock released", { clientId, lockKey });
+  } catch (error) {
+    logger.error(
+      "Failed to release advisory lock, attempting retry",
+      error instanceof Error ? error : null,
+      { clientId, lockKey }
+    );
+
+    // Retry once
+    try {
+      await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})`;
+      logger.info("Advisory lock released on retry", { clientId, lockKey });
+    } catch (retryError) {
+      // Emergency: Force disconnect to release all session-level locks
+      logger.error(
+        "CRITICAL: Lock release retry failed, forcing session disconnect",
+        retryError instanceof Error ? retryError : null,
+        { clientId, lockKey }
+      );
+
+      // Disconnecting will auto-release all session-level advisory locks
+      try {
+        await prisma.$disconnect();
+        await prisma.$connect();
+        logger.info("Prisma reconnected after emergency disconnect", { clientId });
+      } catch (reconnectError) {
+        logger.error(
+          "CRITICAL: Failed to reconnect Prisma after emergency disconnect",
+          reconnectError instanceof Error ? reconnectError : null,
+          { clientId }
+        );
+        // At this point, the advisory lock will be released when the session eventually times out
+        // This is a last resort to prevent permanent deadlocks
+      }
+    }
+  }
 }
 
 /**
@@ -980,23 +1020,55 @@ router.post("/:importId/confirm", async (req, res, next) => {
 
     // Store mapping corrections for learning
     if (originalMapping && columnMapping) {
-      try {
-        // Transform mappings into corrections format
-        const corrections = (
-          columnMapping as Array<{ source: string; mapsTo: string }>
-        ).map((col) => {
-          const original = (
-            originalMapping as Array<{ source: string; mapsTo: string }>
-          ).find((o) => o.source === col.source);
-          return {
-            header: col.source,
-            suggestedField: original?.mapsTo || "",
-            confirmedField: col.mapsTo,
-          };
+      // Transform mappings into corrections format
+      const corrections = (
+        columnMapping as Array<{ source: string; mapsTo: string }>
+      ).map((col) => {
+        const original = (
+          originalMapping as Array<{ source: string; mapsTo: string }>
+        ).find((o) => o.source === col.source);
+        return {
+          header: col.source,
+          suggestedField: original?.mapsTo || "",
+          confirmedField: col.mapsTo,
+        };
+      });
+
+      // Identify actual corrections (where user changed the mapping)
+      const actualCorrections = corrections.filter(
+        (c) => c.suggestedField && c.suggestedField !== c.confirmedField
+      );
+
+      // Store in import batch metadata for audit trail
+      if (actualCorrections.length > 0) {
+        logger.info("Mapping corrections applied", {
+          importId,
+          clientId: importBatch.clientId,
+          correctionCount: actualCorrections.length,
+          corrections: actualCorrections,
         });
+
+        await prisma.importBatch.update({
+          where: { id: importId },
+          data: {
+            metadata: {
+              ...(importBatch.metadata as Record<string, unknown> || {}),
+              mappingCorrections: actualCorrections,
+              correctionCount: actualCorrections.length,
+            },
+          },
+        });
+      }
+
+      // Try to store for ML learning (non-blocking)
+      try {
         await storeMappingCorrections(importBatch.clientId, corrections);
       } catch (err) {
-        console.warn("Failed to store mapping corrections:", err);
+        logger.warn("Failed to store mapping corrections for ML learning", {
+          clientId: importBatch.clientId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Corrections are already saved in ImportBatch.metadata, so this is non-critical
       }
     }
 
@@ -1173,9 +1245,13 @@ router.post("/:importId/confirm", async (req, res, next) => {
       try {
         if (fs.existsSync(mappingFilePath)) {
           fs.unlinkSync(mappingFilePath);
+          logger.debug("Cleaned up mapping file", { mappingFilePath });
         }
       } catch (cleanupError) {
-        console.warn("Failed to clean up mapping file:", cleanupError);
+        logger.warn("Failed to clean up mapping file - temp files may accumulate", {
+          mappingFilePath,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
       }
 
       // Read Python's status from database
@@ -1378,11 +1454,8 @@ router.post("/:importId/confirm", async (req, res, next) => {
       }
 
       // Release advisory lock when import completes (success or failure)
-      try {
-        await releaseClientImportLock(importBatch.clientId);
-      } catch (lockError) {
-        console.warn("Failed to release import lock:", lockError);
-      }
+      // Function handles errors internally with retry and emergency fallback
+      await releaseClientImportLock(importBatch.clientId);
     });
 
     pythonProcess.on("error", async (err) => {
@@ -1396,12 +1469,8 @@ router.post("/:importId/confirm", async (req, res, next) => {
           ],
         },
       });
-      // Release advisory lock on error
-      try {
-        await releaseClientImportLock(importBatch.clientId);
-      } catch (lockError) {
-        console.warn("Failed to release import lock:", lockError);
-      }
+      // Release advisory lock on error - function handles errors internally
+      await releaseClientImportLock(importBatch.clientId);
     });
 
     // Update status to processing
@@ -1420,12 +1489,9 @@ router.post("/:importId/confirm", async (req, res, next) => {
     });
   } catch (error) {
     // Release advisory lock if we acquired it and there was an error before Python started
+    // Function handles errors internally with retry and emergency fallback
     if (clientIdForLock) {
-      try {
-        await releaseClientImportLock(clientIdForLock);
-      } catch (lockError) {
-        console.warn("Failed to release import lock in error handler:", lockError);
-      }
+      await releaseClientImportLock(clientIdForLock);
     }
     next(error);
   }
@@ -1932,8 +1998,36 @@ router.delete("/:importId", async (req, res, next) => {
     if (importBatch.filePath && fs.existsSync(importBatch.filePath)) {
       try {
         fs.unlinkSync(importBatch.filePath);
-      } catch {
-        console.warn("Failed to delete uploaded file:", importBatch.filePath);
+        logger.debug("Deleted uploaded file", { filePath: importBatch.filePath });
+      } catch (cleanupError) {
+        // Log to structured logger and DiagnosticLog for monitoring
+        logger.warn("File cleanup failed - disk space may accumulate", {
+          filePath: importBatch.filePath,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+
+        // Track in DiagnosticLog for monitoring dashboard
+        try {
+          await prisma.diagnosticLog.create({
+            data: {
+              runId: `cleanup-${Date.now()}`,
+              category: "file_cleanup",
+              check: "Upload file deletion",
+              status: "WARN",
+              message: `Failed to delete: ${importBatch.filePath}`,
+              details: {
+                error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                importId: importBatch.id,
+              },
+            },
+          });
+        } catch (dbError) {
+          // Last resort - at least the logger captured it
+          logger.error(
+            "Failed to log file cleanup error to DiagnosticLog",
+            dbError instanceof Error ? dbError : null
+          );
+        }
       }
     }
 

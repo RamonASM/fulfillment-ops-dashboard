@@ -684,7 +684,13 @@ def clean_orders_data(
                     parsed_dates = test_parse
                     successful_format = fmt
                     break
-            except:
+            except Exception as e:
+                # Log the format attempt failure for debugging
+                log_diagnostic("debug", f"Date format '{fmt}' failed for column '{date_col}'", {
+                    "format_tried": fmt,
+                    "column": date_col,
+                    "error": str(e)
+                })
                 continue
 
         # Fallback to pandas default parsing if no format worked well
