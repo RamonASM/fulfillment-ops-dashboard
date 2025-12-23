@@ -844,6 +844,39 @@ def clean_orders_data(
     for col in df.columns:
         df[col] = df[col].apply(lambda x: None if pd.isna(x) else x)
 
+    # CRITICAL: Final safety check for NOT NULL columns
+    # Ensure quantity_packs is NEVER None (database constraint will fail otherwise)
+    # This handles edge cases where fillna/astype may not work as expected with None values
+    if 'quantity_packs' not in df.columns:
+        # Column doesn't exist at all - create it from quantity_units or default to 0
+        if 'quantity_units' in df.columns:
+            df['quantity_packs'] = df['quantity_units'].apply(
+                lambda x: int(x) if x is not None and not pd.isna(x) else 0
+            )
+            log_diagnostic("warning", "quantity_packs column missing - created from quantity_units",
+                          {"rows_affected": len(df)})
+        else:
+            df['quantity_packs'] = 0
+            log_diagnostic("warning", "quantity_packs column missing - defaulted to 0",
+                          {"rows_affected": len(df)})
+    else:
+        # Column exists but may have None values - ensure all are integers
+        df['quantity_packs'] = df['quantity_packs'].apply(
+            lambda x: int(x) if x is not None and not pd.isna(x) else 0
+        )
+
+    # Similarly for quantity_units if it's in model columns
+    if 'quantity_units' in df.columns:
+        df['quantity_units'] = df['quantity_units'].apply(
+            lambda x: int(x) if x is not None and not pd.isna(x) else 0
+        )
+
+    # Ensure order_status is always lowercase (database consistency)
+    if 'order_status' in df.columns:
+        df['order_status'] = df['order_status'].apply(
+            lambda x: str(x).lower().strip() if x is not None else 'completed'
+        )
+
     # Return both the cleaned DataFrame and the dropped rows info for error tracking
     return df, dropped_rows_info
 

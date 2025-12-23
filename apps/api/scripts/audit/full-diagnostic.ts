@@ -744,10 +744,10 @@ async function checkAnalytics() {
     details: snapshotCount === 0 ? { action: "Run post-import analytics to generate snapshots" } : undefined,
   });
 
-  // Alerts
+  // Alerts - use status instead of resolvedAt
   const alertCount = await prisma.alert.count();
   const unresolvedAlerts = await prisma.alert.count({
-    where: { resolvedAt: null },
+    where: { status: { not: "resolved" } },
   });
 
   log({
