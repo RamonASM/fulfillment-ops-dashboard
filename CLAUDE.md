@@ -259,6 +259,23 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-23 @ 10:45 PST: Post-Deployment Defect Sweep (DEPLOYED)
+- **What**: Focused fixes after Zero Defects deployment - 3 issues identified, all resolved
+- **Commit**: `7eb3090` - fix: Post-deployment defect sweep - focused fixes
+- **Fixes Applied**:
+  - Added PostgreSQL CHECK constraint for itemType (evergreen, event, completed only)
+  - Fixed health.service.ts port defaults (8001/8002 → 8000 to match Python services)
+  - Added DS_ANALYTICS_URL and ML_ANALYTICS_URL to dev .env.example
+- **Investigation Results** (no fixes needed):
+  - ML service offline: UI handles gracefully with setup wizard
+  - Import type detection: Reliable auto-detection + user override
+  - Orphan visibility: Hidden by default (intentional design)
+  - Import lock robustness: 3-level fallback, 30-min cleanup works perfectly
+- **Database**: Verified 637 products with valid itemType values (578 evergreen, 59 event)
+- **Status**: ✅ DEPLOYED to production at 18:45 UTC (10:45 PST Dec 23)
+
+---
+
 ### 2025-12-23 @ 10:21 PST: Zero Defects Remediation (DEPLOYED)
 - **What**: Comprehensive error handling and silent failure fixes for iOS-level reliability
 - **Commit**: `e6175ab` - fix: Zero Defects remediation - comprehensive error handling fixes
