@@ -142,6 +142,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://inventory_test:test123@localhost:5432/inventory_test
           REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-jwt-secret-min-32-chars-long-for-ci
           NODE_ENV: test
           CI: true
 
