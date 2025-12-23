@@ -213,7 +213,8 @@ router.get("/", async (req, res, next) => {
     };
 
     if (query.type) {
-      where.itemType = { equals: query.type, mode: "insensitive" };
+      // itemType is an enum with lowercase values - no case-insensitive matching needed
+      where.itemType = query.type.toLowerCase();
     }
 
     if (query.includeOrphans !== "true") {
