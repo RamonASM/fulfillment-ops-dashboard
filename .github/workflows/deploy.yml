@@ -204,7 +204,7 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 15
-          curl -sf https://staging-admin.yourtechassist.us/api/ || exit 1
+          curl -sf https://staging-admin.yourtechassist.us/api/health || exit 1
 
   # ===========================================================================
   # Deploy to Production (PM2)
@@ -284,7 +284,7 @@ jobs:
         run: |
           sleep 15
           echo "Testing API health..."
-          curl -sf https://admin.yourtechassist.us/api/ || exit 1
+          curl -sf https://admin.yourtechassist.us/api/health || exit 1
 
           echo "Testing frontend apps..."
           curl -sf https://admin.yourtechassist.us || exit 1
