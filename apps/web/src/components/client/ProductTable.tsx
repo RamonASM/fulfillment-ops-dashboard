@@ -28,12 +28,22 @@ type UsageCalculationTier =
   | "weekly"
   | null
   | undefined;
-type UsageConfidence = "high" | "medium" | "low" | null | undefined;
+
+// Helper to map API calculation basis to UI tier format
+function mapCalculationBasis(basis?: string): UsageCalculationTier {
+  if (!basis) return undefined;
+  const map: Record<string, UsageCalculationTier> = {
+    "12-mo": "12_month",
+    "3-mo": "3_month",
+    "6-mo": "6_month",
+    weekly: "weekly",
+    none: undefined,
+  };
+  return map[basis] ?? undefined;
+}
 
 export interface ProductWithEnhancedMetrics extends ProductWithMetrics {
-  usageCalculationTier?: UsageCalculationTier;
-  usageConfidence?: UsageConfidence;
-  monthlyUsagePacks?: number;
+  // On-order fields
   hasOnOrder?: boolean;
   onOrderPacks?: number;
   pendingOrders?: PendingOrder[];
@@ -137,9 +147,13 @@ function ProductRow({
       </td>
       <td>
         <UsageTierBadge
-          tier={product.usageCalculationTier}
-          confidence={product.usageConfidence}
-          monthlyUsage={product.monthlyUsagePacks}
+          tier={mapCalculationBasis(product.usage?.calculationBasis)}
+          confidence={product.usage?.confidence}
+          monthlyUsage={
+            product.usage?.avgMonthlyUnits
+              ? product.usage.avgMonthlyUnits / (product.packSize || 1)
+              : undefined
+          }
           showValue={true}
           compact={false}
         />
