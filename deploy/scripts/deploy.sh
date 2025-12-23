@@ -26,7 +26,7 @@ echo -e "Timestamp: $(date)"
 # =============================================================================
 # Pre-deployment checks
 # =============================================================================
-echo -e "\n${YELLOW}[1/8] Pre-deployment checks...${NC}"
+echo -e "\n${YELLOW}[1/9] Pre-deployment checks...${NC}"
 
 # Check if .env exists
 if [ ! -f "${APP_DIR}/.env" ]; then
@@ -45,7 +45,7 @@ echo -e "${GREEN}All services running.${NC}"
 # =============================================================================
 # Pull latest code
 # =============================================================================
-echo -e "\n${YELLOW}[2/8] Pulling latest code...${NC}"
+echo -e "\n${YELLOW}[2/9] Pulling latest code...${NC}"
 
 cd ${APP_DIR}
 
@@ -65,7 +65,7 @@ echo -e "${GREEN}Code updated to latest ${BRANCH}.${NC}"
 # =============================================================================
 # Install dependencies
 # =============================================================================
-echo -e "\n${YELLOW}[3/8] Installing dependencies...${NC}"
+echo -e "\n${YELLOW}[3/9] Installing dependencies...${NC}"
 npm ci --production=false
 
 echo -e "${GREEN}Dependencies installed.${NC}"
@@ -73,7 +73,7 @@ echo -e "${GREEN}Dependencies installed.${NC}"
 # =============================================================================
 # Install Python dependencies
 # =============================================================================
-echo -e "\n${YELLOW}[3.5/8] Setting up Python environment...${NC}"
+echo -e "\n${YELLOW}[4/9] Setting up Python environment...${NC}"
 
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
@@ -100,7 +100,7 @@ echo -e "${GREEN}Python environment ready.${NC}"
 # =============================================================================
 # Build applications
 # =============================================================================
-echo -e "\n${YELLOW}[4/8] Building applications...${NC}"
+echo -e "\n${YELLOW}[5/9] Building applications...${NC}"
 
 # Generate Prisma client
 echo -e "${BLUE}Generating Prisma client...${NC}"
@@ -121,7 +121,7 @@ echo -e "${GREEN}All builds complete.${NC}"
 # =============================================================================
 # Run database migrations
 # =============================================================================
-echo -e "\n${YELLOW}[5/8] Running database migrations...${NC}"
+echo -e "\n${YELLOW}[6/9] Running database migrations...${NC}"
 npm run db:push
 
 echo -e "${GREEN}Database schema synced.${NC}"
@@ -129,7 +129,7 @@ echo -e "${GREEN}Database schema synced.${NC}"
 # =============================================================================
 # Run data normalization scripts
 # =============================================================================
-echo -e "\n${YELLOW}[5.5/8] Running data normalization...${NC}"
+echo -e "\n${YELLOW}[6.5/9] Running data normalization...${NC}"
 
 # Normalize item_type values (lowercase: evergreen, event, completed)
 echo -e "${BLUE}Normalizing item_type values...${NC}"
@@ -144,7 +144,7 @@ echo -e "${GREEN}Data normalization complete.${NC}"
 # =============================================================================
 # Deploy static files
 # =============================================================================
-echo -e "\n${YELLOW}[6/8] Deploying static files...${NC}"
+echo -e "\n${YELLOW}[7/9] Deploying static files...${NC}"
 
 # Copy frontend builds to Nginx directories
 rm -rf ${APP_DIR}/admin/*
@@ -162,7 +162,7 @@ echo -e "${GREEN}Static files deployed.${NC}"
 # =============================================================================
 # Restart API with PM2
 # =============================================================================
-echo -e "\n${YELLOW}[7/8] Restarting API server...${NC}"
+echo -e "\n${YELLOW}[8/9] Restarting API server...${NC}"
 
 # Create PM2 ecosystem file
 cat > ${APP_DIR}/ecosystem.config.js << 'EOF'
@@ -205,7 +205,7 @@ echo -e "${GREEN}API server restarted.${NC}"
 # =============================================================================
 # Verify deployment
 # =============================================================================
-echo -e "\n${YELLOW}[8/8] Verifying deployment...${NC}"
+echo -e "\n${YELLOW}[8.5/9] Verifying deployment...${NC}"
 
 # Wait for API to start
 sleep 5
@@ -228,6 +228,46 @@ systemctl reload nginx
 echo -e "${GREEN}✓ Nginx reloaded${NC}"
 
 # =============================================================================
+# Run Post-Deploy Diagnostics
+# =============================================================================
+echo -e "\n${YELLOW}[9/9] Running post-deploy diagnostics...${NC}"
+
+# Create logs directory if it doesn't exist
+mkdir -p ${APP_DIR}/logs
+
+# Generate timestamped diagnostic filename
+DIAGNOSTIC_FILE="${APP_DIR}/logs/diagnostic-$(date +%Y%m%d_%H%M%S).txt"
+
+# Run full diagnostic
+echo -e "${BLUE}Running comprehensive diagnostic checks...${NC}"
+npx tsx apps/api/scripts/audit/full-diagnostic.ts 2>&1 | tee "${DIAGNOSTIC_FILE}"
+
+# Parse diagnostic results
+FAILURES=$(grep -c "❌" "${DIAGNOSTIC_FILE}" 2>/dev/null || echo "0")
+WARNINGS=$(grep -c "⚠️" "${DIAGNOSTIC_FILE}" 2>/dev/null || echo "0")
+PASSES=$(grep -c "✓" "${DIAGNOSTIC_FILE}" 2>/dev/null || echo "0")
+
+echo -e ""
+echo -e "${BLUE}================================${NC}"
+echo -e "${BLUE}DIAGNOSTIC SUMMARY${NC}"
+echo -e "${BLUE}================================${NC}"
+echo -e "${GREEN}✓ Passed: ${PASSES}${NC}"
+echo -e "${YELLOW}⚠️  Warnings: ${WARNINGS}${NC}"
+echo -e "${RED}❌ Failures: ${FAILURES}${NC}"
+echo -e "${BLUE}================================${NC}"
+
+if [ "$FAILURES" -gt 0 ]; then
+    echo -e "${RED}⚠️  Warning: ${FAILURES} diagnostic failure(s) detected!${NC}"
+    echo -e "${YELLOW}Review diagnostic report: ${DIAGNOSTIC_FILE}${NC}"
+    # Don't fail deployment, but warn
+else
+    echo -e "${GREEN}✓ All diagnostics passed${NC}"
+fi
+
+# Keep only last 10 diagnostic reports
+ls -t ${APP_DIR}/logs/diagnostic-*.txt 2>/dev/null | tail -n +11 | xargs -r rm
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo -e "\n${GREEN}============================================${NC}"
@@ -240,8 +280,9 @@ echo -e "  Portal: https://portal.yourtechassist.us"
 echo -e "  API:    https://api.yourtechassist.us"
 echo -e ""
 echo -e "Commands:"
-echo -e "  View logs:    ${YELLOW}pm2 logs inventory-api${NC}"
-echo -e "  Status:       ${YELLOW}pm2 status${NC}"
-echo -e "  Restart API:  ${YELLOW}pm2 restart inventory-api${NC}"
+echo -e "  View logs:       ${YELLOW}pm2 logs inventory-api${NC}"
+echo -e "  Status:          ${YELLOW}pm2 status${NC}"
+echo -e "  Restart API:     ${YELLOW}pm2 restart inventory-api${NC}"
+echo -e "  Last diagnostic: ${YELLOW}cat ${DIAGNOSTIC_FILE}${NC}"
 echo -e ""
 echo -e "Deployed at: $(date)"

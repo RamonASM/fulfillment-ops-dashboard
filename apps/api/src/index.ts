@@ -64,6 +64,7 @@ import notificationPreferencesRoutes from "./routes/notification-preferences.rou
 import dsAnalyticsAdminRoutes from "./routes/ds-analytics-admin.routes.js";
 import orphanReconciliationRoutes from "./routes/orphan-reconciliation.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import diagnosticRoutes from "./routes/diagnostic.routes.js";
 
 // =============================================================================
 // ENVIRONMENT VALIDATION
@@ -224,6 +225,7 @@ app.use("/api/documentation", documentationRoutes);
 app.use("/api/client-health", clientHealthRoutes);
 app.use("/api/notification-preferences", notificationPreferencesRoutes);
 app.use("/api/admin/ds-analytics", adminLimiter, dsAnalyticsAdminRoutes);
+app.use("/api/diagnostics", adminLimiter, diagnosticRoutes);
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));

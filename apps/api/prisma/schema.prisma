@@ -1584,3 +1584,53 @@ model Documentation {
   @@index([isPublished])
   @@map("documentation")
 }
+
+// =============================================================================
+// DIAGNOSTIC SYSTEM
+// CI/CD integration and system health monitoring
+// =============================================================================
+
+// Individual diagnostic check results
+model DiagnosticLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  category  String   @db.VarChar(50) // 'infrastructure' | 'imports' | 'integrity' | 'transactions' | 'usage' | 'stock' | 'clients' | 'analytics'
+  check     String   @db.VarChar(255) // Name of the check
+  status    String   @db.VarChar(20) // 'PASS' | 'FAIL' | 'WARN' | 'INFO'
+  message   String   @db.Text
+  details   Json? // Additional structured details
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  run DiagnosticRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+  @@map("diagnostic_logs")
+}
+
+// Summary of a diagnostic run
+model DiagnosticRun {
+  id              String   @id @default(uuid()) @db.Uuid
+  trigger         String   @db.VarChar(50) // 'deploy' | 'manual' | 'scheduled' | 'ci_cd'
+  environment     String   @default("production") @db.VarChar(20) // 'production' | 'staging' | 'development'
+  passed          Int      @default(0)
+  failed          Int      @default(0)
+  warnings        Int      @default(0)
+  duration        Int? // Milliseconds to complete
+  gitCommit       String?  @map("git_commit") @db.VarChar(40)
+  gitBranch       String?  @map("git_branch") @db.VarChar(100)
+  recommendations Json? // Array of recommended actions
+  summary         String?  @db.Text // Human-readable summary
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  logs DiagnosticLog[]
+
+  @@index([trigger])
+  @@index([environment])
+  @@index([createdAt])
+  @@map("diagnostic_runs")
+}

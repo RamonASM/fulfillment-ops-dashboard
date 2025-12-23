@@ -74,8 +74,10 @@ jobs:
         working-directory: apps/api
         run: npx prisma generate
 
-      - name: Build shared package
-        run: npm run build:shared --if-present
+      - name: Build shared packages
+        run: |
+          npm run build -w @inventory/shared --if-present
+          npm run build -w @inventory/ui --if-present
 
       - name: Lint code
         run: npm run lint
@@ -124,7 +126,8 @@ jobs:
 
       - name: Build packages for E2E tests
         run: |
-          npm run build:shared --if-present
+          npm run build -w @inventory/shared --if-present
+          npm run build -w @inventory/ui --if-present
           npm run build:api
           npm run build:web
           npm run build:portal
@@ -151,77 +154,12 @@ jobs:
           name: codecov-umbrella
 
   # ===========================================================================
-  # Build Docker Images
-  # ===========================================================================
-  build:
-    name: Build Docker Images
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ secrets.DOCKER_USERNAME }}/inventory-api
-            ${{ secrets.DOCKER_USERNAME }}/inventory-web
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-
-      - name: Build and push API image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          target: api-production
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/inventory-api:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/inventory-api:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/inventory-api:buildcache,mode=max
-
-      - name: Build and push Web image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          target: static-production
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/inventory-web:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/inventory-web:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/inventory-web:buildcache,mode=max
-
-      - name: Build and push ML Analytics image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./apps/ml-analytics
-          file: ./apps/ml-analytics/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/inventory-ml:${{ github.sha }}
-
-  # ===========================================================================
-  # Deploy to Staging
+  # Deploy to Staging (PM2)
   # ===========================================================================
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    needs: build
+    needs: test
     if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     environment:
       name: staging
@@ -241,55 +179,44 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to staging server
+      - name: Deploy to staging server (PM2)
         run: |
           ssh ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} << 'EOF'
             cd /var/www/inventory
+
+            # Pull latest code
             git fetch origin
             git checkout staging
             git pull origin staging
 
-            # Update environment variables if needed
-            # cp deploy/.env.staging.example .env
+            # Install dependencies
+            npm ci
 
-            # Run deployment script
-            bash deploy/scripts/deploy-docker.sh staging
+            # Generate Prisma client
+            npm run db:generate
 
-            # Run health checks
-            bash deploy/scripts/health-check.sh
+            # Build all packages (increase Node memory for large builds)
+            NODE_OPTIONS='--max-old-space-size=2048' npm run build
+
+            # Restart API with PM2 (zero-downtime reload)
+            pm2 reload inventory-api --env staging || pm2 start deploy/ecosystem.config.js --only inventory-api --env staging
+            pm2 save
+
+            echo "Deployment completed successfully!"
           EOF
 
       - name: Verify deployment
         run: |
-          sleep 30
-          curl -f https://staging-api.yourtechassist.us/health || exit 1
-
-      - name: Notify on Slack
-        if: always()
-        uses: slackapi/slack-github-action@v1
-        with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          payload: |
-            {
-              "text": "Staging deployment ${{ job.status }}",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "Staging deployment *${{ job.status }}*\nBranch: `${{ github.ref_name }}`\nCommit: `${{ github.sha }}`"
-                  }
-                }
-              ]
-            }
+          sleep 15
+          curl -sf https://staging-admin.yourtechassist.us/api/ || exit 1
 
   # ===========================================================================
-  # Deploy to Production
+  # Deploy to Production (PM2)
   # ===========================================================================
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: build
+    needs: test
     if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     environment:
       name: production
@@ -313,70 +240,79 @@ jobs:
         run: |
           ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << 'EOF'
             cd /var/www/inventory
-            bash deploy/scripts/backup-db-docker.sh
+
+            # Create backup directory if it doesn't exist
+            mkdir -p backups
+
+            # Create timestamped backup
+            BACKUP_FILE="backups/db_backup_$(date +%Y%m%d_%H%M%S).sql"
+            pg_dump -U user inventory_db > "$BACKUP_FILE"
+
+            # Keep only last 7 backups
+            ls -t backups/db_backup_*.sql | tail -n +8 | xargs -r rm
+
+            echo "Database backup created: $BACKUP_FILE"
           EOF
 
-      - name: Deploy to production server
+      - name: Deploy to production server (PM2)
         run: |
           ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << 'EOF'
             cd /var/www/inventory
+
+            # Pull latest code
             git fetch origin
             git checkout main
             git pull origin main
 
-            # Run deployment script
-            bash deploy/scripts/deploy-docker.sh production
+            # Install dependencies
+            npm ci
 
-            # Run health checks
-            bash deploy/scripts/health-check.sh
+            # Generate Prisma client
+            npm run db:generate
+
+            # Run database migrations (safe alternative to db:push)
+            # npm run db:migrate:deploy
+
+            # Build all packages (increase Node memory for large builds)
+            NODE_OPTIONS='--max-old-space-size=2048' npm run build
+
+            # Restart API with PM2 (zero-downtime reload)
+            pm2 reload inventory-api --env production || pm2 start deploy/ecosystem.config.js --only inventory-api --env production
+            pm2 save
+
+            echo "Production deployment completed successfully!"
           EOF
 
       - name: Verify deployment
         run: |
-          sleep 30
-          curl -f https://api.yourtechassist.us/health || exit 1
+          sleep 15
+          echo "Testing API health..."
+          curl -sf https://admin.yourtechassist.us/api/ || exit 1
 
-      - name: Run smoke tests
-        run: |
           echo "Testing frontend apps..."
-          curl -f https://admin.yourtechassist.us || exit 1
-          curl -f https://portal.yourtechassist.us || exit 1
+          curl -sf https://admin.yourtechassist.us || exit 1
+          curl -sf https://portal.yourtechassist.us || exit 1
 
-          echo "Testing Python services..."
-          # ML Analytics health check (if deployed)
-          curl -sf https://api.yourtechassist.us/api/ml/health || echo "ML Analytics not available (optional)"
-
-          # DS Analytics health check via API proxy (if deployed)
-          curl -sf https://api.yourtechassist.us/api/ds-analytics/health || echo "DS Analytics not available (optional)"
-
-          echo "All smoke tests passed!"
+          echo "All health checks passed!"
 
       - name: Rollback on failure
         if: failure()
         run: |
           ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << 'EOF'
             cd /var/www/inventory
-            bash deploy/scripts/rollback.sh
-          EOF
 
-      - name: Notify on Slack
-        if: always()
-        uses: slackapi/slack-github-action@v1
-        with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          payload: |
-            {
-              "text": "Production deployment ${{ job.status }}",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "Production deployment *${{ job.status }}*\nBranch: `${{ github.ref_name }}`\nCommit: `${{ github.sha }}`"
-                  }
-                }
-              ]
-            }
+            # Rollback to previous commit
+            git checkout HEAD~1
+
+            # Rebuild and restart
+            npm ci
+            npm run db:generate
+            NODE_OPTIONS='--max-old-space-size=2048' npm run build
+            pm2 reload inventory-api --env production
+            pm2 save
+
+            echo "Rollback completed!"
+          EOF
 
       - name: Create GitHub Release
         if: success() && github.ref == 'refs/heads/main'
@@ -391,3 +327,97 @@ jobs:
             Commit: ${{ github.sha }}
           draft: false
           prerelease: false
+
+  # ===========================================================================
+  # Post-Deploy Diagnostics
+  # ===========================================================================
+  post-deploy-diagnostics:
+    name: Run Post-Deploy Diagnostics
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: success() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'))
+    environment:
+      name: production
+
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.PRODUCTION_SSH_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.PRODUCTION_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Run Full Diagnostic
+        id: diagnostic
+        run: |
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << 'EOF'
+            cd /var/www/inventory
+
+            # Create logs directory if it doesn't exist
+            mkdir -p logs
+
+            # Run full diagnostic and capture output
+            DIAGNOSTIC_FILE="logs/diagnostic-$(date +%Y%m%d_%H%M%S).txt"
+            echo "Running diagnostic at $(date)..."
+            npx tsx apps/api/scripts/audit/full-diagnostic.ts 2>&1 | tee "$DIAGNOSTIC_FILE"
+
+            # Count failures and warnings
+            FAILURES=$(grep -c "❌" "$DIAGNOSTIC_FILE" || echo "0")
+            WARNINGS=$(grep -c "⚠️" "$DIAGNOSTIC_FILE" || echo "0")
+            PASSES=$(grep -c "✓" "$DIAGNOSTIC_FILE" || echo "0")
+
+            echo ""
+            echo "================================"
+            echo "DIAGNOSTIC SUMMARY"
+            echo "================================"
+            echo "✓ Passed: $PASSES"
+            echo "⚠️  Warnings: $WARNINGS"
+            echo "❌ Failures: $FAILURES"
+            echo "================================"
+
+            # Save summary for GitHub Actions
+            echo "FAILURES=$FAILURES" >> /tmp/diagnostic-summary.txt
+            echo "WARNINGS=$WARNINGS" >> /tmp/diagnostic-summary.txt
+            echo "PASSES=$PASSES" >> /tmp/diagnostic-summary.txt
+
+            # Exit with error if critical failures found
+            if [ "$FAILURES" -gt 0 ]; then
+              echo "::error::Diagnostic found $FAILURES CRITICAL issues!"
+              exit 1
+            fi
+
+            echo "✅ All diagnostics passed!"
+          EOF
+
+      - name: Fetch Diagnostic Report
+        if: always()
+        run: |
+          # Get the latest diagnostic file from the server
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} "cat \$(ls -t /var/www/inventory/logs/diagnostic-*.txt 2>/dev/null | head -1)" > diagnostic-report.txt || echo "No diagnostic file found" > diagnostic-report.txt
+
+      - name: Upload Diagnostic Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-report-${{ github.run_number }}
+          path: diagnostic-report.txt
+          retention-days: 30
+
+      - name: Comment on Commit (if failures)
+        if: failure()
+        uses: peter-evans/commit-comment@v3
+        with:
+          body: |
+            ⚠️ **Post-Deploy Diagnostic Failed**
+
+            The automated diagnostic check found critical issues after deployment.
+            Please review the [diagnostic report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            **Recommended Actions:**
+            1. Check the diagnostic artifact for details
+            2. Review recent import batches for errors
+            3. Verify data integrity in the database
+            4. Consider rollback if issues are severe

@@ -13,6 +13,7 @@ import type { ClientWithStats, AlertWithProduct } from "@inventory/shared";
 import { STATUS_COLORS } from "@inventory/shared";
 import { RiskDashboard } from "@/components/ai/RiskDashboard";
 import { MLInsightsSummaryWidget } from "@/components/widgets/MLInsightsSummaryWidget";
+import { SystemHealthWidget } from "@/components/widgets/SystemHealthWidget";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/animations";
 
 export default function Dashboard() {
@@ -169,6 +170,9 @@ export default function Dashboard() {
           {/* ML Analytics Summary */}
           <MLInsightsSummaryWidget />
         </div>
+
+        {/* System Health Widget */}
+        <SystemHealthWidget compact className="mb-6" />
 
         {/* Clients overview */}
         <div className="card">
