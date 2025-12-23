@@ -1,6 +1,47 @@
 import { AsyncLocalStorage } from 'async_hooks';
 
 // =============================================================================
+// SENSITIVE FIELD REDACTION
+// =============================================================================
+
+const SENSITIVE_FIELDS = new Set([
+  'password',
+  'token',
+  'accessToken',
+  'refreshToken',
+  'authorization',
+  'secret',
+  'apiKey',
+  'api_key',
+  'creditCard',
+  'credit_card',
+  'ssn',
+  'socialSecurityNumber',
+]);
+
+function redactSensitiveFields(obj: unknown, depth = 0): unknown {
+  if (depth > 10) return '[MAX_DEPTH]';
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => redactSensitiveFields(item, depth + 1));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (SENSITIVE_FIELDS.has(key.toLowerCase())) {
+      result[key] = '[REDACTED]';
+    } else if (typeof value === 'object' && value !== null) {
+      result[key] = redactSensitiveFields(value, depth + 1);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -70,9 +111,12 @@ class Logger {
   }
 
   private output(entry: LogEntry): void {
+    // Redact sensitive fields before logging
+    const safeEntry = redactSensitiveFields(entry) as LogEntry;
+
     if (this.isProduction) {
       // Structured JSON output for production log aggregation
-      console.log(JSON.stringify(entry));
+      console.log(JSON.stringify(safeEntry));
     } else {
       // Colorized output for development
       const color = this.getColor(entry.level);

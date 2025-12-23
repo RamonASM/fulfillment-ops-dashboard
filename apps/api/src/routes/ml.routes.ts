@@ -25,12 +25,10 @@ router.use(authenticate);
  */
 router.get("/health", async (_req, res) => {
   try {
-    const isHealthy = await MLClientService.healthCheck();
+    const health = await MLClientService.healthDetails();
     res.json({
-      status: isHealthy ? "healthy" : "offline",
-      service: "ml-analytics",
-      database: isHealthy ? "connected" : "unknown",
-      serviceUrl: process.env.ML_SERVICE_URL || "not configured",
+      ...health,
+      serviceUrl: process.env.DS_ANALYTICS_URL || process.env.ML_SERVICE_URL || "not configured",
       lastCheck: new Date().toISOString(),
     });
   } catch (error) {
@@ -38,8 +36,9 @@ router.get("/health", async (_req, res) => {
       status: "offline",
       service: "ml-analytics",
       database: "unknown",
-      serviceUrl: process.env.ML_SERVICE_URL || "not configured",
+      serviceUrl: process.env.DS_ANALYTICS_URL || process.env.ML_SERVICE_URL || "not configured",
       lastCheck: new Date().toISOString(),
+      reason: (error as Error).message,
     });
   }
 });

@@ -48,25 +48,60 @@ export class MLClientService {
   // UNIFIED: Use DS_ANALYTICS_URL (same as ds-analytics.service.ts)
   // ML_SERVICE_URL kept for backwards compatibility
   private static baseURL =
-    process.env.DS_ANALYTICS_URL ||
-    process.env.ML_SERVICE_URL ||
-    "http://localhost:8000";
+    process.env.DS_ANALYTICS_URL || process.env.ML_SERVICE_URL || "";
   private static timeout = 30000; // 30 seconds
 
   /**
    * Check if ML service is available
    */
   static async healthCheck(): Promise<boolean> {
+    const { status } = await this.healthDetails();
+    return status === "healthy";
+  }
+
+  /**
+   * Detailed health check with reasons (offline/degraded)
+   */
+  static async healthDetails(): Promise<{
+    status: "healthy" | "offline" | "degraded";
+    service: string;
+    database?: string;
+    reason?: string;
+    url?: string;
+  }> {
+    if (!this.baseURL) {
+      return {
+        status: "offline",
+        service: "ml-analytics",
+        database: "unknown",
+        reason:
+          "ML service URL is not configured. Set DS_ANALYTICS_URL or ML_SERVICE_URL in the API environment.",
+      };
+    }
+
     try {
       const response = await axios.get(`${this.baseURL}/health`, {
         timeout: 5000,
       });
-      return response.data.status === "healthy";
+      const healthy = response.data.status === "healthy";
+      return {
+        status: healthy ? "healthy" : "offline",
+        service: "ml-analytics",
+        database: healthy ? "connected" : "unknown",
+        url: this.baseURL,
+        reason: healthy ? undefined : "ML service reported unhealthy status",
+      };
     } catch (error) {
       logger.warn("ML service health check failed", {
         error: (error as Error).message,
       });
-      return false;
+      return {
+        status: "offline",
+        service: "ml-analytics",
+        database: "unknown",
+        url: this.baseURL,
+        reason: (error as Error).message,
+      };
     }
   }
 

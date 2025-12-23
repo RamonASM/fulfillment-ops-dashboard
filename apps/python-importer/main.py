@@ -550,8 +550,10 @@ def clean_inventory_data(df: pd.DataFrame, client_id: str, mapping_data: Optiona
 
     # String columns that need defaults (database default is 'evergreen')
     if 'item_type' in df.columns and len(df) > 0:
-        # Normalize to lowercase and fill missing values
-        df['item_type'] = df['item_type'].fillna('evergreen').astype(str).str.lower()
+        # Normalize to lowercase and fill missing values; coerce unknowns to evergreen
+        df['item_type'] = df['item_type'].fillna('evergreen').astype(str).str.lower().str.strip()
+        valid_types = {'evergreen', 'event', 'completed'}
+        df['item_type'] = df['item_type'].apply(lambda x: x if x in valid_types else 'evergreen')
 
     # Replace remaining NaN with None for proper SQL NULL handling
     # pandas.where doesn't always work properly, so we use a more explicit approach

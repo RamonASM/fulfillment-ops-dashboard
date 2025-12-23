@@ -12,6 +12,8 @@ interface MLHealthResponse {
   status: "healthy" | "degraded" | "offline";
   service: string;
   database?: string;
+  reason?: string;
+  serviceUrl?: string;
 }
 
 interface MLStatusBadgeProps {
@@ -35,6 +37,7 @@ export function MLStatusBadge({
 
   const isHealthy = mlHealth?.status === "healthy";
   const isOffline = !mlHealth || mlHealth?.status === "offline";
+  const reason = mlHealth?.reason || (mlHealth?.serviceUrl ? `Service URL: ${mlHealth.serviceUrl}` : undefined);
 
   if (isLoading) {
     return (
@@ -59,7 +62,11 @@ export function MLStatusBadge({
           "bg-red-100 text-red-700",
           className,
         )}
-        title="ML Analytics service is offline. AI predictions unavailable."
+        title={
+          reason
+            ? `ML Analytics service is offline. ${reason}`
+            : "ML Analytics service is offline. AI predictions unavailable."
+        }
       >
         <AlertCircle className="w-3 h-3" />
         {showLabel && <span>ML Offline</span>}

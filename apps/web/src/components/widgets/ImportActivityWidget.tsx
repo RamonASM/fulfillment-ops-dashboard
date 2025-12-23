@@ -7,9 +7,11 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   FileSpreadsheet,
   ChevronRight,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { formatDistanceToNow } from 'date-fns';
@@ -23,7 +25,7 @@ interface ImportBatch {
   clientId: string;
   filename: string;
   importType: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'post_processing' | 'completed' | 'completed_with_errors' | 'failed' | 'rolled_back';
   rowCount: number;
   processedCount?: number;
   errorCount?: number;
@@ -57,8 +59,11 @@ function getStatusConfig(status: ImportBatch['status']) {
   const configs = {
     pending: { color: 'text-amber-500 bg-amber-50', icon: Clock, label: 'Pending' },
     processing: { color: 'text-blue-500 bg-blue-50', icon: RefreshCw, label: 'Processing' },
+    post_processing: { color: 'text-blue-500 bg-blue-50', icon: RefreshCw, label: 'Finalizing' },
     completed: { color: 'text-green-500 bg-green-50', icon: CheckCircle, label: 'Completed' },
+    completed_with_errors: { color: 'text-amber-500 bg-amber-50', icon: AlertTriangle, label: 'Completed with Errors' },
     failed: { color: 'text-red-500 bg-red-50', icon: AlertCircle, label: 'Failed' },
+    rolled_back: { color: 'text-gray-500 bg-gray-50', icon: RotateCcw, label: 'Rolled Back' },
   };
   return configs[status] || configs.pending;
 }
@@ -101,7 +106,7 @@ export function ImportActivityWidget({
 
   // Calculate stats
   const stats = useMemo(() => {
-    const completed = filteredImports.filter(i => i.status === 'completed');
+    const completed = filteredImports.filter(i => i.status === 'completed' || i.status === 'completed_with_errors');
     const totalRows = completed.reduce((sum, i) => sum + (i.processedCount || i.rowCount || 0), 0);
     const totalErrors = completed.reduce((sum, i) => sum + (i.errorCount || 0), 0);
     return { completed: completed.length, totalRows, totalErrors };
@@ -158,7 +163,9 @@ export function ImportActivityWidget({
               <div className={clsx(
                 'p-3 rounded-lg border',
                 lastImport.status === 'completed' ? 'bg-green-50 border-green-200' :
+                lastImport.status === 'completed_with_errors' ? 'bg-amber-50 border-amber-200' :
                 lastImport.status === 'failed' ? 'bg-red-50 border-red-200' :
+                lastImport.status === 'rolled_back' ? 'bg-gray-50 border-gray-200' :
                 'bg-gray-50 border-gray-200'
               )}>
                 <div className="flex items-start justify-between">
@@ -183,7 +190,7 @@ export function ImportActivityWidget({
                   </div>
                 </div>
 
-                {lastImport.status === 'completed' && (
+                {(lastImport.status === 'completed' || lastImport.status === 'completed_with_errors') && (
                   <div className="mt-2 grid grid-cols-2 gap-2 text-center">
                     <div className="p-2 bg-white rounded border border-gray-100">
                       <p className="text-lg font-bold text-gray-900">{lastImport.processedCount || lastImport.rowCount}</p>

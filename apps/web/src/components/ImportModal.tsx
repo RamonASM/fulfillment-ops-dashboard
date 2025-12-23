@@ -616,11 +616,17 @@ export function ImportModal({
 
   const handleConfirmImport = () => {
     const currentPreview = importPreviews[currentPreviewIndex];
-    if (currentPreview) {
-      setImportStep("processing");
-      setCurrentImportId(currentPreview.importId); // Track the import being processed
-      confirmMutation.mutate(currentPreview.importId);
+    if (!currentPreview) return;
+
+    // Block if type selection is required but not set
+    if (!currentPreview.selectedType && currentPreview.requiresTypeSelection) {
+      toast.error("Please select Inventory or Orders before confirming this import.");
+      return;
     }
+
+    setImportStep("processing");
+    setCurrentImportId(currentPreview.importId); // Track the import being processed
+    confirmMutation.mutate(currentPreview.importId);
   };
 
   // Helper function to poll and wait for terminal status
@@ -675,6 +681,14 @@ export function ImportModal({
     // Process all imports sequentially, waiting for each to complete
     for (let i = 0; i < importPreviews.length; i++) {
       const preview = importPreviews[i];
+      if (!preview.selectedType && preview.requiresTypeSelection) {
+        toast.error(
+          `Type selection required for ${preview.filename || `file ${i + 1}`} - please choose Inventory or Orders before confirming.`,
+        );
+        setImportStep("preview");
+        setCurrentPreviewIndex(i);
+        return;
+      }
       setCurrentImportId(preview.importId);
       setCurrentPreviewIndex(i);
 
@@ -776,11 +790,23 @@ export function ImportModal({
       updated: acc.updated + (result.result?.updated || 0),
       skipped: acc.skipped + (result.result?.skipped || 0),
       errors: [...acc.errors, ...(result.result?.errors || [])],
-      // Include structured errors (data_quality warnings, etc.)
       structuredErrors: [...acc.structuredErrors, ...(result.errors || [])],
       hasWarnings: acc.hasWarnings || result.status === "completed_with_errors",
     }),
-    { created: 0, updated: 0, skipped: 0, errors: [] as string[], structuredErrors: [] as Array<{ type?: string; message?: string; severity?: string; row_range?: string }>, hasWarnings: false },
+    {
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [] as string[],
+      structuredErrors: [] as Array<{
+        type?: string;
+        message?: string;
+        severity?: string;
+        row_range?: string;
+        details?: string;
+      }>,
+      hasWarnings: false,
+    },
   );
 
   return (
