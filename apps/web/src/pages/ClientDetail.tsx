@@ -31,6 +31,7 @@ import { TodoList } from "@/components/TodoList";
 import { ImportModal } from "@/components/ImportModal.lazy";
 import { CustomDataInsightsWidget } from "@/components/widgets/CustomDataInsightsWidget";
 import { ForecastModal } from "@/components/ForecastModal";
+import { UsageCalculationDrawer } from "@/components/ui/UsageCalculationDrawer";
 import { useAuthStore } from "@/stores/auth.store";
 import toast from "react-hot-toast";
 
@@ -73,6 +74,7 @@ export default function ClientDetail() {
   const [showForecastModal, setShowForecastModal] = useState(false);
   const [selectedProduct, setSelectedProduct] =
     useState<ProductWithMetrics | null>(null);
+  const [usageDetailsProductId, setUsageDetailsProductId] = useState<string | null>(null);
 
   // Check if user can edit AI settings (admin or operations_manager only)
   const canEditAiSettings =
@@ -460,6 +462,7 @@ export default function ClientDetail() {
               search={search}
               activeTab={activeTab}
               onViewForecast={handleViewForecast}
+              onShowUsageDetails={(productId) => setUsageDetailsProductId(productId)}
             />
           </div>
         )}
@@ -536,6 +539,14 @@ export default function ClientDetail() {
         title="Delete Client?"
         itemName={client.name}
         warningMessage="This action cannot be undone. All products, inventory data, orders, and history associated with this client will be permanently deleted."
+      />
+
+      {/* Usage Calculation Details Drawer */}
+      <UsageCalculationDrawer
+        isOpen={!!usageDetailsProductId}
+        onClose={() => setUsageDetailsProductId(null)}
+        productId={usageDetailsProductId || ""}
+        clientId={clientId!}
       />
     </motion.div>
   );

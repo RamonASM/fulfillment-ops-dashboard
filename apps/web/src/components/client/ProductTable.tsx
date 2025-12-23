@@ -57,6 +57,7 @@ interface ProductTableProps {
   search: string;
   activeTab: ItemTypeTab;
   onViewForecast: (product: ProductWithEnhancedMetrics) => void;
+  onShowUsageDetails?: (productId: string) => void;
 }
 
 interface StatusPillProps {
@@ -95,9 +96,11 @@ export function StatusPill({ label, count, color }: StatusPillProps) {
 function ProductRow({
   product,
   onViewForecast,
+  onShowUsageDetails,
 }: {
   product: ProductWithEnhancedMetrics;
   onViewForecast: (product: ProductWithEnhancedMetrics) => void;
+  onShowUsageDetails?: (productId: string) => void;
 }) {
   const status = product.status;
   const stockPercent = status.percentOfReorderPoint;
@@ -156,6 +159,8 @@ function ProductRow({
           }
           showValue={true}
           compact={false}
+          showDetailsButton={!!onShowUsageDetails}
+          onShowDetails={onShowUsageDetails ? () => onShowUsageDetails(product.id) : undefined}
         />
       </td>
       <td>
@@ -245,6 +250,7 @@ export function ProductTable({
   search,
   activeTab,
   onViewForecast,
+  onShowUsageDetails,
 }: ProductTableProps) {
   if (isLoading) {
     return (
@@ -297,6 +303,7 @@ export function ProductTable({
                 key={product.id}
                 product={product}
                 onViewForecast={onViewForecast}
+                onShowUsageDetails={onShowUsageDetails}
               />
             ))}
           </tbody>

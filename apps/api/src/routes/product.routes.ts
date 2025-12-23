@@ -94,6 +94,79 @@ const mergeProductsSchema = z.object({
 });
 
 // =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+interface FormulaExplanation {
+  type: string;
+  description: string;
+  calculation: string;
+}
+
+interface MonthlyBreakdownWithWeight {
+  month: string;
+  units: number;
+  packs: number;
+  transactionCount: number;
+  weight: number;
+}
+
+/**
+ * Build formula explanation based on calculation tier.
+ */
+function buildFormulaExplanation(
+  tier: string,
+  breakdown: MonthlyBreakdownWithWeight[],
+  result: number,
+): FormulaExplanation {
+  switch (tier) {
+    case "12_month": {
+      const last12 = breakdown.slice(-12);
+      const weightedParts = last12.map(
+        (m) => `${Math.round(m.units)}×${m.weight}`,
+      );
+      const weights = last12.map((m) => m.weight);
+      const weightSum = weights.reduce((a, b) => a + b, 0);
+      return {
+        type: "weighted_average",
+        description:
+          "Weighted average of last 12 months. Recent 3 months get 1.5× weight for trend sensitivity. High confidence.",
+        calculation: `(${weightedParts.join(" + ")}) / ${weightSum.toFixed(1)} = ${result.toFixed(1)} units/mo`,
+      };
+    }
+    case "6_month": {
+      const last6 = breakdown.slice(-6);
+      const parts = last6.map((m) => Math.round(m.units));
+      return {
+        type: "simple_average",
+        description:
+          "Simple average of last 6 months of transaction data. Medium confidence.",
+        calculation: `(${parts.join(" + ")}) / ${last6.length} = ${result.toFixed(1)} units/mo`,
+      };
+    }
+    case "3_month": {
+      const last3 = breakdown.slice(-3);
+      const parts = last3.map((m) => Math.round(m.units));
+      return {
+        type: "simple_average",
+        description:
+          "Simple average of last 3 months of transaction data. Medium confidence.",
+        calculation: `(${parts.join(" + ")}) / ${last3.length} = ${result.toFixed(1)} units/mo`,
+      };
+    }
+    case "weekly":
+    default: {
+      return {
+        type: "weekly_extrapolation",
+        description:
+          "Extrapolated from weekly rate. Formula: (total units / weeks of data) × 4.33 (avg weeks/month). Low confidence due to limited data.",
+        calculation: `Weekly rate × 4.33 = ${result.toFixed(1)} units/mo`,
+      };
+    }
+  }
+}
+
+// =============================================================================
 // ROUTES
 // =============================================================================
 
@@ -1121,6 +1194,27 @@ router.get("/:productId/monthly-usage", async (req, res, next) => {
       product.packSize,
     );
 
+    // Add weights to monthly breakdown based on calculation tier
+    const breakdownWithWeights = monthlyBreakdown.map((m, index, arr) => {
+      let weight = 1.0;
+      if (usageResult.calculationTier === "12_month" && arr.length >= 12) {
+        // Last 3 months of the 12-month window get 1.5x weight
+        const last12 = arr.slice(-12);
+        const positionInLast12 = arr.length - 12 + index;
+        if (positionInLast12 >= 0 && positionInLast12 >= last12.length - 3) {
+          weight = 1.5;
+        }
+      }
+      return { ...m, weight };
+    });
+
+    // Build formula explanation based on tier
+    const formula = buildFormulaExplanation(
+      usageResult.calculationTier,
+      breakdownWithWeights,
+      usageResult.monthlyUsageUnits,
+    );
+
     res.json({
       productId: product.id,
       productName: product.name,
@@ -1148,7 +1242,8 @@ router.get("/:productId/monthly-usage", async (req, res, next) => {
         suggestedPacks: suggestion.suggestedPacks,
         suggestedUnits: suggestion.suggestedUnits,
       },
-      monthlyBreakdown,
+      monthlyBreakdown: breakdownWithWeights,
+      formula,
     });
   } catch (error) {
     next(error);
