@@ -314,6 +314,7 @@ jobs:
       - name: Create GitHub Release
         if: success() && github.ref == 'refs/heads/main'
         uses: actions/create-release@v1
+        continue-on-error: true  # Don't fail deploy if release creation fails
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
