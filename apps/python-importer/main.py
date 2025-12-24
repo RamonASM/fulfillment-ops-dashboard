@@ -1155,8 +1155,12 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 models.Product.client_id == import_batch.clientId
             ).count()
         else:  # orders
-            initial_row_count = db.query(models.Transaction).filter(
-                models.Transaction.clientId == import_batch.clientId
+            # Transactions don't have client_id - join with Product to filter by client
+            initial_row_count = db.query(models.Transaction).join(
+                models.Product,
+                models.Transaction.product_id == models.Product.id
+            ).filter(
+                models.Product.client_id == import_batch.clientId
             ).count()
 
         log_diagnostic("debug", "Baseline row count captured", {
@@ -1473,8 +1477,12 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 models.Product.client_id == import_batch.clientId
             ).count()
         else:  # orders
-            final_row_count = db.query(models.Transaction).filter(
-                models.Transaction.clientId == import_batch.clientId
+            # Transactions don't have client_id - join with Product to filter by client
+            final_row_count = db.query(models.Transaction).join(
+                models.Product,
+                models.Transaction.product_id == models.Product.id
+            ).filter(
+                models.Product.client_id == import_batch.clientId
             ).count()
 
         actual_delta = final_row_count - initial_row_count
