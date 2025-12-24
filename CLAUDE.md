@@ -14,7 +14,7 @@
   - Backend code: `apps/api/`
   - Both frontends call this API
 
-### Infrastructure (VERIFIED Dec 21, 2025)
+### Infrastructure (VERIFIED Dec 24, 2025)
 - **Server**: DigitalOcean droplet at 138.197.70.205
 - **SSH Access**: `ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205`
 - **Code Location**: `/var/www/inventory`
@@ -25,6 +25,7 @@
 - **Redis**: RUNNING - Used for rate limiting and caching
   - `USE_REDIS_RATE_LIMIT=true` in production `.env`
   - Rate limiters use Redis for distributed rate limiting across PM2 instances
+- **nginx**: `client_max_body_size 50M` for file uploads (added Dec 24, 2025)
 
 ### Process Management (VERIFIED - Using PM2)
 - **PM2** is the active process manager in production
@@ -145,15 +146,19 @@ e2e/                              # End-to-end Playwright tests
 
 ### Active Goal: Everstory Onboarding
 - **Objective**: Import Everstory's inventory CSV and display analytics on dashboard
-- **Status**: Import system working, post-import analytics added (Dec 20, 2025)
-- **Last Major Work**: Created 9 specialized agents including docs-keeper (Dec 21, 2025)
-- **Next Steps**: End-to-end testing of import → analytics → dashboard flow
+- **Status**: ✅ COMPLETE - Full end-to-end testing passed (Dec 24, 2025)
+- **Last Major Work**: Fixed critical import bugs, full system validation (Dec 24, 2025)
+- **Test Results**:
+  - Inventory import: 111 rows, 0 errors ✅
+  - Orders import: 10,563 rows, 0 errors, ~9.4s ✅
+  - System status: 329 products, 24,062 transactions, 17 imports
 
-### Recently Completed (Dec 22, 2025)
-- **Enterprise Code Quality Remediation** - 10 critical/high priority fixes for production readiness
-- Security hardening deployed (SQL injection fix, Redis rate limiting, input validation)
-- Created 9 specialized slash command agents (db, api, python, ml, admin-ui, portal-ui, testing, devops, docs-keeper)
-- Automatic documentation behavior added to CLAUDE.md
+### Recently Completed (Dec 24, 2025)
+- **Import Pipeline Fixes** - Fixed Transaction join, savepoint management, nginx file size
+- **Full System Validation** - Both inventory and orders imports tested and verified
+- Enterprise Code Quality Remediation (Dec 22) - 10 critical/high priority fixes
+- Zero Defects Remediation (Dec 23) - Comprehensive error handling fixes
+- Import Lock Resilience (Dec 23) - Auto-recovery and admin controls
 
 ### Security Status (Dec 21, 2025)
 - ✅ SQL injection fixed in Python importer (using SQLAlchemy `pg_insert`)
@@ -258,6 +263,32 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 ---
 
 ## Deployment History
+
+### 2025-12-24 @ 14:00 PST: Import Pipeline Critical Fixes (DEPLOYED)
+- **What**: Fixed critical bugs blocking orders import - Transaction join, savepoint management, nginx config
+- **Commits**:
+  - `3f74cf3` - Fix savepoint handling in bulk_operations.py
+  - `2b26c19` - Fix Transaction row count using Product join
+- **Root Causes & Fixes**:
+  1. **Transaction row count verification failed** - Transaction model has no `clientId`, must join with Product table
+     - `apps/python-importer/main.py` lines ~1220, ~1480
+     - Changed: `db.query(models.Transaction).filter(models.Transaction.client_id == ...)`
+     - To: `db.query(models.Transaction).join(models.Product).filter(models.Product.client_id == ...)`
+  2. **Savepoint errors ("savepoint does not exist")** - Raw psycopg2 `commit()`/`rollback()` in COPY functions was releasing SQLAlchemy savepoints
+     - `apps/python-importer/bulk_operations.py` - removed explicit commit/rollback from `bulk_insert_products_copy()` and `bulk_insert_transactions_copy()`
+     - Let SQLAlchemy's `begin_nested()` savepoint handle transaction management
+  3. **nginx 413 Request Entity Too Large** - api.yourtechassist.us missing file size limit
+     - `/etc/nginx/sites-available/yourtechassist` - added `client_max_body_size 50M;`
+- **Test Results**:
+  - Inventory import: 111 rows, 0 errors ✅
+  - Orders import: 10,563 rows, 0 errors, ~9.4 seconds ✅
+- **Production Status**:
+  - API: online (PM2)
+  - Database: 329 products, 24,062 transactions, 17 imports
+  - Everstory client: 308 products, 23,126 transactions
+- **Status**: ✅ DEPLOYED to production
+
+---
 
 ### 2025-12-23 @ 20:20 PST: Import Lock Resilience - Auto-Recovery & Admin Controls (DEPLOYED)
 - **What**: Prevents "Another import is currently processing" errors from blocking users indefinitely
@@ -685,6 +716,53 @@ res.cookie('csrf_token', csrfToken, { httpOnly: false, ... });
 ```
 **Verify**: Check browser cookies after login - should see `csrf_token` cookie
 
+### Issue: "Transaction has no attribute 'client_id'" or "Transaction has no attribute 'clientId'"
+**Cause**: Transaction model doesn't have clientId at all - it relates to clients through Product
+**Fix**: Join Transaction with Product to filter by client:
+```python
+# WRONG - Transaction has no client_id
+db.query(models.Transaction).filter(models.Transaction.client_id == client_id)
+
+# RIGHT - Join with Product to get client
+db.query(models.Transaction).join(
+    models.Product,
+    models.Transaction.product_id == models.Product.id
+).filter(models.Product.client_id == client_id)
+```
+**Where**: `apps/python-importer/main.py` - row count verification functions
+
+### Issue: "savepoint does not exist" or "no transaction is active"
+**Cause**: Raw psycopg2 `connection.commit()` or `connection.rollback()` inside SQLAlchemy savepoints releases the savepoint unexpectedly
+**Fix**: Remove explicit commit/rollback from bulk operations, let SQLAlchemy manage savepoints:
+```python
+# WRONG - breaks savepoint management
+try:
+    cursor.copy_expert(...)
+    connection.commit()  # This releases the SQLAlchemy savepoint!
+except:
+    connection.rollback()  # This also breaks savepoint state!
+
+# RIGHT - let SQLAlchemy handle it
+try:
+    cursor.copy_expert(...)
+    # Don't commit - let outer savepoint handle it
+except:
+    # Don't rollback - let SQLAlchemy savepoint handle it
+    raise
+```
+**Where**: `apps/python-importer/bulk_operations.py` - COPY functions
+
+### Issue: "413 Request Entity Too Large" on file upload
+**Cause**: nginx missing `client_max_body_size` directive for API server block
+**Fix**: Add to nginx config:
+```bash
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
+  sed -i '/server_name api.yourtechassist.us/a\    client_max_body_size 50M;' /etc/nginx/sites-available/yourtechassist &&
+  nginx -t && systemctl reload nginx
+"
+```
+**Verify**: `curl -I https://api.yourtechassist.us` should show nginx accepting larger bodies
+
 ---
 
 ## Testing & Verification Commands
@@ -831,6 +909,11 @@ This section tracks smaller details, quirks, and knowledge that shouldn't be for
 - **IMPORTANT**: All imports must be absolute (e.g., `import models` not `from . import models`)
   - `main.py` adds package dir to `sys.path` and imports modules directly
   - Relative imports will fail with `ImportError: attempted relative import with no known parent package`
+- **CRITICAL**: Transaction model has NO `client_id` or `clientId` attribute
+  - Must join with Product table to filter by client: `db.query(Transaction).join(Product).filter(Product.client_id == ...)`
+- **CRITICAL**: Don't use raw `connection.commit()` or `connection.rollback()` inside SQLAlchemy savepoints
+  - Let SQLAlchemy's `begin_nested()` manage the savepoint lifecycle
+  - Raw commits/rollbacks will release the savepoint and cause "savepoint does not exist" errors
 
 ### Build Quirks
 - Production builds need `NODE_OPTIONS='--max-old-space-size=2048'` or OOM kills tsc
@@ -867,6 +950,6 @@ FRONTEND_URL=https://admin.yourtechassist.us
 
 ---
 
-**Last Updated**: December 22, 2025
-**Last Major Change**: Enterprise Code Quality Remediation - 10 critical/high priority fixes for production readiness
-**Next Update Due**: After successful production deployment verification
+**Last Updated**: December 24, 2025
+**Last Major Change**: Import Pipeline Critical Fixes - Transaction join, savepoint management, nginx file size
+**Everstory Status**: ✅ FULLY ONBOARDED - 308 products, 23,126 transactions imported and verified
