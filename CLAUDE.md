@@ -259,6 +259,30 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 
 ## Deployment History
 
+### 2025-12-23 @ 20:20 PST: Import Lock Resilience - Auto-Recovery & Admin Controls (DEPLOYED)
+- **What**: Prevents "Another import is currently processing" errors from blocking users indefinitely
+- **Commit**: `6fe293b` - feat: Add import lock resilience - auto-recovery and admin controls
+- **Changes**:
+  - **Scheduled Cleanup Job** (every 5 min) - Automatically finds and marks stuck imports as failed
+    - `apps/api/src/jobs/scheduler.ts` - added `cleanup-stale-imports` job
+  - **Reduced Stale Timeout** - 30 minutes → 10 minutes for better UX
+    - `apps/api/src/routes/import.routes.ts` - `STALE_LOCK_TIMEOUT_MS` reduced
+  - **Graceful Shutdown Handler** - Releases locks when PM2 restarts
+    - `apps/api/src/index.ts` - added SIGTERM/SIGINT handlers
+  - **Admin Force-Unlock Endpoint** - Manual override for stuck locks
+    - `POST /api/imports/admin/force-unlock/:clientId` - clears all locks for a client
+    - `GET /api/imports/admin/lock-status/:clientId` - diagnostic endpoint
+  - **Frontend Recovery UI** - Better UX when import blocked
+    - `apps/web/src/components/ImportModal.tsx` - shows recovery options, force-unlock button for admins
+- **How It Works Now**:
+  1. Normal: Import runs, completes, lock released
+  2. Crash/Timeout: Within 10 min → user waits or admin force-unlocks; After 10 min → auto-recovery
+  3. PM2 Restart: Graceful shutdown marks imports as failed, releases locks
+- **Status**: ✅ DEPLOYED to production at 04:20 UTC (20:20 PST Dec 23)
+- **Verification**: API healthy, PM2 online, scheduler job registered
+
+---
+
 ### 2025-12-23 @ 10:45 PST: Post-Deployment Defect Sweep (DEPLOYED)
 - **What**: Focused fixes after Zero Defects deployment - 3 issues identified, all resolved
 - **Commit**: `7eb3090` - fix: Post-deployment defect sweep - focused fixes
@@ -562,6 +586,30 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "cd /var/www/inventory && gi
 ```
 **Verify**: `git log -1 --oneline` should show expected commit
 
+### Issue: "Another import is currently processing for this client"
+**Cause**: A previous import is stuck in `processing` or `pending` status, blocking new imports
+**Auto-Recovery**: System cleans up stuck imports every 5 minutes (after 10 min timeout)
+**Manual Fix for Admins**:
+```bash
+# Option 1: Use the admin force-unlock endpoint
+curl -X POST https://api.yourtechassist.us/api/imports/admin/force-unlock/{clientId}
+
+# Option 2: SSH and run cleanup directly
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
+  cd /var/www/inventory/apps/api &&
+  node -e \"
+    const {PrismaClient} = require('@prisma/client');
+    const p = new PrismaClient();
+    p.importBatch.updateMany({
+      where: { status: { in: ['processing', 'pending'] } },
+      data: { status: 'failed', completedAt: new Date() }
+    }).then(r => console.log('Cleaned up:', r.count));
+    p.\\\$executeRaw\\\`SELECT pg_advisory_unlock_all()\\\`.then(() => console.log('Locks released'));
+  \"
+"
+```
+**Verify**: User can now start a new import
+
 ### Issue: "Redis connection error"
 **Cause**: Redis isn't running (and doesn't need to be)
 **Fix**: Code already uses in-memory fallback, but check `.env` has REDIS_URL commented out
@@ -739,6 +787,15 @@ npm run db:seed
 ## 📝 Changelog (Small but Important Details)
 
 This section tracks smaller details, quirks, and knowledge that shouldn't be forgotten.
+
+### Import Lock Resilience (Dec 23, 2025)
+- **Stale import timeout**: Reduced from 30 → 10 minutes in `STALE_LOCK_TIMEOUT_MS`
+- **Scheduled cleanup job**: `cleanup-stale-imports` runs every 5 minutes
+- **Graceful shutdown**: SIGTERM/SIGINT handlers release all advisory locks before exit
+- **New admin endpoints**:
+  - `POST /api/imports/admin/force-unlock/:clientId` - clears stuck import locks
+  - `GET /api/imports/admin/lock-status/:clientId` - diagnostic info about lock state
+- **Frontend recovery UI**: When "Another import processing" error occurs, shows options to wait, view import history, or force-unlock (admin only)
 
 ### Enterprise Remediation (Dec 22, 2025)
 - **Pagination limit reverted**: 1000 → 100 in `validation-schemas.ts` (security fix)
