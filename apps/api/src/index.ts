@@ -65,6 +65,7 @@ import dsAnalyticsAdminRoutes from "./routes/ds-analytics-admin.routes.js";
 import orphanReconciliationRoutes from "./routes/orphan-reconciliation.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import diagnosticRoutes from "./routes/diagnostic.routes.js";
+import { prisma } from "./lib/prisma.js";
 
 // =============================================================================
 // ENVIRONMENT VALIDATION
@@ -260,5 +261,80 @@ httpServer.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
+
+// =============================================================================
+// GRACEFUL SHUTDOWN HANDLER
+// =============================================================================
+// Ensures imports are properly marked as failed and advisory locks are released
+// when the server shuts down (PM2 restart, deploy, etc.)
+
+let isShuttingDown = false;
+
+const gracefulShutdown = async (signal: string) => {
+  if (isShuttingDown) {
+    logger.warn("Shutdown already in progress, ignoring signal", { signal });
+    return;
+  }
+  isShuttingDown = true;
+
+  logger.info(`Received ${signal}, starting graceful shutdown...`);
+
+  try {
+    // 1. Mark any processing imports as failed so they don't block new imports
+    const stuckImports = await prisma.importBatch.updateMany({
+      where: { status: { in: ["processing", "pending"] } },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        errors: [{
+          message: "Import interrupted by server shutdown",
+          details: `Server received ${signal} signal and began graceful shutdown.`,
+        }],
+      },
+    });
+
+    if (stuckImports.count > 0) {
+      logger.info("Marked in-progress imports as failed", {
+        count: stuckImports.count,
+        reason: "server_shutdown",
+      });
+    }
+
+    // 2. Release all advisory locks held by this session
+    // This prevents orphaned locks from blocking new imports after restart
+    try {
+      await prisma.$executeRaw`SELECT pg_advisory_unlock_all()`;
+      logger.info("Released all advisory locks");
+    } catch (lockError) {
+      logger.warn("Failed to release advisory locks on shutdown", {
+        error: lockError instanceof Error ? lockError.message : String(lockError),
+      });
+    }
+
+    // 3. Close database connections cleanly
+    await prisma.$disconnect();
+    logger.info("Database connections closed");
+
+    // 4. Close HTTP server to stop accepting new connections
+    httpServer.close(() => {
+      logger.info("HTTP server closed");
+      process.exit(0);
+    });
+
+    // Force exit after 10 seconds if graceful shutdown hangs
+    setTimeout(() => {
+      logger.error("Graceful shutdown timed out, forcing exit", new Error("Shutdown timeout"));
+      process.exit(1);
+    }, 10000);
+
+  } catch (error) {
+    logger.error("Error during graceful shutdown", error instanceof Error ? error : new Error(String(error)));
+    process.exit(1);
+  }
+};
+
+// Handle shutdown signals
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM")); // PM2 sends this
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));   // Ctrl+C sends this
 
 export default app;

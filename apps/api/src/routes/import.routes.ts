@@ -7,7 +7,7 @@ import readline from "readline";
 import xlsx from "xlsx";
 import { spawn, execSync } from "child_process";
 import { prisma, Prisma } from "../lib/prisma.js";
-import { authenticate, requireClientAccess } from "../middleware/auth.js";
+import { authenticate, requireClientAccess, requireRole } from "../middleware/auth.js";
 import { NotFoundError, ValidationError } from "../middleware/error-handler.js";
 import {
   parseFilePreview,
@@ -56,8 +56,10 @@ function uuidToLockKey(uuid: string): number {
 
 /**
  * Stale lock timeout - imports processing for longer than this are considered stuck
+ * Reduced from 30 to 10 minutes for better UX - users shouldn't wait too long
+ * Large imports (50k+ rows) typically complete in 5-8 minutes
  */
-const STALE_LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const STALE_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Clean up stale processing imports for a client.
@@ -2165,5 +2167,170 @@ router.post("/:importId/retry-analytics", async (req, res, next) => {
     next(error);
   }
 });
+
+// =============================================================================
+// ADMIN ROUTES - IMPORT LOCK MANAGEMENT
+// =============================================================================
+
+/**
+ * POST /api/imports/admin/force-unlock/:clientId
+ * Force release all import locks for a client (admin only)
+ *
+ * Use this when:
+ * - Imports are stuck and blocking new imports
+ * - The automatic cleanup job hasn't run yet
+ * - You need immediate manual intervention
+ *
+ * This will:
+ * 1. Mark all processing/pending imports as failed
+ * 2. Release the PostgreSQL advisory lock for the client
+ */
+router.post(
+  "/admin/force-unlock/:clientId",
+  requireRole("admin", "operations_manager"),
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+
+      // Verify client exists
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+        select: { id: true, name: true },
+      });
+
+      if (!client) {
+        throw new NotFoundError("Client");
+      }
+
+      // 1. Mark all processing/pending imports as failed
+      const updatedImports = await prisma.importBatch.updateMany({
+        where: {
+          clientId,
+          status: { in: ["processing", "pending"] },
+        },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          errors: [{
+            message: "Force-cancelled by administrator",
+            details: `Import locks manually cleared by ${req.user?.email || "admin"} at ${new Date().toISOString()}`,
+          }],
+        },
+      });
+
+      // 2. Release advisory lock for this client
+      const lockKey = uuidToLockKey(clientId);
+      try {
+        await prisma.$executeRaw`SELECT pg_advisory_unlock(${lockKey})`;
+      } catch (lockError) {
+        // Lock might not exist, which is fine
+        logger.debug("Advisory lock release attempt", {
+          clientId,
+          lockKey,
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+        });
+      }
+
+      // 3. Also release all session-level locks as a safety measure
+      try {
+        await prisma.$executeRaw`SELECT pg_advisory_unlock_all()`;
+      } catch {
+        // Ignore errors - just a precaution
+      }
+
+      // Log the admin action for audit trail
+      logger.warn("Admin force-unlocked imports", {
+        clientId,
+        clientName: client.name,
+        userId: req.user?.userId,
+        userEmail: req.user?.email,
+        importsAffected: updatedImports.count,
+        lockKey,
+      });
+
+      res.json({
+        success: true,
+        message: `Import locks cleared for ${client.name}`,
+        clientId,
+        importsAffected: updatedImports.count,
+        lockKey,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /api/imports/admin/lock-status/:clientId
+ * Check if a client has active import locks (admin only)
+ *
+ * Returns information about:
+ * - Any processing/pending imports
+ * - Whether an advisory lock is held
+ */
+router.get(
+  "/admin/lock-status/:clientId",
+  requireRole("admin", "operations_manager"),
+  async (req, res, next) => {
+    try {
+      const { clientId } = req.params;
+
+      // Check for active imports
+      const activeImports = await prisma.importBatch.findMany({
+        where: {
+          clientId,
+          status: { in: ["processing", "pending"] },
+        },
+        select: {
+          id: true,
+          filename: true,
+          status: true,
+          startedAt: true,
+          createdAt: true,
+          importedBy: true,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // Check advisory lock status
+      const lockKey = uuidToLockKey(clientId);
+      let lockHeld = false;
+      try {
+        // pg_try_advisory_lock returns true if lock was acquired, false if held by another session
+        const result = await prisma.$queryRaw<Array<{ pg_try_advisory_lock: boolean }>>`
+          SELECT pg_try_advisory_lock(${lockKey})
+        `;
+        lockHeld = !(result[0]?.pg_try_advisory_lock ?? true);
+
+        // If we acquired the lock just to test, release it immediately
+        if (result[0]?.pg_try_advisory_lock) {
+          await prisma.$executeRaw`SELECT pg_advisory_unlock(${lockKey})`;
+        }
+      } catch {
+        // Ignore errors
+      }
+
+      res.json({
+        clientId,
+        lockKey,
+        isLocked: activeImports.length > 0 || lockHeld,
+        activeImports: activeImports.map((imp) => ({
+          id: imp.id,
+          filename: imp.filename,
+          status: imp.status,
+          startedAt: imp.startedAt,
+          createdAt: imp.createdAt,
+          ageMinutes: Math.round(
+            (Date.now() - (imp.startedAt || imp.createdAt).getTime()) / 60000
+          ),
+        })),
+        advisoryLockHeld: lockHeld,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 export default router;

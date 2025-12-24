@@ -909,6 +909,123 @@ registerJob("weekly-ml-stockout-alerts", 7 * 24 * 60 * 60 * 1000, async () => {
 });
 
 // =============================================================================
+// IMPORT LOCK RESILIENCE - STALE IMPORT CLEANUP
+// =============================================================================
+
+/**
+ * Stale import timeout - imports processing for longer than this are considered stuck
+ * Reduced from 30 minutes to 10 minutes for better UX
+ */
+const STALE_IMPORT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Convert UUID string to a numeric lock key for PostgreSQL advisory locks.
+ * Uses a simple hash to convert the UUID to a 32-bit integer.
+ * (Duplicated from import.routes.ts to avoid circular dependencies)
+ */
+function uuidToLockKey(uuid: string): number {
+  let hash = 0;
+  for (let i = 0; i < uuid.length; i++) {
+    const char = uuid.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Stale import cleanup
+ * Automatically recovers from stuck imports by:
+ * 1. Marking stale processing/pending imports as failed
+ * 2. Releasing orphaned PostgreSQL advisory locks
+ *
+ * This prevents the "Another import is currently processing" error from
+ * blocking users indefinitely when imports crash or timeout.
+ *
+ * Runs every 5 minutes
+ */
+registerJob("cleanup-stale-imports", 5 * 60 * 1000, async () => {
+  const staleThreshold = new Date(Date.now() - STALE_IMPORT_TIMEOUT_MS);
+
+  // Find all imports that have been processing for too long
+  // Check startedAt for processing imports, createdAt for pending imports
+  const staleImports = await prisma.importBatch.findMany({
+    where: {
+      OR: [
+        {
+          status: "processing",
+          startedAt: { lt: staleThreshold },
+        },
+        {
+          status: "pending",
+          createdAt: { lt: staleThreshold },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      clientId: true,
+      filename: true,
+      status: true,
+      startedAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (staleImports.length === 0) {
+    return; // No stale imports to clean up
+  }
+
+  logger.warn("Found stale imports, cleaning up", {
+    count: staleImports.length,
+    imports: staleImports.map(i => ({
+      id: i.id,
+      filename: i.filename,
+      status: i.status,
+      ageMinutes: Math.round(
+        (Date.now() - (i.startedAt || i.createdAt).getTime()) / 60000
+      ),
+    })),
+  });
+
+  // Mark stale imports as failed
+  await prisma.importBatch.updateMany({
+    where: { id: { in: staleImports.map(i => i.id) } },
+    data: {
+      status: "failed",
+      completedAt: new Date(),
+      errors: [{
+        message: "Import timed out - auto-recovered by system",
+        details: `Import exceeded ${STALE_IMPORT_TIMEOUT_MS / 60000} minute timeout and was automatically marked as failed.`,
+      }],
+    },
+  });
+
+  // Get unique client IDs to release their advisory locks
+  const uniqueClientIds = [...new Set(staleImports.map(i => i.clientId))];
+
+  // Release advisory locks for affected clients
+  for (const clientId of uniqueClientIds) {
+    try {
+      const lockKey = uuidToLockKey(clientId);
+      await prisma.$executeRaw`SELECT pg_advisory_unlock(${lockKey})`;
+      logger.info("Released orphaned advisory lock", { clientId, lockKey });
+    } catch (error) {
+      // Lock might not exist (already released), which is fine
+      logger.debug("Advisory lock release attempt", {
+        clientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  logger.info("Stale import cleanup completed", {
+    importsRecovered: staleImports.length,
+    clientsUnlocked: uniqueClientIds.length,
+  });
+});
+
+// =============================================================================
 // DS ANALYTICS HEALTH MONITORING
 // =============================================================================
 

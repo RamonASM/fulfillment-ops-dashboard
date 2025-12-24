@@ -10,6 +10,10 @@ import {
   Loader2,
   Trash2,
   RefreshCw,
+  Lock,
+  Unlock,
+  Clock,
+  ExternalLink,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "@/api/client";
@@ -280,8 +284,21 @@ export function ImportModal({
       rowCount?: number;
     };
   } | null>(null);
+  const [importLockError, setImportLockError] = useState<{
+    isLocked: boolean;
+    message: string;
+    clientId: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  // Check if user is admin (for force-unlock button)
+  const { data: currentUser } = useQuery({
+    queryKey: ["current-user"],
+    queryFn: () => api.get<{ role: string; email: string }>("/auth/me"),
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "operations_manager";
 
   // Timeout for import processing (2 minutes)
   const IMPORT_TIMEOUT_MS = 120000;
@@ -557,7 +574,23 @@ export function ImportModal({
       setCurrentImportId(null);
       setIsWaitingForCompletion(false);
       setProcessingStartTime(null);
-      toast.error(error.message || "Failed to process import");
+
+      // Detect import lock error
+      const isLockError =
+        error.message?.toLowerCase().includes("another import") ||
+        error.message?.toLowerCase().includes("currently processing");
+
+      if (isLockError) {
+        setImportLockError({
+          isLocked: true,
+          message: error.message,
+          clientId,
+        });
+        // Go back to preview step to show recovery UI
+        setImportStep("preview");
+      } else {
+        toast.error(error.message || "Failed to process import");
+      }
     },
   });
 
@@ -613,6 +646,27 @@ export function ImportModal({
       });
     }
   };
+
+  // Force-unlock mutation for admins
+  const forceUnlockMutation = useMutation({
+    mutationFn: async (targetClientId: string) => {
+      return api.post<{
+        success: boolean;
+        message: string;
+        importsAffected: number;
+      }>(`/imports/admin/force-unlock/${targetClientId}`);
+    },
+    onSuccess: (data) => {
+      setImportLockError(null);
+      toast.success(data.message || "Import locks cleared successfully");
+      // Invalidate import queries
+      queryClient.invalidateQueries({ queryKey: ["imports"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["recent-imports"], exact: false });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to clear import locks");
+    },
+  });
 
   // File handling
   const handleFileSelect = useCallback(
@@ -867,6 +921,7 @@ export function ImportModal({
     setCurrentImportId(null);
     setIsWaitingForCompletion(false);
     setDuplicateWarning(null);
+    setImportLockError(null);
     onClose();
   };
 
@@ -1062,6 +1117,84 @@ export function ImportModal({
                               <RefreshCw className="w-4 h-4" />
                               Continue & Update
                             </button>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Import Lock Error Recovery UI */}
+                  {importLockError && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 bg-red-50 border border-red-200 rounded-lg"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-red-100 rounded-full">
+                          <Lock className="w-5 h-5 text-red-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-medium text-red-800">
+                            Import Currently Blocked
+                          </h4>
+                          <p className="text-sm text-red-700 mt-1">
+                            {importLockError.message}
+                          </p>
+
+                          <div className="mt-3 p-3 bg-white/60 rounded border border-red-200">
+                            <p className="text-sm font-medium text-red-800 mb-2">
+                              This may be caused by:
+                            </p>
+                            <ul className="text-sm text-red-700 space-y-1">
+                              <li className="flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-red-500" />
+                                An import that's still running
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-red-500" />
+                                A stuck import that didn't complete properly
+                              </li>
+                            </ul>
+                          </div>
+
+                          <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                            <p className="text-sm text-blue-800">
+                              <strong>Tip:</strong> The system auto-recovers stuck imports every 5 minutes.
+                              Wait a few minutes and try again.
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-3 mt-4">
+                            <button
+                              onClick={() => setImportLockError(null)}
+                              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                              Dismiss
+                            </button>
+                            <a
+                              href="/imports"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 flex items-center gap-2"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                              View Import History
+                            </a>
+                            {isAdmin && (
+                              <button
+                                onClick={() => forceUnlockMutation.mutate(importLockError.clientId)}
+                                disabled={forceUnlockMutation.isPending}
+                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
+                              >
+                                {forceUnlockMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Unlock className="w-4 h-4" />
+                                )}
+                                Force Clear Locks
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
