@@ -298,7 +298,7 @@ export function ImportModal({
           status: string;
           rowCount?: number;
         }>;
-      }>(`/imports?clientId=${clientId}&limit=20`),
+      }>(`/imports/history?clientId=${clientId}&limit=20`),
     enabled: isOpen && !!clientId,
   });
 
