@@ -154,6 +154,7 @@ e2e/                              # End-to-end Playwright tests
   - System status: 329 products, 24,062 transactions, 17 imports
 
 ### Recently Completed (Dec 24, 2025)
+- **Codex Risk Audit Remediation** - Scrutinized codebase against deployment risk audit, fixed 4 remaining gaps
 - **Import Pipeline Fixes** - Fixed Transaction join, savepoint management, nginx file size
 - **Full System Validation** - Both inventory and orders imports tested and verified
 - Enterprise Code Quality Remediation (Dec 22) - 10 critical/high priority fixes
@@ -263,6 +264,32 @@ curl -s https://admin.yourtechassist.us/api/ | jq
 ---
 
 ## Deployment History
+
+### 2025-12-24 @ 14:00 PST: Codex Risk Audit Remediation (DEPLOYED)
+- **What**: Addressed remaining gaps from import_deployment_risk_audit_codex.md scrutiny
+- **Commits**:
+  - `68d230d` - docs: Update CLAUDE.md with Dec 24 import pipeline fixes
+  - `450f077` - fix: Address remaining deployment risk audit gaps
+- **Changes**:
+  - **UPLOAD_DIR env var** - `import.routes.ts` now uses `process.env.UPLOAD_DIR` with fallback
+  - **PYTHON_PATH env var** - Added to Python path detection for custom installations
+  - **ML URL startup warning** - Warns at startup if DS_ANALYTICS_URL/ML_SERVICE_URL not configured
+  - **item_type CHECK constraint** - Already existed in `migrations/20251223_add_itemtype_constraint`
+- **Audit Results** (already fixed, no changes needed):
+  - Import concurrency: PostgreSQL advisory locks ✅
+  - importType="both": Properly rejected, user selection required ✅
+  - Orders quantity: Multiple fallbacks ensure non-null ✅
+  - Error visibility: Full UI display in ImportModal ✅
+  - ML offline: Graceful degradation ✅
+  - item_type normalization: Python validates + coerces ✅
+- **Production Health**:
+  - Database: up (329 products, 6 clients)
+  - Redis: up
+  - DS Analytics: up
+  - ML Analytics: down (not deployed)
+- **Status**: ✅ DEPLOYED to production at 22:00 UTC (14:00 PST Dec 24)
+
+---
 
 ### 2025-12-24 @ 14:00 PST: Import Pipeline Critical Fixes (DEPLOYED)
 - **What**: Fixed critical bugs blocking orders import - Transaction join, savepoint management, nginx config
@@ -930,6 +957,12 @@ USE_REDIS_RATE_LIMIT=true
 # Optional but recommended
 REDIS_URL=redis://localhost:6379
 FRONTEND_URL=https://admin.yourtechassist.us
+DS_ANALYTICS_URL=http://localhost:8000  # For ML/DS analytics features
+ML_SERVICE_URL=http://localhost:8000    # Alternative to DS_ANALYTICS_URL
+
+# New in Dec 24, 2025 (optional)
+UPLOAD_DIR=/var/www/inventory/uploads   # Custom upload directory
+PYTHON_PATH=/usr/bin/python3            # Custom Python path
 ```
 
 ### Known Working User Accounts (for testing)
@@ -951,5 +984,6 @@ FRONTEND_URL=https://admin.yourtechassist.us
 ---
 
 **Last Updated**: December 24, 2025
-**Last Major Change**: Import Pipeline Critical Fixes - Transaction join, savepoint management, nginx file size
+**Last Major Change**: Codex Risk Audit Remediation - UPLOAD_DIR, PYTHON_PATH env vars, ML URL startup warning
 **Everstory Status**: ✅ FULLY ONBOARDED - 308 products, 23,126 transactions imported and verified
+**Audit Status**: ✅ All deployment risks from import_deployment_risk_audit_codex.md addressed
