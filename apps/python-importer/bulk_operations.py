@@ -74,7 +74,7 @@ def _sanitize_string(value: Any, max_length: int = 255) -> Optional[str]:
     return str_value
 
 
-def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]]) -> None:
+def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Use PostgreSQL COPY command for maximum insert performance.
 
@@ -85,10 +85,21 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
         db_session: SQLAlchemy database session
         products: List of product dictionaries with all required fields
 
+    Returns:
+        Dict with status info: {success: bool, method: str, fallback_used: bool, error: str|None}
+
     Performance: ~0.3s for 10K rows vs ~2.5s with bulk_insert_mappings
     """
+    result = {
+        "success": True,
+        "method": "COPY",
+        "fallback_used": False,
+        "record_count": len(products),
+        "error": None
+    }
+
     if not products:
-        return
+        return result
 
     print(f"  Using PostgreSQL COPY for {len(products)} products...")
     start_time = datetime.now()
@@ -145,10 +156,15 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
         connection.commit()
 
         duration = (datetime.now() - start_time).total_seconds()
+        result["duration_seconds"] = duration
         print(f"  ✅ COPY completed in {duration:.2f}s ({len(products)/duration:.0f} rows/sec)")
 
     except Exception as e:
         connection.rollback()
+        result["fallback_used"] = True
+        result["method"] = "bulk_insert_mappings"
+        result["copy_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+
         # Structured logging for fallback with context
         _log_structured("warning", "COPY failed, falling back to bulk_insert_mappings", {
             "error": str(e),
@@ -157,15 +173,28 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
             "operation": "bulk_insert_products_copy"
         })
         print(f"  ⚠️  COPY failed ({type(e).__name__}), using bulk_insert_mappings fallback")
-        # Fallback to SQLAlchemy bulk insert if COPY fails
-        db_session.bulk_insert_mappings(models.Product, products)
-        db_session.commit()
-        _log_structured("info", "Fallback bulk_insert_mappings succeeded", {
-            "record_count": len(products)
-        })
+
+        try:
+            # Fallback to SQLAlchemy bulk insert if COPY fails
+            db_session.bulk_insert_mappings(models.Product, products)
+            db_session.commit()
+            _log_structured("info", "Fallback bulk_insert_mappings succeeded", {
+                "record_count": len(products)
+            })
+        except Exception as fallback_e:
+            result["success"] = False
+            result["error"] = f"Both COPY and fallback failed: {type(fallback_e).__name__}: {str(fallback_e)[:200]}"
+            _log_structured("error", "Fallback bulk_insert_mappings also failed", {
+                "error": str(fallback_e),
+                "error_type": type(fallback_e).__name__,
+                "record_count": len(products)
+            })
+            raise  # Re-raise so caller knows insert failed
+
+    return result
 
 
-def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[str, Any]]) -> None:
+def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Use PostgreSQL COPY for transaction imports (10x faster than bulk_insert_mappings).
 
@@ -173,10 +202,20 @@ def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[s
         db_session: SQLAlchemy database session
         transactions: List of transaction dictionaries
 
+    Returns:
+        Dict with status info: {success: bool, method: str, error: str|None}
+
     Performance: ~0.3s for 10K rows vs ~2.5s with bulk_insert_mappings
     """
+    result = {
+        "success": True,
+        "method": "COPY",
+        "record_count": len(transactions),
+        "error": None
+    }
+
     if not transactions:
-        return
+        return result
 
     print(f"  Using PostgreSQL COPY for {len(transactions)} transactions...")
     start_time = datetime.now()
@@ -218,10 +257,14 @@ def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[s
         connection.commit()
 
         duration = (datetime.now() - start_time).total_seconds()
+        result["duration_seconds"] = duration
         print(f"  ✅ COPY completed in {duration:.2f}s ({len(transactions)/duration:.0f} rows/sec)")
 
     except Exception as e:
         connection.rollback()
+        result["success"] = False
+        result["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+
         # Structured logging for transaction COPY failure
         _log_structured("error", "Transaction COPY failed", {
             "error": str(e),
@@ -231,6 +274,8 @@ def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[s
         })
         print(f"  ❌ COPY failed: {type(e).__name__}: {e}")
         raise  # Re-raise to allow caller to handle fallback
+
+    return result
 
 
 def bulk_insert_products_ignore_conflicts(
@@ -330,7 +375,7 @@ def bulk_insert_products_ignore_conflicts(
     return product_id_to_uuid
 
 
-def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) -> None:
+def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Efficient bulk UPSERT for products using PostgreSQL ON CONFLICT.
 
@@ -341,12 +386,23 @@ def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) ->
         db_session: SQLAlchemy database session
         products: List of product dictionaries
 
+    Returns:
+        Dict with status info: {success: bool, batches_failed: int, batch_errors: list}
+
     Security:
         All values are properly parameterized via SQLAlchemy - no string
         interpolation or f-strings used in SQL construction.
     """
+    result = {
+        "success": True,
+        "record_count": len(products),
+        "batches_processed": 0,
+        "batches_failed": 0,
+        "batch_errors": []
+    }
+
     if not products:
-        return
+        return result
 
     print(f"  Using bulk UPSERT for {len(products)} products...")
     start_time = datetime.now()
@@ -355,9 +411,11 @@ def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) ->
     products_table = models.Product.__table__
 
     BATCH_SIZE = 500  # Optimal batch size for UPSERT operations
+    total_batches = (len(products) + BATCH_SIZE - 1) // BATCH_SIZE
 
     for i in range(0, len(products), BATCH_SIZE):
         batch = products[i:i+BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
 
         # Sanitize each record before insertion
         sanitized_batch = []
@@ -395,11 +453,39 @@ def bulk_upsert_products(db_session: Session, products: List[Dict[str, Any]]) ->
 
             db_session.execute(stmt)
             db_session.commit()
+            result["batches_processed"] += 1
 
         except Exception as e:
             db_session.rollback()
-            print(f"  Warning: UPSERT batch {i//BATCH_SIZE + 1} failed: {type(e).__name__}")
+            result["batches_failed"] += 1
+            error_info = {
+                "batch_number": batch_num,
+                "error_type": type(e).__name__,
+                "error_message": str(e)[:200],
+                "records_in_batch": len(batch)
+            }
+            result["batch_errors"].append(error_info)
+
+            _log_structured("error", f"UPSERT batch {batch_num}/{total_batches} failed", {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "batch_number": batch_num,
+                "total_batches": total_batches,
+                "records_in_batch": len(batch)
+            })
+            print(f"  ❌ UPSERT batch {batch_num}/{total_batches} failed: {type(e).__name__}: {str(e)[:100]}")
             continue
 
     duration = (datetime.now() - start_time).total_seconds()
-    print(f"  Bulk UPSERT completed in {duration:.2f}s")
+    result["duration_seconds"] = duration
+
+    # Mark as failure if more than 50% of batches failed
+    if result["batches_failed"] > total_batches * 0.5:
+        result["success"] = False
+
+    if result["batches_failed"] > 0:
+        print(f"  ⚠️  Bulk UPSERT completed with {result['batches_failed']}/{total_batches} batch failures in {duration:.2f}s")
+    else:
+        print(f"  ✅ Bulk UPSERT completed in {duration:.2f}s")
+
+    return result

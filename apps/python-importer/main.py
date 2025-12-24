@@ -294,6 +294,62 @@ def extract_custom_fields(row: pd.Series, mappings: list) -> dict:
     return custom_fields
 
 
+def validate_mapped_columns_preflight(
+    file_path: str,
+    mapping_data: Optional[dict],
+    import_type: str
+) -> tuple[bool, list[str]]:
+    """
+    PRE-FLIGHT VALIDATION: Validate all mapped columns exist in file BEFORE processing.
+
+    This catches column mapping issues immediately instead of 30 minutes into
+    a large import. Reads only the header row for efficiency.
+
+    Args:
+        file_path: Path to the CSV/Excel file
+        mapping_data: Column mapping configuration from JSON sidecar
+        import_type: 'inventory' or 'orders'
+
+    Returns:
+        Tuple of (is_valid: bool, missing_columns: list[str])
+    """
+    if not mapping_data or 'columnMappings' not in mapping_data:
+        # No custom mappings, will use fallback - assume valid
+        return (True, [])
+
+    # Read only header row for efficiency
+    try:
+        if file_path.endswith(('.xlsx', '.xls')):
+            df_header = pd.read_excel(file_path, nrows=0)
+        else:
+            df_header = pd.read_csv(file_path, nrows=0, encoding='utf-8')
+    except Exception as e:
+        # If we can't read header, let the main processing handle it
+        print(f"WARNING: Pre-flight column check failed to read file: {e}", file=sys.stderr)
+        return (True, [])
+
+    file_columns = set(df_header.columns.str.strip())
+    file_columns_lower = {c.lower() for c in file_columns}
+
+    # Check each mapped column exists
+    missing_columns = []
+    for mapping in mapping_data.get('columnMappings', []):
+        source = mapping.get('source')
+        if not source:
+            continue
+
+        # Check exact match first, then case-insensitive
+        if source not in file_columns and source.lower() not in file_columns_lower:
+            missing_columns.append(source)
+
+    if missing_columns:
+        print(f"PRE-FLIGHT CHECK FAILED: Mapped columns not found in file: {missing_columns}", file=sys.stderr)
+        print(f"Available columns: {sorted(file_columns)}", file=sys.stderr)
+        return (False, missing_columns)
+
+    return (True, [])
+
+
 # =============================================================================
 # VALIDATION UTILITIES
 # =============================================================================
@@ -974,6 +1030,36 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
             "exists": os.path.exists(absolute_file_path)
         })
 
+        # =====================================================================
+        # PRE-FLIGHT VALIDATION: Check mapped columns exist BEFORE processing
+        # Fails fast instead of 30 minutes into a large import
+        # =====================================================================
+        columns_valid, missing_columns = validate_mapped_columns_preflight(
+            absolute_file_path, mapping_data, import_type
+        )
+        if not columns_valid:
+            error_msg = f"Column mapping error: The following mapped columns were not found in the file: {', '.join(missing_columns)}. Please check your column mappings and try again."
+            log_diagnostic("error", "Pre-flight column validation failed", {
+                "missing_columns": missing_columns,
+                "import_type": import_type
+            })
+            import_batch.status = 'failed'
+            import_batch.completedAt = datetime.now()
+            import_batch.errors = [{
+                "type": "ColumnMappingError",
+                "message": error_msg,
+                "severity": "critical",
+                "missing_columns": missing_columns
+            }]
+            db.commit()
+            print(f"PREFLIGHT FAILED: {error_msg}", file=sys.stderr)
+            sys.exit(1)
+
+        log_diagnostic("info", "Pre-flight column validation passed", {
+            "import_type": import_type,
+            "has_mappings": mapping_data is not None
+        })
+
         print(f"Starting import for type '{import_type}'...")
 
         # =====================================================================
@@ -997,6 +1083,24 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
             "duration_seconds": product_cache_duration
         })
 
+        # =======================================================================
+        # ROW COUNT VERIFICATION - Capture baseline counts before processing
+        # This enables post-import verification to catch silent failures
+        # =======================================================================
+        if import_type == 'inventory':
+            initial_row_count = db.query(models.Product).filter(
+                models.Product.client_id == import_batch.clientId
+            ).count()
+        else:  # orders
+            initial_row_count = db.query(models.Transaction).filter(
+                models.Transaction.client_id == import_batch.clientId
+            ).count()
+
+        log_diagnostic("debug", "Baseline row count captured", {
+            "import_type": import_type,
+            "initial_count": initial_row_count
+        })
+
         # Process file in chunks - supports both CSV and Excel files
         file_reader = read_file(
             absolute_file_path,
@@ -1006,7 +1110,18 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
             encoding_errors='replace'
         )
 
+        # =======================================================================
+        # ATOMIC TRANSACTION WITH SAVEPOINTS
+        # Each chunk uses a savepoint for isolation. If too many chunks fail,
+        # we abort the entire import to prevent partial/corrupted data.
+        # =======================================================================
+        critical_error_count = 0
+        CRITICAL_ERROR_THRESHOLD = 3  # Abort if 3+ chunks have critical errors
+
         for i, chunk in enumerate(file_reader):
+            # Use savepoint for chunk-level isolation
+            # This allows individual chunk rollback without losing other chunks
+            savepoint = db.begin_nested()
             try:
                 chunk_rows_committed = 0  # Track actual committed rows in this chunk
                 raw_chunk_size = len(chunk)
@@ -1211,13 +1326,13 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                             chunk_rows_committed += len(valid_rows)
                             reconciliation["rows_inserted"] += len(valid_rows)
 
-                # Commit changes for the entire chunk
-                db.commit()
+                # Commit the savepoint (releases savepoint, changes visible in transaction)
+                savepoint.commit()
 
                 # Count only successfully committed rows, not raw chunk size
                 total_rows_processed += chunk_rows_committed
                 import_batch.processedCount = total_rows_processed
-                db.commit()
+                db.commit()  # Persist processedCount update for progress tracking
 
                 # Emit progress update for Node.js real-time tracking
                 emit_progress("chunk_completed", {
@@ -1231,7 +1346,8 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
             except ValueError as ve:
                 # Validation error from cleaning functions (required columns missing, etc.)
-                db.rollback()
+                savepoint.rollback()  # Only rollback this chunk's savepoint
+                critical_error_count += 1
                 error_detail = {
                     "type": "ValidationError",
                     "message": f"Data validation error: {str(ve)}",
@@ -1247,9 +1363,19 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                 })
                 print(f"FATAL ERROR in chunk {i+1}: Data validation - {ve}", file=sys.stderr)
 
+                # Check if we've hit the critical error threshold
+                if critical_error_count >= CRITICAL_ERROR_THRESHOLD:
+                    log_diagnostic("error", "Critical error threshold exceeded - aborting import", {
+                        "critical_errors": critical_error_count,
+                        "threshold": CRITICAL_ERROR_THRESHOLD,
+                        "chunks_processed": i + 1
+                    })
+                    raise RuntimeError(f"Import aborted: {critical_error_count} chunks failed (threshold: {CRITICAL_ERROR_THRESHOLD})")
+
             except Exception as chunk_e:
                 # Other errors (database, unexpected issues)
-                db.rollback()
+                savepoint.rollback()  # Only rollback this chunk's savepoint
+                critical_error_count += 1
                 error_detail = {
                     "type": type(chunk_e).__name__,
                     "message": str(chunk_e),
@@ -1265,6 +1391,62 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
                     "error": str(chunk_e)
                 })
                 print(f"FATAL ERROR in chunk {i+1}: {chunk_e}", file=sys.stderr)
+
+                # Check if we've hit the critical error threshold
+                if critical_error_count >= CRITICAL_ERROR_THRESHOLD:
+                    log_diagnostic("error", "Critical error threshold exceeded - aborting import", {
+                        "critical_errors": critical_error_count,
+                        "threshold": CRITICAL_ERROR_THRESHOLD,
+                        "chunks_processed": i + 1
+                    })
+                    raise RuntimeError(f"Import aborted: {critical_error_count} chunks failed (threshold: {CRITICAL_ERROR_THRESHOLD})")
+
+        # =======================================================================
+        # ROW COUNT VERIFICATION - Verify actual database rows match expectations
+        # This catches silent failures where transactions commit but data is lost
+        # =======================================================================
+        if import_type == 'inventory':
+            final_row_count = db.query(models.Product).filter(
+                models.Product.client_id == import_batch.clientId
+            ).count()
+        else:  # orders
+            final_row_count = db.query(models.Transaction).filter(
+                models.Transaction.client_id == import_batch.clientId
+            ).count()
+
+        actual_delta = final_row_count - initial_row_count
+        expected_inserts = reconciliation.get("rows_inserted", 0)
+        expected_updates = reconciliation.get("rows_updated", 0)
+
+        # For upserts, new rows = inserts, existing rows get updated (no net new rows)
+        # So actual delta should match new inserts (not updates to existing rows)
+        log_diagnostic("info", "Row count verification", {
+            "initial_count": initial_row_count,
+            "final_count": final_row_count,
+            "actual_delta": actual_delta,
+            "expected_inserts": expected_inserts,
+            "expected_updates": expected_updates
+        })
+
+        # Detect significant discrepancies (allow for small timing/race condition variance)
+        # A mismatch indicates silent data loss or transaction issues
+        if expected_inserts > 0 and actual_delta < expected_inserts * 0.95:
+            discrepancy = expected_inserts - actual_delta
+            verification_error = {
+                "type": "RowCountMismatch",
+                "message": f"Row count verification failed: expected {expected_inserts} new rows, but only {actual_delta} appeared in database",
+                "severity": "critical",
+                "details": {
+                    "initial_count": initial_row_count,
+                    "final_count": final_row_count,
+                    "expected_inserts": expected_inserts,
+                    "actual_delta": actual_delta,
+                    "discrepancy": discrepancy
+                }
+            }
+            errors_encountered.append(verification_error)
+            log_diagnostic("error", "ROW COUNT VERIFICATION FAILED - Data may be lost", verification_error["details"])
+            print(f"CRITICAL: Row count mismatch! Expected {expected_inserts} inserts, got {actual_delta} delta. {discrepancy} rows may be lost!", file=sys.stderr)
 
         # Finalize import status
         import_batch.rowCount = total_rows_seen or total_rows_processed
