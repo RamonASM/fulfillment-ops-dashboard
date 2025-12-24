@@ -306,7 +306,7 @@ export class ImportReconciliationService {
 
       return {
         importBatchId: importBatch.id,
-        filename: importBatch.filename,
+        filename: importBatch.filename || 'unknown',
         status,
         expectedRows: importBatch.rowCount || 0,
         insertedRows: reconciliation?.insertedRows || importBatch.processedCount || 0,
