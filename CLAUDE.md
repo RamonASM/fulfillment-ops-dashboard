@@ -286,8 +286,24 @@ curl -s https://admin.yourtechassist.us/api/ | jq
   - Database: up (329 products, 6 clients)
   - Redis: up
   - DS Analytics: up
-  - ML Analytics: down (not deployed)
+  - ML Analytics: up ✅ (deployed Dec 24, 2025)
 - **Status**: ✅ DEPLOYED to production at 22:00 UTC (14:00 PST Dec 24)
+
+---
+
+### 2025-12-24 @ 14:20 PST: ML Analytics Service Deployed (DEPLOYED)
+- **What**: Set up and started ML Analytics service on production
+- **Changes**:
+  - Created venv at `/var/www/inventory/apps/ml-analytics/venv/`
+  - Fixed `statsforecast==1.8.0` → `statsforecast>=1.7.0` (version didn't exist)
+  - Created systemd service at `/etc/systemd/system/ml-analytics.service`
+  - ML Analytics running on port 8001
+  - Fixed `ML_ANALYTICS_URL` in .env from Docker URL to `http://localhost:8001`
+- **Production Health**:
+  - All Python services: UP ✅
+  - DS Analytics: up (port 8000)
+  - ML Analytics: up (port 8001)
+- **Status**: ✅ DEPLOYED to production at 22:20 UTC (14:20 PST Dec 24)
 
 ---
 
