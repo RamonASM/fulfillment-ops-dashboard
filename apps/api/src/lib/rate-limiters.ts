@@ -86,7 +86,8 @@ export const createDefaultLimiter = () =>
       const role = getUserRole(req);
       return RATE_LIMITS[role].max;
     },
-    store: createStore(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore() as any, // Type assertion for version compatibility
     message: { error: "Too many requests, please try again later." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -104,7 +105,8 @@ export const createAuthLimiter = () =>
   rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 10, // Strict limit for all users
-    store: createStore(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore() as any, // Type assertion for version compatibility
     message: {
       error:
         "Too many authentication attempts. Please try again in 15 minutes.",
@@ -137,7 +139,8 @@ export const createUploadLimiter = () =>
       };
       return baseLimits[role] || 20;
     },
-    store: createStore(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore() as any, // Type assertion for version compatibility
     message: { error: "Upload limit exceeded. Please try again later." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -165,7 +168,8 @@ export const createAiLimiter = () =>
       };
       return aiLimits[role] || 10;
     },
-    store: createStore('rl:ai:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:ai:') as any, // Type assertion for version compatibility
     message: { error: "AI request limit exceeded. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -194,7 +198,8 @@ export const createAnalyticsLimiter = () =>
       };
       return analyticsLimits[role] || 5;
     },
-    store: createStore('rl:analytics:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:analytics:') as any, // Type assertion for version compatibility
     message: { error: "Analytics request limit exceeded. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -220,7 +225,8 @@ export const createReportLimiter = () =>
       };
       return reportLimits[role] || 5;
     },
-    store: createStore(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore() as any, // Type assertion for version compatibility
     message: { error: "Report generation limit exceeded. Please wait." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -256,7 +262,8 @@ export const createAdminLimiter = () =>
       };
       return adminLimits[role as keyof typeof adminLimits] || 10;
     },
-    store: createStore('rl:admin:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:admin:') as any, // Type assertion for version compatibility
     message: { error: "Too many admin requests. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -286,7 +293,8 @@ export const createUserManagementLimiter = () =>
       };
       return userMgmtLimits[role as keyof typeof userMgmtLimits] || 5;
     },
-    store: createStore('rl:users:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:users:') as any, // Type assertion for version compatibility
     message: { error: "Too many user management requests." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -316,7 +324,8 @@ export const createFinancialLimiter = () =>
       };
       return financialLimits[role as keyof typeof financialLimits] || 10;
     },
-    store: createStore('rl:financial:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:financial:') as any, // Type assertion for version compatibility
     message: { error: "Too many financial data requests." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -346,7 +355,8 @@ export const createOrderLimiter = () =>
       };
       return orderLimits[role as keyof typeof orderLimits] || 20;
     },
-    store: createStore('rl:orders:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:orders:') as any, // Type assertion for version compatibility
     message: { error: "Too many order requests. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -362,7 +372,8 @@ export const createPortalLimiter = () =>
   rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 60, // Fixed limit for portal users
-    store: createStore('rl:portal:'),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    store: createStore('rl:portal:') as any, // Type assertion for version compatibility
     message: { error: "Too many requests. Please slow down." },
     standardHeaders: true,
     legacyHeaders: false,
