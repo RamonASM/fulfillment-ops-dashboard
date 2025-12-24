@@ -17,15 +17,23 @@ const themeColors = {
     primary: "text-blue-600",
     primaryHover: "hover:text-blue-800",
     bg: "bg-blue-50",
-    border: "border-blue-500",
+    border: "border-blue-200",
     code: "bg-blue-100",
+    codeBg: "bg-blue-50",
+    codeText: "text-blue-900",
+    codeHeaderBg: "bg-blue-100",
+    codeHeaderText: "text-blue-700",
   },
   emerald: {
     primary: "text-emerald-600",
     primaryHover: "hover:text-emerald-800",
     bg: "bg-emerald-50",
-    border: "border-emerald-500",
+    border: "border-emerald-200",
     code: "bg-emerald-100",
+    codeBg: "bg-emerald-50",
+    codeText: "text-emerald-900",
+    codeHeaderBg: "bg-emerald-100",
+    codeHeaderText: "text-emerald-700",
   },
 };
 
@@ -202,7 +210,7 @@ export function ArticleRenderer({
             </li>
           ),
 
-          // Code blocks
+          // Code blocks - theme-colored for better readability
           code: ({ node, inline, className, children, ...props }: any) => {
             if (inline) {
               return (
@@ -219,15 +227,15 @@ export function ArticleRenderer({
             const language = className?.replace("language-", "") || "text";
 
             return (
-              <div className="my-4 rounded-lg overflow-hidden border border-gray-200">
+              <div className={`my-4 rounded-lg overflow-hidden border ${colors.border}`}>
                 {language !== "text" && (
-                  <div className="bg-gray-800 px-4 py-2 text-xs text-gray-300 font-mono border-b border-gray-700">
+                  <div className={`${colors.codeHeaderBg} px-4 py-2 text-xs ${colors.codeHeaderText} font-mono border-b ${colors.border}`}>
                     {language}
                   </div>
                 )}
-                <pre className="bg-gray-900 p-4 overflow-x-auto">
+                <pre className={`${colors.codeBg} p-4 overflow-x-auto`}>
                   <code
-                    className="text-gray-100 text-sm font-mono block"
+                    className={`${colors.codeText} text-sm font-mono block`}
                     {...props}
                   >
                     {children}

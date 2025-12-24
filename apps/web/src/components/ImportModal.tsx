@@ -9,6 +9,7 @@ import {
   Check,
   Loader2,
   Trash2,
+  RefreshCw,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "@/api/client";
@@ -268,11 +269,64 @@ export function ImportModal({
   const [isWaitingForCompletion, setIsWaitingForCompletion] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [hasTimedOut, setHasTimedOut] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    isDuplicate: boolean;
+    filename: string;
+    pendingFiles: File[];
+    previousImport?: {
+      id: string;
+      createdAt: string;
+      status: string;
+      rowCount?: number;
+    };
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   // Timeout for import processing (2 minutes)
   const IMPORT_TIMEOUT_MS = 120000;
+
+  // Fetch recent imports to check for duplicates
+  const { data: recentImports } = useQuery({
+    queryKey: ["recent-imports", clientId],
+    queryFn: () =>
+      api.get<{
+        data: Array<{
+          id: string;
+          filename: string;
+          createdAt: string;
+          status: string;
+          rowCount?: number;
+        }>;
+      }>(`/imports?clientId=${clientId}&limit=20`),
+    enabled: isOpen && !!clientId,
+  });
+
+  // Check if a filename was previously imported
+  const checkForDuplicateImport = useCallback(
+    (filename: string) => {
+      if (!recentImports?.data) return null;
+
+      const duplicate = recentImports.data.find(
+        (imp) => imp.filename === filename
+      );
+
+      if (duplicate) {
+        return {
+          isDuplicate: true,
+          filename,
+          previousImport: {
+            id: duplicate.id,
+            createdAt: duplicate.createdAt,
+            status: duplicate.status,
+            rowCount: duplicate.rowCount,
+          },
+        };
+      }
+      return null;
+    },
+    [recentImports]
+  );
 
   // Poll import progress during processing
   // NOTE: Backend returns ImportBatch directly (not wrapped in { data: ... })
@@ -561,23 +615,59 @@ export function ImportModal({
   };
 
   // File handling
-  const handleFileSelect = useCallback((files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const allowedTypes = [".csv", ".xlsx", ".xls", ".tsv"];
+  const handleFileSelect = useCallback(
+    (files: FileList | File[]) => {
+      const fileArray = Array.from(files);
+      const allowedTypes = [".csv", ".xlsx", ".xls", ".tsv"];
 
-    const validFiles = fileArray.filter((file) => {
-      const ext = file.name.toLowerCase().substring(file.name.lastIndexOf("."));
-      if (!allowedTypes.includes(ext)) {
-        toast.error(
-          `Invalid file type: ${file.name}. Only CSV, XLSX, XLS, and TSV files are allowed.`,
-        );
-        return false;
+      const validFiles = fileArray.filter((file) => {
+        const ext = file.name
+          .toLowerCase()
+          .substring(file.name.lastIndexOf("."));
+        if (!allowedTypes.includes(ext)) {
+          toast.error(
+            `Invalid file type: ${file.name}. Only CSV, XLSX, XLS, and TSV files are allowed.`
+          );
+          return false;
+        }
+        return true;
+      });
+
+      if (validFiles.length > 0) {
+        // Check for duplicates
+        for (const file of validFiles) {
+          const duplicate = checkForDuplicateImport(file.name);
+          if (duplicate) {
+            // Store the pending files so we can add them if user confirms
+            setDuplicateWarning({
+              ...duplicate,
+              pendingFiles: validFiles,
+            });
+            // Don't add files yet - wait for user confirmation
+            return;
+          }
+        }
+
+        setSelectedFiles((prev) => [...prev, ...validFiles]);
       }
-      return true;
-    });
+    },
+    [checkForDuplicateImport]
+  );
 
-    if (validFiles.length > 0) {
-      setSelectedFiles((prev) => [...prev, ...validFiles]);
+  // Handle duplicate confirmation - user chose to continue with re-upload
+  const handleDuplicateConfirm = useCallback(() => {
+    if (duplicateWarning?.pendingFiles) {
+      setSelectedFiles((prev) => [...prev, ...duplicateWarning.pendingFiles]);
+      setDuplicateWarning(null);
+    }
+  }, [duplicateWarning]);
+
+  // Handle duplicate cancel - user chose not to re-upload
+  const handleDuplicateCancel = useCallback(() => {
+    setDuplicateWarning(null);
+    // Clear the file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   }, []);
 
@@ -776,6 +866,7 @@ export function ImportModal({
     setEditedMappings({});
     setCurrentImportId(null);
     setIsWaitingForCompletion(false);
+    setDuplicateWarning(null);
     onClose();
   };
 
@@ -907,6 +998,75 @@ export function ImportModal({
                       </div>
                     )}
                   </div>
+
+                  {/* Duplicate Import Warning Dialog */}
+                  {duplicateWarning && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 bg-amber-50 border border-amber-200 rounded-lg"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-amber-100 rounded-full">
+                          <RefreshCw className="w-5 h-5 text-amber-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-medium text-amber-800">
+                            File Previously Imported
+                          </h4>
+                          <p className="text-sm text-amber-700 mt-1">
+                            <span className="font-medium">
+                              "{duplicateWarning.filename}"
+                            </span>{" "}
+                            was already imported
+                            {duplicateWarning.previousImport?.createdAt && (
+                              <> on {new Date(duplicateWarning.previousImport.createdAt).toLocaleDateString()}</>
+                            )}
+                            {duplicateWarning.previousImport?.rowCount && (
+                              <> ({duplicateWarning.previousImport.rowCount} rows)</>
+                            )}
+                            .
+                          </p>
+
+                          <div className="mt-3 p-3 bg-white/60 rounded border border-amber-200">
+                            <p className="text-sm font-medium text-amber-800 mb-2">
+                              What happens if you continue:
+                            </p>
+                            <ul className="text-sm text-amber-700 space-y-1">
+                              <li className="flex items-center gap-2">
+                                <Check className="w-4 h-4 text-amber-600" />
+                                Products with matching SKUs will be <strong>updated</strong>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <Check className="w-4 h-4 text-amber-600" />
+                                New products will be <strong>added</strong>
+                              </li>
+                              <li className="flex items-center gap-2">
+                                <Check className="w-4 h-4 text-green-600" />
+                                No products will be duplicated
+                              </li>
+                            </ul>
+                          </div>
+
+                          <div className="flex gap-3 mt-4">
+                            <button
+                              onClick={handleDuplicateCancel}
+                              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleDuplicateConfirm}
+                              className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 flex items-center gap-2"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Continue & Update
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
 
                   {/* Selected Files List */}
                   {selectedFiles.length > 0 && (

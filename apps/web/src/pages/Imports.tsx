@@ -12,6 +12,8 @@ import {
   Trash2,
   RotateCcw,
   Info,
+  RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { useState, useCallback, useRef } from "react";
 import { clsx } from "clsx";
@@ -152,6 +154,18 @@ export default function Imports() {
       hour: "numeric",
       minute: "2-digit",
     });
+  };
+
+  // Determine if an import is "New" or "Update" based on whether there's an earlier import
+  // with the same filename for the same client
+  const getImportMode = (imp: ImportHistory, allImports: ImportHistory[]) => {
+    const sameFileImports = allImports.filter(
+      (other) =>
+        other.filename === imp.filename &&
+        other.clientId === imp.clientId &&
+        new Date(other.createdAt) < new Date(imp.createdAt)
+    );
+    return sameFileImports.length > 0 ? "update" : "new";
   };
 
   // Handle import success - refresh import history and related data
@@ -427,6 +441,9 @@ export default function Imports() {
                     Type
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Mode
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -482,6 +499,22 @@ export default function Imports() {
                         >
                           {imp.importType || "unknown"}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {(() => {
+                          const mode = getImportMode(imp, imports);
+                          return mode === "update" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-amber-50 text-amber-700">
+                              <RefreshCw className="w-3 h-3" />
+                              Update
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-emerald-50 text-emerald-700">
+                              <Sparkles className="w-3 h-3" />
+                              New
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
