@@ -153,14 +153,16 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
             """,
             buffer
         )
-        connection.commit()
+        # Don't commit here - let the outer transaction/savepoint handle it
+        # connection.commit() was breaking SQLAlchemy savepoint management
 
         duration = (datetime.now() - start_time).total_seconds()
         result["duration_seconds"] = duration
         print(f"  ✅ COPY completed in {duration:.2f}s ({len(products)/duration:.0f} rows/sec)")
 
     except Exception as e:
-        connection.rollback()
+        # Don't rollback the raw connection - let SQLAlchemy savepoint handle it
+        # connection.rollback() was breaking SQLAlchemy savepoint management
         result["fallback_used"] = True
         result["method"] = "bulk_insert_mappings"
         result["copy_error"] = f"{type(e).__name__}: {str(e)[:200]}"
@@ -177,7 +179,7 @@ def bulk_insert_products_copy(db_session: Session, products: List[Dict[str, Any]
         try:
             # Fallback to SQLAlchemy bulk insert if COPY fails
             db_session.bulk_insert_mappings(models.Product, products)
-            db_session.commit()
+            # Don't commit here - let the outer transaction/savepoint handle it
             _log_structured("info", "Fallback bulk_insert_mappings succeeded", {
                 "record_count": len(products)
             })
@@ -254,14 +256,16 @@ def bulk_insert_transactions_copy(db_session: Session, transactions: List[Dict[s
             """,
             buffer
         )
-        connection.commit()
+        # Don't commit here - let the outer transaction/savepoint handle it
+        # connection.commit() was breaking SQLAlchemy savepoint management
 
         duration = (datetime.now() - start_time).total_seconds()
         result["duration_seconds"] = duration
         print(f"  ✅ COPY completed in {duration:.2f}s ({len(transactions)/duration:.0f} rows/sec)")
 
     except Exception as e:
-        connection.rollback()
+        # Don't rollback the raw connection - let SQLAlchemy savepoint handle it
+        # connection.rollback() was breaking SQLAlchemy savepoint management
         result["success"] = False
         result["error"] = f"{type(e).__name__}: {str(e)[:200]}"
 
