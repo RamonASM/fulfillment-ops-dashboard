@@ -191,7 +191,8 @@ const router = Router();
 // =============================================================================
 const IMPORT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const monorepoRoot = getMonorepoRoot();
-const uploadsDir = path.join(monorepoRoot, "uploads");
+// Support UPLOAD_DIR environment variable for containerized deployments
+const uploadsDir = process.env.UPLOAD_DIR || path.join(monorepoRoot, "uploads");
 
 async function countFileRows(filePath: string): Promise<number | null> {
   const ext = path.extname(filePath).toLowerCase();
@@ -386,10 +387,11 @@ const handleMulterError = (err: Error | multer.MulterError, req: Request, res: R
 
 function getPythonCommand(): string {
   const possiblePaths = [
+    process.env.PYTHON_PATH, // Allow environment variable override
     path.join(monorepoRoot, "apps", "python-importer", "venv", "bin", "python"),
     "python3",
     "python",
-  ];
+  ].filter(Boolean) as string[];
   const requiredDependencies = ["pandas", "sqlalchemy", "psycopg2", "openpyxl"];
 
   for (const cmd of possiblePaths) {

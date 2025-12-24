@@ -78,6 +78,11 @@ if (envValidation.warnings.length > 0) {
   printEnvironmentWarnings(envValidation.warnings);
 }
 
+// Validate ML service URL is configured (warn at startup, don't block)
+if (!process.env.DS_ANALYTICS_URL && !process.env.ML_SERVICE_URL) {
+  logger.warn("⚠️ ML service URL not configured (DS_ANALYTICS_URL or ML_SERVICE_URL) - forecasting features will be unavailable");
+}
+
 const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
