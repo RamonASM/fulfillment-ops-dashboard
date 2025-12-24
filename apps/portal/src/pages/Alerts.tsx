@@ -101,7 +101,10 @@ export default function Alerts() {
                           {alert.title}
                         </h3>
                         {!alert.isRead && (
-                          <span className="w-2 h-2 bg-blue-500 rounded-full" />
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-blue-500 rounded-full" aria-hidden="true" />
+                            <span className="text-xs text-blue-600 font-medium">New</span>
+                          </span>
                         )}
                       </div>
                       {alert.message && (

@@ -32,16 +32,63 @@ const STATUS_FILTERS = [
   { value: 'healthy', label: 'Healthy', color: 'text-emerald-600' },
 ];
 
+const CART_STORAGE_KEY = 'portal_order_cart';
+const NOTES_STORAGE_KEY = 'portal_order_notes';
+
 export default function OrderRequest() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [notes, setNotes] = useState('');
+
+  // Initialize cart from localStorage for persistence across page refreshes
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(CART_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Initialize notes from localStorage
+  const [notes, setNotes] = useState(() => {
+    try {
+      return localStorage.getItem(NOTES_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+
   const [locationId, setLocationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState<'cards' | 'compact'>('cards');
+
+  // Persist cart to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+      } else {
+        localStorage.removeItem(CART_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn('Failed to save cart to localStorage:', e);
+    }
+  }, [cart]);
+
+  // Persist notes to localStorage
+  useEffect(() => {
+    try {
+      if (notes) {
+        localStorage.setItem(NOTES_STORAGE_KEY, notes);
+      } else {
+        localStorage.removeItem(NOTES_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn('Failed to save notes to localStorage:', e);
+    }
+  }, [notes]);
 
   // Pre-selected products from navigation state
   const preSelectedIds = (location.state as { productIds?: string[] })?.productIds || [];

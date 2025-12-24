@@ -14,6 +14,7 @@ import {
   MessageSquare,
   HelpCircle,
   Brain,
+  Activity,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/auth.store";
@@ -46,6 +47,17 @@ const navigation = [
   },
   { name: "Help", href: "/help", icon: HelpCircle, shortcut: "G then ?" },
   { name: "Settings", href: "/settings", icon: Settings, shortcut: "G then S" },
+];
+
+// Admin-only navigation items
+const adminNavigation = [
+  {
+    name: "Analytics Admin",
+    href: "/admin/analytics",
+    icon: Activity,
+    shortcut: "G then X",
+    roles: ["admin", "operations_manager"],
+  },
 ];
 
 export default function MainLayout() {
@@ -155,8 +167,9 @@ export default function MainLayout() {
             <button
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden p-1 text-gray-400 hover:text-white"
+              aria-label="Close navigation menu"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
 
@@ -186,6 +199,33 @@ export default function MainLayout() {
                 </span>
               </NavLink>
             ))}
+
+            {/* Admin Navigation */}
+            {adminNavigation
+              .filter((item) => item.roles.includes(user?.role || ""))
+              .map((item) => (
+                <NavLink
+                  key={item.name}
+                  to={item.href}
+                  onClick={() => setSidebarOpen(false)}
+                  className={({ isActive }) =>
+                    clsx(
+                      "group flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-primary-600 text-white"
+                        : "text-gray-300 hover:bg-gray-800 hover:text-white",
+                    )
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <item.icon className="w-5 h-5" />
+                    {item.name}
+                  </div>
+                  <span className="hidden group-hover:inline-flex text-xs text-gray-500">
+                    {item.shortcut}
+                  </span>
+                </NavLink>
+              ))}
           </nav>
 
           {/* Keyboard shortcut hint */}
@@ -239,8 +279,9 @@ export default function MainLayout() {
               <button
                 onClick={() => setSidebarOpen(true)}
                 className="lg:hidden p-2 text-gray-500 hover:text-gray-700"
+                aria-label="Open navigation menu"
               >
-                <Menu className="w-5 h-5" />
+                <Menu className="w-5 h-5" aria-hidden="true" />
               </button>
 
               {/* Search - Opens Command Palette */}
@@ -278,9 +319,10 @@ export default function MainLayout() {
               <button
                 onClick={() => navigate("/alerts")}
                 className="relative p-2 text-gray-500 hover:text-gray-700"
+                aria-label="View alerts and notifications"
               >
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                <Bell className="w-5 h-5" aria-hidden="true" />
+                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" aria-hidden="true" />
               </button>
             </div>
           </div>

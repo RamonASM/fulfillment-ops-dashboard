@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -86,12 +86,28 @@ export function ImportActivityWidget({
   showClientName = false,
   limit = 5,
 }: ImportActivityWidgetProps) {
+  const queryClient = useQueryClient();
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['import-history', clientId],
     queryFn: () => api.get<ImportHistoryResponse>('/imports/history'),
     staleTime: 30000, // 30 seconds
     refetchInterval: 60000, // Refetch every minute
   });
+
+  // Listen for import-complete events to auto-refresh
+  useEffect(() => {
+    const handleImportComplete = () => {
+      // Immediately invalidate queries for faster refresh
+      queryClient.invalidateQueries({ queryKey: ['import-history'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['products'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['alerts'], exact: false });
+    };
+
+    window.addEventListener('import-complete', handleImportComplete);
+    return () => window.removeEventListener('import-complete', handleImportComplete);
+  }, [queryClient]);
 
   const filteredImports = useMemo(() => {
     if (!data?.data) return [];

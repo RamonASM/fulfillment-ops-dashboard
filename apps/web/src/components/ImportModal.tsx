@@ -366,7 +366,9 @@ export function ImportModal({
     enabled:
       (importStep === "processing" || isWaitingForCompletion) &&
       !!currentImportId,
-    refetchInterval: 2000, // Poll every 2 seconds
+    // Faster polling (1s) during active processing for responsive feel
+    // Slower (3s) for less active states to reduce server load
+    refetchInterval: isWaitingForCompletion ? 1000 : 3000,
   });
 
   // CRITICAL: Monitor polling status and handle completion
@@ -404,6 +406,11 @@ export function ImportModal({
         } else {
           setImportStep("complete");
           onSuccess?.();
+
+          // Dispatch custom event for widgets to auto-refresh
+          window.dispatchEvent(new CustomEvent('import-complete', {
+            detail: { status, clientId }
+          }));
 
           if (status === "completed") {
             toast.success("All imports completed successfully");
@@ -899,6 +906,11 @@ export function ImportModal({
     setImportStep("complete");
     onSuccess?.();
 
+    // Dispatch custom event for widgets to auto-refresh
+    window.dispatchEvent(new CustomEvent('import-complete', {
+      detail: { status: 'batch_complete', clientId }
+    }));
+
     const successCount = results.filter((r) => r.status === "completed" || r.status === "completed_with_errors").length;
     const failCount = results.filter((r) => r.status === "failed").length;
 
@@ -989,8 +1001,9 @@ export function ImportModal({
               <button
                 onClick={resetAndClose}
                 className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Close import dialog"
               >
-                <X className="w-5 h-5 text-gray-500" />
+                <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
               </button>
             </div>
 

@@ -36,6 +36,7 @@ import {
   getCustomFieldStats,
 } from "../services/custom-field.service.js";
 import { columnMappingsSchema } from "../lib/validation-schemas.js";
+import { ImportReconciliationService } from "../services/import-reconciliation.service.js";
 
 // Type for import types
 type ImportType = "inventory" | "orders" | "both";
@@ -2326,6 +2327,111 @@ router.get(
           ),
         })),
         advisoryLockHeld: lockHeld,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// =============================================================================
+// RECONCILIATION ROUTES - POST-IMPORT VERIFICATION
+// =============================================================================
+
+/**
+ * POST /api/imports/:importId/reconcile
+ * Run a post-import reconciliation check to verify data integrity
+ *
+ * This endpoint verifies that the expected number of rows were processed
+ * and identifies any silent failures or data loss.
+ */
+router.post(
+  "/:importId/reconcile",
+  requireRole("admin", "operations_manager", "account_manager"),
+  async (req, res, next) => {
+    try {
+      const { importId } = req.params;
+
+      // Verify import exists
+      const importBatch = await prisma.importBatch.findUnique({
+        where: { id: importId },
+        select: { id: true, status: true },
+      });
+
+      if (!importBatch) {
+        throw new NotFoundError(`Import batch ${importId} not found`);
+      }
+
+      if (!["completed", "completed_with_errors", "failed"].includes(importBatch.status)) {
+        throw new ValidationError(
+          "Can only run reconciliation on completed or failed imports"
+        );
+      }
+
+      const report = await ImportReconciliationService.reconcileImport(importId);
+
+      res.json({
+        success: true,
+        report,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /api/imports/:importId/reconciliation
+ * Get the reconciliation report for an import batch
+ */
+router.get(
+  "/:importId/reconciliation",
+  async (req, res, next) => {
+    try {
+      const { importId } = req.params;
+
+      const report = await ImportReconciliationService.getReconciliationReport(importId);
+
+      if (!report) {
+        // No reconciliation run yet - run it now
+        const newReport = await ImportReconciliationService.reconcileImport(importId);
+        return res.json({
+          success: true,
+          report: newReport,
+          wasGenerated: true,
+        });
+      }
+
+      res.json({
+        success: true,
+        report,
+        wasGenerated: false,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /api/imports/reconciliation/summary
+ * Get a summary of recent import reconciliations
+ */
+router.get(
+  "/reconciliation/summary",
+  requireRole("admin", "operations_manager"),
+  async (req, res, next) => {
+    try {
+      const { clientId, limit } = req.query;
+
+      const summary = await ImportReconciliationService.getRecentReconciliationSummary(
+        clientId as string | undefined,
+        limit ? parseInt(limit as string, 10) : 10
+      );
+
+      res.json({
+        success: true,
+        ...summary,
       });
     } catch (error) {
       next(error);

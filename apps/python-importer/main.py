@@ -8,11 +8,74 @@ import uuid
 import sys
 from datetime import datetime
 from typing import Optional, List
+from contextvars import ContextVar
 
 # Add the package directory to path for direct script execution
 _package_dir = os.path.dirname(os.path.abspath(__file__))
 if _package_dir not in sys.path:
     sys.path.insert(0, _package_dir)
+
+
+# =============================================================================
+# STRUCTURED LOGGING WITH CORRELATION IDs
+# =============================================================================
+
+# Context variable to hold the current correlation ID (import_batch_id)
+_correlation_id: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
+
+
+def set_correlation_id(import_id: str) -> None:
+    """Set the correlation ID for the current import context."""
+    _correlation_id.set(import_id)
+
+
+def get_correlation_id() -> Optional[str]:
+    """Get the current correlation ID."""
+    return _correlation_id.get()
+
+
+def log_structured(
+    level: str,
+    message: str,
+    **extra_fields
+) -> None:
+    """
+    Emit a structured JSON log line to stderr for observability.
+
+    Args:
+        level: Log level (INFO, WARNING, ERROR, DEBUG)
+        message: Human-readable log message
+        **extra_fields: Additional structured data to include
+    """
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "level": level,
+        "message": message,
+        "correlation_id": get_correlation_id(),
+        "service": "python-importer",
+        **extra_fields
+    }
+    print(f"[LOG] {json.dumps(log_entry)}", file=sys.stderr, flush=True)
+
+
+def log_info(message: str, **extra_fields) -> None:
+    """Log an INFO level message."""
+    log_structured("INFO", message, **extra_fields)
+
+
+def log_warning(message: str, **extra_fields) -> None:
+    """Log a WARNING level message."""
+    log_structured("WARNING", message, **extra_fields)
+
+
+def log_error(message: str, **extra_fields) -> None:
+    """Log an ERROR level message."""
+    log_structured("ERROR", message, **extra_fields)
+
+
+def log_debug(message: str, **extra_fields) -> None:
+    """Log a DEBUG level message."""
+    log_structured("DEBUG", message, **extra_fields)
 
 from database import initialize_database, get_db, get_db_session
 import database
@@ -971,7 +1034,7 @@ def process_import_cli(import_batch_id: str, file_path: str, import_type: str, m
 
     mapping_data = load_column_mapping(mapping_file)
     if mapping_data:
-        print(f"Loaded mapping configuration from {mapping_file}")
+        log_info("Loaded mapping configuration", mapping_file=mapping_file)
 
     db: Session = next(get_db())
 
@@ -1551,20 +1614,27 @@ if __name__ == "__main__":
     import_type = sys.argv[4]       # Shifted from index 3
     mapping_file = sys.argv[5] if len(sys.argv) > 5 else None
 
+    # Set correlation ID for structured logging
+    set_correlation_id(import_batch_id)
+    log_info("Import process started",
+             file_path=file_path,
+             import_type=import_type,
+             has_mapping_file=mapping_file is not None)
+
     # Initialize database with explicit URL
     try:
         initialize_database(database_url)
-        print("[main.py] Database initialized successfully")
+        log_info("Database initialized successfully")
     except Exception as e:
-        print(f"FATAL: Failed to initialize database: {e}", file=sys.stderr)
+        log_error("Failed to initialize database", error=str(e))
         sys.exit(1)
 
     # Create tables after successful connection
     try:
         models.Base.metadata.create_all(bind=database.engine)
-        print("[main.py] Database tables verified")
+        log_info("Database tables verified")
     except Exception as e:
-        print(f"FATAL: Failed to create/verify tables: {e}", file=sys.stderr)
+        log_error("Failed to create/verify tables", error=str(e))
         sys.exit(1)
 
     # Process import

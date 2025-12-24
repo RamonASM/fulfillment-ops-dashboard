@@ -148,10 +148,22 @@ export default function Dashboard() {
               stats.recentAlerts.slice(0, 5).map((alert) => (
                 <div key={alert.id} className="p-4 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start gap-3">
-                    <div className={`w-2 h-2 mt-2 rounded-full ${
-                      alert.severity === 'critical' ? 'bg-red-500' :
-                      alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
-                    }`} />
+                    <div className="flex items-center gap-1.5">
+                      <div
+                        className={`w-2 h-2 rounded-full ${
+                          alert.severity === 'critical' ? 'bg-red-500' :
+                          alert.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span className={`text-xs font-medium ${
+                        alert.severity === 'critical' ? 'text-red-600' :
+                        alert.severity === 'warning' ? 'text-amber-600' : 'text-blue-600'
+                      }`}>
+                        {alert.severity === 'critical' ? 'Critical' :
+                         alert.severity === 'warning' ? 'Warning' : 'Info'}
+                      </span>
+                    </div>
                     <div className="flex-1">
                       <p className="font-medium text-gray-900">{alert.title}</p>
                       <p className="text-sm text-gray-500">
