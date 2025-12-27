@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuthStore } from '@/stores/auth.store';
+import { useAuthStore, User as AuthUser } from '@/stores/auth.store';
+import { AuthState } from '@inventory/shared/stores';
 import { api } from '@/api/client';
 import { User, Bell, Users, Plus, Loader2, X, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
+
+type AuthStateUser = AuthState<AuthUser>;
 
 interface AdminUser {
   id: string;
@@ -28,7 +31,7 @@ interface PortalUser {
 }
 
 export default function Settings() {
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((state: AuthStateUser) => state.user);
   const queryClient = useQueryClient();
   const isAdmin = user?.role === 'admin';
 

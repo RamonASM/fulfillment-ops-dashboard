@@ -21,10 +21,13 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '@/api/client';
-import { useAuthStore } from '@/stores/auth.store';
+import { useAuthStore, User } from '@/stores/auth.store';
+import { AuthState } from '@inventory/shared/stores';
 import { staggerContainer, staggerItem, fadeInUp } from '@/lib/animations';
 import toast from 'react-hot-toast';
 import { formatDistanceToNow } from 'date-fns';
+
+type AuthStateUser = AuthState<User>;
 
 interface Comment {
   id: string;
@@ -98,7 +101,7 @@ export function CommentThread({
   className,
 }: CommentThreadProps) {
   const queryClient = useQueryClient();
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((state: AuthStateUser) => state.user);
   const [newComment, setNewComment] = useState('');
   const [visibility, setVisibility] = useState<CommentVisibility>('all');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);

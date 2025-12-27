@@ -1,7 +1,10 @@
 import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useAuthStore } from "@/stores/auth.store";
+import { useAuthStore, User } from "@/stores/auth.store";
+import { AuthState } from "@inventory/shared/stores";
 import { api } from "@/api/client";
+
+type AuthStateUser = AuthState<User>;
 
 // Layouts - keep eager loaded
 import MainLayout from "@/components/layouts/MainLayout";
@@ -42,7 +45,7 @@ function PageLoader() {
 
 // Auth guard component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((state: AuthStateUser) => state.isAuthenticated);
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -52,7 +55,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((state: AuthStateUser) => state.isAuthenticated);
 
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
@@ -62,7 +65,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((state: AuthStateUser) => state.isAuthenticated);
 
   // Refresh CSRF token on app initialization if user is authenticated
   useEffect(() => {

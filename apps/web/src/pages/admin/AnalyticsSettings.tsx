@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/client';
-import { useAuthStore } from '@/stores/auth.store';
+import { useAuthStore, User } from '@/stores/auth.store';
+import { AuthState } from '@inventory/shared/stores';
+
+type AuthStateUser = AuthState<User>;
+
 import {
   Activity,
   CheckCircle2,
@@ -47,7 +51,7 @@ interface ClientAnalyticsStatus {
 }
 
 export default function AnalyticsSettings() {
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((state: AuthStateUser) => state.user);
   const queryClient = useQueryClient();
   const [showConfirmModal, setShowConfirmModal] = useState<'enable-all' | 'disable-all' | null>(null);
 

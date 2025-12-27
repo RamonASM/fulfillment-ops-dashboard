@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
-import { useAuthStore } from '@/stores/auth.store';
+import { useAuthStore, User } from '@/stores/auth.store';
+import { AuthState } from '@inventory/shared/stores';
 import { api } from '@/api/client';
 import toast from 'react-hot-toast';
+
+type AuthStateUser = AuthState<User>;
 
 interface LoginResponse {
   user: {
@@ -17,7 +20,7 @@ interface LoginResponse {
 
 export default function Login() {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAuth = useAuthStore((state: AuthStateUser) => state.setAuth);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
