@@ -1946,6 +1946,77 @@ function generateDiagnosticRecommendations(
 }
 
 /**
+ * GET /api/imports/:importId/errors/download
+ * Download all import errors as JSON or CSV
+ * Query params:
+ *   - format: 'json' | 'csv' (default: 'json')
+ */
+router.get("/:importId/errors/download", async (req, res, next) => {
+  try {
+    const { importId } = req.params;
+    const format = (req.query.format as string)?.toLowerCase() || 'json';
+
+    const importBatch = await prisma.importBatch.findUnique({
+      where: { id: importId },
+      select: {
+        id: true,
+        filename: true,
+        errors: true,
+        errorCount: true,
+        status: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+
+    if (!importBatch) throw new NotFoundError("Import");
+
+    const errors = (importBatch.errors as Array<{
+      type?: string;
+      message?: string;
+      severity?: string;
+      row_range?: string;
+      details?: string;
+    }>) || [];
+
+    if (format === 'csv') {
+      // Generate CSV
+      const csvRows = [
+        ['Row Range', 'Type', 'Severity', 'Message', 'Details'].join(','),
+        ...errors.map(err => [
+          `"${err.row_range || 'N/A'}"`,
+          `"${err.type || 'error'}"`,
+          `"${err.severity || 'error'}"`,
+          `"${(err.message || '').replace(/"/g, '""')}"`,
+          `"${(err.details || '').replace(/"/g, '""')}"`,
+        ].join(','))
+      ];
+
+      const filename = `import-errors-${importBatch.filename || importId}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csvRows.join('\n'));
+    } else {
+      // JSON format
+      const filename = `import-errors-${importBatch.filename || importId}.json`;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.json({
+        importId: importBatch.id,
+        filename: importBatch.filename,
+        status: importBatch.status,
+        errorCount: importBatch.errorCount,
+        createdAt: importBatch.createdAt,
+        completedAt: importBatch.completedAt,
+        errors: errors,
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * DELETE /api/imports/:importId/data
  * Rollback import - delete data created by this import
  */

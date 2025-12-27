@@ -14,6 +14,9 @@ import {
   Unlock,
   Clock,
   ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Download,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "@/api/client";
@@ -364,6 +367,7 @@ export function ImportModal({
     message: string;
     clientId: string;
   } | null>(null);
+  const [showAllErrors, setShowAllErrors] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -1796,11 +1800,47 @@ export function ImportModal({
                       {/* Error details */}
                       {importProgress?.errors && importProgress.errors.length > 0 && (
                         <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-left max-w-md mx-auto">
-                          <h4 className="font-medium text-red-800 mb-2">
-                            Error Details ({importProgress.errors.length})
-                          </h4>
-                          <ul className="text-sm text-red-600 space-y-2 max-h-48 overflow-y-auto">
-                            {importProgress.errors.slice(0, 5).map((err, i) => (
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-red-800">
+                              Error Details ({importProgress.errors.length})
+                            </h4>
+                            <div className="flex items-center gap-2">
+                              {currentImportId && (
+                                <a
+                                  href={`/api/imports/${currentImportId}/errors/download?format=csv`}
+                                  download
+                                  className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1"
+                                  title="Download all errors as CSV"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  CSV
+                                </a>
+                              )}
+                              {importProgress.errors.length > 5 && (
+                                <button
+                                  onClick={() => setShowAllErrors(!showAllErrors)}
+                                  className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1"
+                                >
+                                  {showAllErrors ? (
+                                    <>
+                                      <ChevronUp className="w-3 h-3" />
+                                      Show less
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="w-3 h-3" />
+                                      Show all
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <ul className={clsx(
+                            "text-sm text-red-600 space-y-2 overflow-y-auto",
+                            showAllErrors ? "max-h-96" : "max-h-48"
+                          )}>
+                            {(showAllErrors ? importProgress.errors : importProgress.errors.slice(0, 5)).map((err, i) => (
                               <li key={i} className="border-b border-red-100 pb-2 last:border-0 last:pb-0">
                                 <div className="font-medium">
                                   {err.type || "Error"}: {err.message}
@@ -1822,9 +1862,9 @@ export function ImportModal({
                                 )}
                               </li>
                             ))}
-                            {importProgress.errors.length > 5 && (
+                            {!showAllErrors && importProgress.errors.length > 5 && (
                               <li className="text-red-400 text-xs pt-2">
-                                +{importProgress.errors.length - 5} more errors
+                                +{importProgress.errors.length - 5} more errors (click "Show all" above)
                               </li>
                             )}
                           </ul>
@@ -1973,12 +2013,35 @@ export function ImportModal({
                   {/* Data quality warnings (dropped rows, etc.) */}
                   {totals.structuredErrors.length > 0 && (
                     <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <h4 className="font-medium text-amber-800 mb-2 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" />
-                        Data Quality Warnings ({totals.structuredErrors.length})
-                      </h4>
-                      <ul className="text-sm text-amber-700 space-y-2 max-h-32 overflow-y-auto">
-                        {totals.structuredErrors.slice(0, 5).map((err, i) => (
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-amber-800 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" />
+                          Data Quality Warnings ({totals.structuredErrors.length})
+                        </h4>
+                        {totals.structuredErrors.length > 5 && (
+                          <button
+                            onClick={() => setShowAllErrors(!showAllErrors)}
+                            className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1"
+                          >
+                            {showAllErrors ? (
+                              <>
+                                <ChevronUp className="w-3 h-3" />
+                                Show less
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="w-3 h-3" />
+                                Show all
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      <ul className={clsx(
+                        "text-sm text-amber-700 space-y-2 overflow-y-auto",
+                        showAllErrors ? "max-h-64" : "max-h-32"
+                      )}>
+                        {(showAllErrors ? totals.structuredErrors : totals.structuredErrors.slice(0, 5)).map((err, i) => (
                           <li key={i} className="border-b border-amber-100 pb-1 last:border-0">
                             <span className="font-medium">{err.type || "Warning"}:</span>{" "}
                             {err.message}
@@ -1987,9 +2050,9 @@ export function ImportModal({
                             )}
                           </li>
                         ))}
-                        {totals.structuredErrors.length > 5 && (
+                        {!showAllErrors && totals.structuredErrors.length > 5 && (
                           <li className="text-amber-500 text-xs pt-1">
-                            +{totals.structuredErrors.length - 5} more warnings
+                            +{totals.structuredErrors.length - 5} more warnings (click "Show all" above)
                           </li>
                         )}
                       </ul>

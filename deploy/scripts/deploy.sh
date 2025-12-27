@@ -220,6 +220,27 @@ else
     exit 1
 fi
 
+# Check ML Analytics health (non-blocking - just a warning)
+echo -e "${BLUE}Checking ML Analytics service...${NC}"
+ML_HEALTH=$(curl -sf http://localhost:8001/health 2>/dev/null | jq -r '.status' 2>/dev/null || echo "error")
+if [ "$ML_HEALTH" = "ok" ]; then
+    echo -e "${GREEN}✓ ML Analytics service is healthy${NC}"
+else
+    echo -e "${YELLOW}⚠️  ML Analytics service not responding (non-critical)${NC}"
+    echo -e "${YELLOW}   ML features (forecasting) will be unavailable until service is started.${NC}"
+    echo -e "${YELLOW}   To start: cd /var/www/inventory/apps/ml-analytics && source venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8001${NC}"
+fi
+
+# Check DS Analytics health (non-blocking - just a warning)
+echo -e "${BLUE}Checking DS Analytics service...${NC}"
+DS_HEALTH=$(curl -sf http://localhost:8002/health 2>/dev/null | jq -r '.status' 2>/dev/null || echo "error")
+if [ "$DS_HEALTH" = "ok" ]; then
+    echo -e "${GREEN}✓ DS Analytics service is healthy${NC}"
+else
+    echo -e "${YELLOW}⚠️  DS Analytics service not responding (non-critical)${NC}"
+    echo -e "${YELLOW}   Usage calculation features will fall back to basic methods.${NC}"
+fi
+
 # Check Nginx config
 nginx -t && echo -e "${GREEN}✓ Nginx config valid${NC}"
 

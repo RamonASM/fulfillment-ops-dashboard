@@ -14,6 +14,7 @@ import {
   Info,
   RefreshCw,
   Sparkles,
+  Download,
 } from "lucide-react";
 import { useState, useCallback, useRef } from "react";
 import { clsx } from "clsx";
@@ -545,13 +546,23 @@ export default function Imports() {
                         <div className="flex items-center gap-2">
                           {/* Show diagnostics for any completed/failed import */}
                           {(imp.status === "failed" || imp.status === "completed_with_errors" || (imp.errorCount && imp.errorCount > 0)) && (
-                            <button
-                              onClick={() => viewDiagnostics(imp.id)}
-                              className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="View diagnostics"
-                            >
-                              <Info className="w-4 h-4" />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => viewDiagnostics(imp.id)}
+                                className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="View diagnostics"
+                              >
+                                <Info className="w-4 h-4" />
+                              </button>
+                              <a
+                                href={`/api/imports/${imp.id}/errors/download?format=csv`}
+                                download
+                                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+                                title="Download errors as CSV"
+                              >
+                                <Download className="w-4 h-4" />
+                              </a>
+                            </>
                           )}
                           {imp.status === "completed" && (
                             <button
