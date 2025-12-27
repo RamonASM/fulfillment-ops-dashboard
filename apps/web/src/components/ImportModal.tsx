@@ -140,6 +140,23 @@ const ALL_INVENTORY_FIELDS = [
   ...EXTENDED_INVENTORY_FIELDS,
 ];
 
+// =============================================================================
+// REQUIRED FIELDS PER IMPORT TYPE
+// These fields MUST be mapped for analytics to work correctly.
+// Blocking imports without these prevents broken analytics with zero values.
+// =============================================================================
+const REQUIRED_FIELDS_BY_TYPE = {
+  inventory: [
+    { field: "productId", label: "Product ID / SKU", reason: "Products cannot be created without an identifier" },
+    { field: "currentStockPacks", label: "Current Stock", reason: "Stock levels required for inventory tracking" },
+  ],
+  orders: [
+    { field: "productId", label: "Product ID / SKU", reason: "Orders cannot be matched to products without identifier" },
+    // At least one of quantityUnits or quantityPacks must be mapped
+    { field: "quantityUnits", altField: "quantityPacks", label: "Quantity", reason: "Usage analytics require quantity data" },
+  ],
+} as const;
+
 const ORDER_TARGET_FIELDS = [
   { value: "", label: "Skip this column", category: "skip" },
   // Core order fields
@@ -248,6 +265,64 @@ export interface ImportModalProps {
 }
 
 type ImportStep = "upload" | "preview" | "processing" | "complete";
+
+/**
+ * Validate that required fields are mapped for the import type.
+ * Returns { valid: true } or { valid: false, missing: [...], message: string }
+ */
+function validateRequiredFields(
+  mappings: ColumnMapping[],
+  importType: "inventory" | "orders" | "both"
+): { valid: true } | { valid: false; missing: string[]; message: string } {
+  // Cannot validate "both" type - should be blocked before this
+  if (importType === "both") {
+    return { valid: true };
+  }
+
+  const requiredFields = REQUIRED_FIELDS_BY_TYPE[importType];
+  const mappedFields = new Set(
+    mappings
+      .map((m) => m.mapsTo || m.target || "")
+      .filter((f) => f && f !== "")
+      .map((f) => f.toLowerCase())
+  );
+
+  const missing: string[] = [];
+
+  for (const req of requiredFields) {
+    const fieldLower = req.field.toLowerCase();
+    const altFieldLower = "altField" in req && req.altField ? req.altField.toLowerCase() : null;
+
+    // Check if main field OR alt field is mapped
+    const isMapped = mappedFields.has(fieldLower) || (altFieldLower && mappedFields.has(altFieldLower));
+
+    if (!isMapped) {
+      missing.push(req.label);
+    }
+  }
+
+  if (missing.length > 0) {
+    const message = `Required fields not mapped: ${missing.join(", ")}. ` +
+      `These fields are essential for ${importType === "inventory" ? "stock tracking" : "usage analytics"}. ` +
+      `Please map them before confirming the import.`;
+    return { valid: false, missing, message };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Check if a field is required for the given import type
+ */
+function isRequiredField(fieldValue: string, importType: "inventory" | "orders" | "both"): boolean {
+  if (importType === "both") return false;
+  const requiredFields = REQUIRED_FIELDS_BY_TYPE[importType];
+  const fieldLower = fieldValue.toLowerCase();
+  return requiredFields.some(
+    (req) => req.field.toLowerCase() === fieldLower ||
+      ("altField" in req && req.altField?.toLowerCase() === fieldLower)
+  );
+}
 
 // =============================================================================
 // COMPONENT
@@ -775,6 +850,15 @@ export function ImportModal({
       return;
     }
 
+    // Validate required fields are mapped (prevents broken analytics)
+    const importType = currentPreview.selectedType ?? currentPreview.detectedType;
+    const mappings = getMappingsForPreview(currentPreview);
+    const validation = validateRequiredFields(mappings, importType);
+    if (!validation.valid) {
+      toast.error(validation.message, { duration: 8000 });
+      return;
+    }
+
     setImportStep("processing");
     setCurrentImportId(currentPreview.importId); // Track the import being processed
     confirmMutation.mutate(currentPreview.importId);
@@ -825,6 +909,31 @@ export function ImportModal({
 
   // Fixed confirm-all: waits for each import to actually complete, retries failed imports
   const handleConfirmAll = async () => {
+    // Pre-validate ALL imports before starting (fail fast)
+    for (let i = 0; i < importPreviews.length; i++) {
+      const preview = importPreviews[i];
+      if (!preview.selectedType && preview.requiresTypeSelection) {
+        toast.error(
+          `Type selection required for ${preview.filename || `file ${i + 1}`} - please choose Inventory or Orders before confirming.`,
+        );
+        setCurrentPreviewIndex(i);
+        return;
+      }
+
+      // Validate required fields are mapped
+      const importType = preview.selectedType ?? preview.detectedType;
+      const mappings = getMappingsForPreview(preview);
+      const validation = validateRequiredFields(mappings, importType);
+      if (!validation.valid) {
+        toast.error(
+          `Missing required fields in ${preview.filename || `file ${i + 1}`}: ${validation.missing.join(", ")}`,
+          { duration: 8000 }
+        );
+        setCurrentPreviewIndex(i);
+        return;
+      }
+    }
+
     setImportStep("processing");
     const results: ImportResult[] = [];
     const failedPreviews: typeof importPreviews = [];
@@ -832,14 +941,6 @@ export function ImportModal({
     // Process all imports sequentially, waiting for each to complete
     for (let i = 0; i < importPreviews.length; i++) {
       const preview = importPreviews[i];
-      if (!preview.selectedType && preview.requiresTypeSelection) {
-        toast.error(
-          `Type selection required for ${preview.filename || `file ${i + 1}`} - please choose Inventory or Orders before confirming.`,
-        );
-        setImportStep("preview");
-        setCurrentPreviewIndex(i);
-        return;
-      }
       setCurrentImportId(preview.importId);
       setCurrentPreviewIndex(i);
 
@@ -1476,24 +1577,35 @@ export function ImportModal({
                                     </div>
                                   </td>
                                   <td className="px-4 py-2">
-                                    <MappingComboBox
-                                      value={mappingTarget}
-                                      onChange={(value, isCustom) =>
-                                        updateColumnMapping(
-                                          currentPreview.importId,
-                                          col.source,
-                                          value,
-                                          isCustom,
-                                        )
-                                      }
-                                      options={getComboBoxOptions(
-                                        currentPreview.selectedType ??
-                                          currentPreview.detectedType,
+                                    <div className="flex items-center gap-2">
+                                      <MappingComboBox
+                                        value={mappingTarget}
+                                        onChange={(value, isCustom) =>
+                                          updateColumnMapping(
+                                            currentPreview.importId,
+                                            col.source,
+                                            value,
+                                            isCustom,
+                                          )
+                                        }
+                                        options={getComboBoxOptions(
+                                          currentPreview.selectedType ??
+                                            currentPreview.detectedType,
+                                        )}
+                                        sourceColumnName={col.source}
+                                        confidence={col.confidence}
+                                        placeholder="Select or type field name..."
+                                      />
+                                      {/* Show REQUIRED badge if this field maps to a required field */}
+                                      {mappingTarget && isRequiredField(
+                                        mappingTarget,
+                                        currentPreview.selectedType ?? currentPreview.detectedType
+                                      ) && (
+                                        <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded flex-shrink-0">
+                                          REQUIRED
+                                        </span>
                                       )}
-                                      sourceColumnName={col.source}
-                                      confidence={col.confidence}
-                                      placeholder="Select or type field name..."
-                                    />
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2">
                                     {col.detectedDataType && (

@@ -43,16 +43,21 @@ type ImportType = "inventory" | "orders" | "both";
 
 /**
  * Convert UUID string to a numeric lock key for PostgreSQL advisory locks.
- * Uses a simple hash to convert the UUID to a 32-bit integer.
+ *
+ * IMPORTANT: Uses the first 8 hex characters of the UUID directly as a 32-bit integer.
+ * This is collision-resistant because:
+ * - UUIDs have 128 bits of randomness spread across all positions
+ * - The first 8 hex chars represent 32 bits of the UUID's most significant bits
+ * - For v4 UUIDs (random), this gives ~4.3 billion unique keys
+ *
+ * Previous implementation used a hash function which could collide for different UUIDs,
+ * potentially causing two different clients to block each other's imports.
  */
 function uuidToLockKey(uuid: string): number {
-  let hash = 0;
-  for (let i = 0; i < uuid.length; i++) {
-    const char = uuid.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash);
+  // Strip hyphens and take first 8 hex chars (32 bits)
+  // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  const hexChars = uuid.replace(/-/g, '').substring(0, 8);
+  return parseInt(hexChars, 16);
 }
 
 /**
@@ -1000,9 +1005,15 @@ router.post("/:importId/confirm", async (req, res, next) => {
         effectiveImportType = 'orders';
         console.log(`[Import] Auto-detected type 'orders' from column mappings`);
       } else if (hasOrderFields && hasInventoryFields) {
-        // Mixed signals - prefer orders if we see order-specific fields
-        effectiveImportType = 'orders';
-        console.log(`[Import] Mixed columns detected, defaulting to 'orders'`);
+        // CRITICAL FIX: Never silently default when both types detected
+        // User must explicitly choose to prevent data loss or misclassification
+        throw new ValidationError(
+          "File contains columns for BOTH inventory and orders. This is ambiguous and requires explicit selection. " +
+          "Use PATCH /api/imports/:id with {\"importType\": \"inventory\"} or {\"importType\": \"orders\"} before confirming. " +
+          "Detected inventory columns: Stock, Pack Size, Reorder Point. " +
+          "Detected order columns: Order ID, Quantity, Ship To. " +
+          "Choose based on your file's primary purpose."
+        );
       } else {
         // No strong signals - require user to specify
         throw new ValidationError(

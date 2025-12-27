@@ -126,9 +126,25 @@ export type StatusFilterParams = z.infer<typeof statusFilterSchema>;
 
 /**
  * Import status filter
+ * Must include all statuses used in import.routes.ts:
+ * - pending: Initial upload, awaiting confirmation
+ * - processing: Python importer running
+ * - post_processing: Analytics running after Python completes
+ * - completed: Fully successful
+ * - completed_with_errors: Completed but with some failures
+ * - failed: Import failed
+ * - rolled_back: Data was deleted/reverted
  */
 export const importStatusSchema = z.object({
-  status: z.enum(["pending", "processing", "completed", "failed"]).optional(),
+  status: z.enum([
+    "pending",
+    "processing",
+    "post_processing",
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "rolled_back"
+  ]).optional(),
 });
 
 export type ImportStatusParams = z.infer<typeof importStatusSchema>;
