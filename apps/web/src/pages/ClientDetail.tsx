@@ -165,12 +165,12 @@ export default function ClientDetail() {
   // Recalculate usage mutation
   const recalculateMutation = useMutation({
     mutationFn: async () => {
-      return api.post(`/clients/${clientId}/recalculate-monthly-usage`);
+      return api.post<{ processed?: number }>(`/clients/${clientId}/recalculate-monthly-usage`);
     },
-    onSuccess: (data: { processed?: number }) => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["client", clientId] });
       queryClient.invalidateQueries({ queryKey: ["products", clientId] });
-      toast.success(`Usage recalculated for ${data.processed || 0} products`);
+      toast.success(`Usage recalculated for ${data?.processed || 0} products`);
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to recalculate usage");
