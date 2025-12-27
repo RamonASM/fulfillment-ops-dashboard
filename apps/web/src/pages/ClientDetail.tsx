@@ -17,6 +17,7 @@ import {
   Activity,
   CheckSquare,
   TrendingUp,
+  RefreshCw,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/api/client";
@@ -158,6 +159,21 @@ export default function ClientDetail() {
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to delete client");
+    },
+  });
+
+  // Recalculate usage mutation
+  const recalculateMutation = useMutation({
+    mutationFn: async () => {
+      return api.post(`/clients/${clientId}/recalculate-monthly-usage`);
+    },
+    onSuccess: (data: { processed?: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["client", clientId] });
+      queryClient.invalidateQueries({ queryKey: ["products", clientId] });
+      toast.success(`Usage recalculated for ${data.processed || 0} products`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to recalculate usage");
     },
   });
 
@@ -303,6 +319,18 @@ export default function ClientDetail() {
           <button className="btn-secondary btn-sm" onClick={handleExport}>
             <Download className="w-4 h-4 mr-2" aria-hidden="true" />
             Export
+          </button>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={() => recalculateMutation.mutate()}
+            disabled={recalculateMutation.isPending}
+            aria-label="Recalculate usage for all products"
+          >
+            <RefreshCw
+              className={`w-4 h-4 mr-2 ${recalculateMutation.isPending ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            {recalculateMutation.isPending ? "Recalculating..." : "Recalculate"}
           </button>
           <button
             className="btn-ghost btn-sm"
