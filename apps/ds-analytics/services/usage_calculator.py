@@ -115,19 +115,27 @@ class UsageCalculator:
         """
         Calculate usage from transaction/order history
 
-        Uses completed transactions to calculate monthly consumption
+        Uses completed transactions to calculate monthly consumption.
+        Uses the most recent transaction date as reference point (not NOW())
+        to support historical data imports.
         """
         query = text("""
+            WITH max_date AS (
+                SELECT MAX(date_submitted) as ref_date
+                FROM transactions
+                WHERE product_id = :product_id
+                  AND LOWER(order_status) = 'completed'
+            )
             SELECT
-                DATE_TRUNC('month', date_submitted) as month,
-                SUM(quantity_units) as total_units,
-                SUM(quantity_packs) as total_packs,
+                DATE_TRUNC('month', t.date_submitted) as month,
+                SUM(t.quantity_units) as total_units,
+                SUM(t.quantity_packs) as total_packs,
                 COUNT(*) as transaction_count
-            FROM transactions
-            WHERE product_id = :product_id
-              AND date_submitted >= NOW() - INTERVAL '12 months'
-              AND LOWER(order_status) = 'completed'
-            GROUP BY DATE_TRUNC('month', date_submitted)
+            FROM transactions t, max_date m
+            WHERE t.product_id = :product_id
+              AND t.date_submitted >= m.ref_date - INTERVAL '12 months'
+              AND LOWER(t.order_status) = 'completed'
+            GROUP BY DATE_TRUNC('month', t.date_submitted)
             ORDER BY month ASC
         """)
 
@@ -189,18 +197,25 @@ class UsageCalculator:
         """
         Calculate usage from stock history snapshots
 
-        Compares inventory levels over time to infer consumption
+        Compares inventory levels over time to infer consumption.
+        Uses the most recent snapshot date as reference point (not NOW())
+        to support historical data imports.
         """
         query = text("""
+            WITH max_date AS (
+                SELECT MAX(recorded_at) as ref_date
+                FROM stock_history
+                WHERE product_id = :product_id
+            )
             SELECT
-                recorded_at,
-                packs_available,
-                total_units,
-                source
-            FROM stock_history
-            WHERE product_id = :product_id
-              AND recorded_at >= NOW() - INTERVAL '12 months'
-            ORDER BY recorded_at ASC
+                s.recorded_at,
+                s.packs_available,
+                s.total_units,
+                s.source
+            FROM stock_history s, max_date m
+            WHERE s.product_id = :product_id
+              AND s.recorded_at >= m.ref_date - INTERVAL '12 months'
+            ORDER BY s.recorded_at ASC
         """)
 
         result = self.db.execute(query, {'product_id': product_id})
@@ -400,18 +415,26 @@ class UsageCalculator:
         result: UsageResult
     ) -> UsageResult:
         """
-        Add trend and seasonality analysis to usage result
+        Add trend and seasonality analysis to usage result.
+        Uses the most recent transaction date as reference point (not NOW())
+        to support historical data imports.
         """
         # Get monthly history for pattern detection
         query = text("""
+            WITH max_date AS (
+                SELECT MAX(date_submitted) as ref_date
+                FROM transactions
+                WHERE product_id = :product_id
+                  AND LOWER(order_status) = 'completed'
+            )
             SELECT
-                DATE_TRUNC('month', date_submitted) as month,
-                SUM(quantity_units) as total_units
-            FROM transactions
-            WHERE product_id = :product_id
-              AND date_submitted >= NOW() - INTERVAL '12 months'
-              AND LOWER(order_status) = 'completed'
-            GROUP BY DATE_TRUNC('month', date_submitted)
+                DATE_TRUNC('month', t.date_submitted) as month,
+                SUM(t.quantity_units) as total_units
+            FROM transactions t, max_date m
+            WHERE t.product_id = :product_id
+              AND t.date_submitted >= m.ref_date - INTERVAL '12 months'
+              AND LOWER(t.order_status) = 'completed'
+            GROUP BY DATE_TRUNC('month', t.date_submitted)
             ORDER BY month ASC
         """)
 
