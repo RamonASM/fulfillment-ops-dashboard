@@ -46,6 +46,11 @@ def initialize_database(database_url: str) -> bool:
             f"but got: {database_url[:20]}..."
         )
 
+    # Strip Prisma-specific query parameters that psycopg2 doesn't understand
+    # e.g., ?schema=public
+    if '?' in database_url:
+        database_url = database_url.split('?')[0]
+
     # Create engine with connection pooling, timeouts, and isolation level
     # Using READ COMMITTED isolation level (PostgreSQL default) which:
     # - Prevents dirty reads (reading uncommitted data from other transactions)
