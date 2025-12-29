@@ -265,6 +265,12 @@ httpServer.listen(PORT, () => {
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
+
+  // Signal PM2 that the server is ready (required for wait_ready: true in ecosystem.config.js)
+  if (process.send) {
+    process.send("ready");
+    logger.info("Sent ready signal to PM2");
+  }
 });
 
 // =============================================================================
