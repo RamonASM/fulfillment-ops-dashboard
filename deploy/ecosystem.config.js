@@ -102,23 +102,21 @@ module.exports = {
     },
 
     // =========================================================================
-    // ML Analytics Service - Python FastAPI (Alternative to Docker)
+    // ML Analytics Service - Python FastAPI
     // =========================================================================
     {
       name: 'inventory-ml',
       script: 'uvicorn',
       args: 'main:app --host 0.0.0.0 --port 8000 --workers 2',
       cwd: '/var/www/inventory/apps/ml-analytics',
-      // Use absolute path to venv Python to avoid PATH issues
       interpreter: '/var/www/inventory/apps/ml-analytics/venv/bin/python3',
       instances: 1,
-      exec_mode: 'fork',  // Python apps use fork mode
+      exec_mode: 'fork',
 
       env_production: {
         PORT: 8000,
-        DATABASE_URL: 'postgresql://inventory:password@localhost:5432/inventory_db',
+        DATABASE_URL: 'postgresql://user:password@localhost:5432/inventory_db',
         LOG_LEVEL: 'info',
-        // Ensure Python can find the venv packages
         PATH: '/var/www/inventory/apps/ml-analytics/venv/bin:/usr/local/bin:/usr/bin:/bin'
       },
 
@@ -130,8 +128,40 @@ module.exports = {
       autorestart: true,
       watch: false,
 
-      // Optional: disable if using Docker for ML service
-      disabled: false
+      // Disabled until ML service is ready for production
+      disabled: true
+    },
+
+    // =========================================================================
+    // DS Analytics Service - Python FastAPI (Data Science / Prophet)
+    // =========================================================================
+    {
+      name: 'inventory-ds',
+      script: 'uvicorn',
+      args: 'main:app --host 0.0.0.0 --port 8001 --workers 2',
+      cwd: '/var/www/inventory/apps/ds-analytics',
+      interpreter: '/var/www/inventory/apps/ds-analytics/venv/bin/python3',
+      instances: 1,
+      exec_mode: 'fork',
+
+      env_production: {
+        PORT: 8001,
+        DATABASE_URL: 'postgresql://user:password@localhost:5432/inventory_db',
+        LOG_LEVEL: 'info',
+        PROPHET_ENABLE: 'true',
+        PATH: '/var/www/inventory/apps/ds-analytics/venv/bin:/usr/local/bin:/usr/bin:/bin'
+      },
+
+      error_file: '/var/www/inventory/logs/ds-error.log',
+      out_file: '/var/www/inventory/logs/ds-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+
+      max_memory_restart: '2G',
+      autorestart: true,
+      watch: false,
+
+      // Disabled until DS Analytics service is ready for production
+      disabled: true
     }
   ],
 

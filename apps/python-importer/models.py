@@ -111,6 +111,8 @@ class ImportBatch(Base):
     processedCount = Column("processed_count", Integer, default=0)
     errorCount = Column("error_count", Integer, default=0)
     errors = Column(JSON, default=list)
+    diagnosticLogs = Column("diagnostic_logs", JSON, nullable=True)
+    importMetadata = Column("metadata", JSON, nullable=True)  # Renamed to avoid SQLAlchemy conflict
     startedAt = Column("started_at", DateTime, nullable=True)
     completedAt = Column("completed_at", DateTime, nullable=True)
     createdAt = Column("created_at", DateTime, server_default=text('now()'))

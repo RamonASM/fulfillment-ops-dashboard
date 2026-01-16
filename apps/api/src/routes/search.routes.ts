@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../middleware/auth.js';
 import { globalSearch } from '../services/search.service.js';
+import { paginationSchema } from '../lib/validation-schemas.js';
 
 const router = Router();
 
@@ -10,13 +11,14 @@ router.use(authenticate);
 
 // =============================================================================
 // VALIDATION SCHEMAS
+// Phase 4.2: Using shared validation schemas
 // =============================================================================
 
 const searchQuerySchema = z.object({
   q: z.string().min(1, 'Search query is required'),
   types: z.string().optional(), // comma-separated: 'product,client,alert'
   clientId: z.string().uuid().optional(),
-  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  limit: paginationSchema.shape.limit,
 });
 
 // =============================================================================

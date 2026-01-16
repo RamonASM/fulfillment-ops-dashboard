@@ -41,6 +41,12 @@ test.describe("Portal Analytics Features", () => {
     if (await analyticsLink.isVisible({ timeout: 3000 }).catch(() => false)) {
       await analyticsLink.click();
 
+      // Wait for dashboard to load
+      await page.waitForSelector(
+        '[data-testid="analytics-dashboard"], .analytics-container',
+        { state: 'visible', timeout: 10000 }
+      );
+
       // Should see dashboard content
       await expect(
         page.locator(
@@ -58,11 +64,17 @@ test.describe("Portal Analytics Features", () => {
     if (await analyticsLink.isVisible({ timeout: 3000 }).catch(() => false)) {
       await analyticsLink.click();
 
+      // Wait for widget to load
+      await page.waitForSelector(
+        '[data-testid="stock-health-widget"], .stock-health, text=/stock health/i',
+        { state: 'visible', timeout: 10000 }
+      ).catch(() => null); // Catch in case selector doesn't match exactly
+
       // Should see stock health visualization
       await expect(
         page.locator(
           '[data-testid="stock-health-widget"], .stock-health, text=/stock health/i',
-        ),
+        ).first(),
       ).toBeVisible({ timeout: 5000 });
     }
   });

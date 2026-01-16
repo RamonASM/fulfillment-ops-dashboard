@@ -1,22 +1,21 @@
 /**
- * React Component Test Setup
- *
- * Configures Vitest and React Testing Library for component tests.
+ * Vitest Setup File
+ * Configures testing library and global test utilities
  */
 
-import '@testing-library/jest-dom/vitest';
+import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
-// Cleanup after each test
+// Clean up after each test
 afterEach(() => {
   cleanup();
 });
 
-// Mock window.matchMedia for responsive components
+// Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: vi.fn().mockImplementation((query: string) => ({
+  value: vi.fn().mockImplementation((query) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -28,31 +27,31 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
-// Mock ResizeObserver for chart components
-class ResizeObserverMock {
-  observe = vi.fn();
-  unobserve = vi.fn();
-  disconnect = vi.fn();
+// Mock ResizeObserver
+class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
 }
 
-window.ResizeObserver = ResizeObserverMock;
+window.ResizeObserver = ResizeObserver;
 
-// Mock IntersectionObserver for lazy loading
-class IntersectionObserverMock {
+// Mock IntersectionObserver
+class IntersectionObserver {
+  constructor() {}
+  observe() {}
+  unobserve() {}
+  disconnect() {}
   root = null;
   rootMargin = '';
-  thresholds: number[] = [];
-
-  observe = vi.fn();
-  unobserve = vi.fn();
-  disconnect = vi.fn();
-  takeRecords = vi.fn().mockReturnValue([]);
+  thresholds = [];
+  takeRecords() { return []; }
 }
 
-window.IntersectionObserver = IntersectionObserverMock as unknown as typeof IntersectionObserver;
+window.IntersectionObserver = IntersectionObserver as any;
+
+// Mock scrollTo
+window.scrollTo = vi.fn();
 
 // Mock fetch for API calls
 global.fetch = vi.fn();
-
-// Suppress console errors in tests (optional - remove if you want to see errors)
-// vi.spyOn(console, 'error').mockImplementation(() => {});

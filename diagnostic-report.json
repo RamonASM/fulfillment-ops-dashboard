@@ -1,0 +1,300 @@
+{
+  "timestamp": "2025-12-23T17:45:35.647Z",
+  "duration": 82,
+  "summary": {
+    "total": 37,
+    "passed": 21,
+    "failed": 2,
+    "warnings": 8
+  },
+  "results": [
+    {
+      "category": "Infrastructure",
+      "check": "Upload Directory",
+      "status": "PASS",
+      "message": "Upload directory exists at /Users/aerialshotsmedia/Projects/fulfillment-ops-dashboard/uploads"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Upload Writable",
+      "status": "PASS",
+      "message": "Upload directory is writable"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Python Importer",
+      "status": "PASS",
+      "message": "Python importer exists at /Users/aerialshotsmedia/Projects/fulfillment-ops-dashboard/apps/python-importer/main.py"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Python3 Available",
+      "status": "PASS",
+      "message": "Python 3.9.6"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Database Connection",
+      "status": "PASS",
+      "message": "Successfully connected to PostgreSQL"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: clients",
+      "status": "PASS",
+      "message": "Table clients exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: products",
+      "status": "PASS",
+      "message": "Table products exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: transactions",
+      "status": "PASS",
+      "message": "Table transactions exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: import_batches",
+      "status": "PASS",
+      "message": "Table import_batches exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: stock_history",
+      "status": "PASS",
+      "message": "Table stock_history exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: daily_snapshots",
+      "status": "PASS",
+      "message": "Table daily_snapshots exists and is accessible"
+    },
+    {
+      "category": "Infrastructure",
+      "check": "Table: alerts",
+      "status": "PASS",
+      "message": "Table alerts exists and is accessible"
+    },
+    {
+      "category": "Imports",
+      "check": "Recent Import Count",
+      "status": "WARN",
+      "message": "Found 0 recent imports"
+    },
+    {
+      "category": "Integrity",
+      "check": "ItemType Values",
+      "status": "PASS",
+      "message": "All itemType values are valid lowercase"
+    },
+    {
+      "category": "Integrity",
+      "check": "Required Fields",
+      "status": "PASS",
+      "message": "All products have required fields"
+    },
+    {
+      "category": "Integrity",
+      "check": "Orphan Products",
+      "status": "PASS",
+      "message": "0 orphan products found"
+    },
+    {
+      "category": "Integrity",
+      "check": "ItemType Distribution",
+      "status": "INFO",
+      "message": "Active product distribution by itemType",
+      "details": {
+        "distribution": []
+      }
+    },
+    {
+      "category": "Integrity",
+      "check": "Duplicate ProductIDs",
+      "status": "PASS",
+      "message": "No duplicate productIds within same client"
+    },
+    {
+      "category": "Transactions",
+      "check": "Total Count",
+      "status": "INFO",
+      "message": "0 total transactions"
+    },
+    {
+      "category": "Transactions",
+      "check": "Recent Transactions (12mo)",
+      "status": "FAIL",
+      "message": "0 transactions in last 12 months (0% of total)",
+      "details": {
+        "implication": "CRITICAL: Not enough recent data for usage calculations"
+      }
+    },
+    {
+      "category": "Transactions",
+      "check": "Status Distribution",
+      "status": "INFO",
+      "message": "Transaction status breakdown",
+      "details": {
+        "statuses": []
+      }
+    },
+    {
+      "category": "Transactions",
+      "check": "Orphan Transactions",
+      "status": "PASS",
+      "message": "All transactions link to valid products"
+    },
+    {
+      "category": "Usage",
+      "check": "Products with Usage Data",
+      "status": "PASS",
+      "message": "0/0 products have usage data (0%)",
+      "details": {
+        "withoutUsage": 0
+      }
+    },
+    {
+      "category": "Usage",
+      "check": "Usage Data Freshness",
+      "status": "PASS",
+      "message": "All usage data is fresh"
+    },
+    {
+      "category": "Usage",
+      "check": "MonthlyUsage Records",
+      "status": "INFO",
+      "message": "MonthlyUsage table not found (may not be required)"
+    },
+    {
+      "category": "Stock",
+      "check": "Status Distribution",
+      "status": "INFO",
+      "message": "Stock status breakdown",
+      "details": {
+        "distribution": []
+      }
+    },
+    {
+      "category": "Stock",
+      "check": "Unknown Status Count",
+      "status": "PASS",
+      "message": "All products have valid stock status"
+    },
+    {
+      "category": "Stock",
+      "check": "Weeks Remaining Data",
+      "status": "PASS",
+      "message": "0 products have weeks remaining, 0 do not"
+    },
+    {
+      "category": "Clients",
+      "check": "TECH (TechStart Inc)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Clients",
+      "check": "GMED (GlobalMed Supplies)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Clients",
+      "check": "ECOF (EcoFriendly Products)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Clients",
+      "check": "EVR (Everstory Partners)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Clients",
+      "check": "ACME (Acme Corporation)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Clients",
+      "check": "TEST-ML (Test Client ML Integration)",
+      "status": "WARN",
+      "message": "0 products, 0 with usage data",
+      "details": {
+        "breakdown": [],
+        "usagePercentage": "N/A"
+      }
+    },
+    {
+      "category": "Analytics",
+      "check": "Daily Snapshots",
+      "status": "FAIL",
+      "message": "0 total snapshots, 0 in last 7 days",
+      "details": {
+        "action": "Run post-import analytics to generate snapshots"
+      }
+    },
+    {
+      "category": "Analytics",
+      "check": "Alerts",
+      "status": "INFO",
+      "message": "1463 total alerts, 1463 unresolved"
+    },
+    {
+      "category": "Analytics",
+      "check": "Stock History",
+      "status": "WARN",
+      "message": "0 stock history records"
+    }
+  ],
+  "criticalIssues": [
+    {
+      "category": "Transactions",
+      "check": "Recent Transactions (12mo)",
+      "status": "FAIL",
+      "message": "0 transactions in last 12 months (0% of total)",
+      "details": {
+        "implication": "CRITICAL: Not enough recent data for usage calculations"
+      }
+    },
+    {
+      "category": "Analytics",
+      "check": "Daily Snapshots",
+      "status": "FAIL",
+      "message": "0 total snapshots, 0 in last 7 days",
+      "details": {
+        "action": "Run post-import analytics to generate snapshots"
+      }
+    }
+  ],
+  "recommendations": [
+    "CRITICAL: Transaction data is too old. Run: UPDATE transactions SET date_submitted = date_submitted + INTERVAL '1 year' to shift dates into 12-month window",
+    "Run post-import analytics to generate daily snapshots for dashboard widgets"
+  ]
+}

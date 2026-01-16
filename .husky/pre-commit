@@ -1,1 +1,5 @@
-npx lint-staged
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Phase 4.4: Run lint-staged on API files
+cd apps/api && npx lint-staged

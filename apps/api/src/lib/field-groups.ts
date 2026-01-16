@@ -62,6 +62,20 @@ export const SEMANTIC_CATEGORIES = {
     incompatibleWith: [],
     expectedDataTypes: ['text', 'alphanumeric'],
   },
+
+  // Usage metrics - consumption rates and calculation basis
+  USAGE_METRICS: {
+    fields: ['monthlyUsageUnits', 'calculationBasis', 'usageConfidence', 'usageLastCalculated'],
+    incompatibleWith: ['ADDRESS', 'CONTACT', 'PERSON_NAME', 'ORDER_METADATA'],
+    expectedDataTypes: ['numeric_positive', 'text'],
+  },
+
+  // Reserved inventory - allocated/committed stock
+  RESERVED_INVENTORY: {
+    fields: ['reservedQuantity', 'reservedUnits', 'availableQuantity'],
+    incompatibleWith: ['ADDRESS', 'CONTACT', 'PERSON_NAME', 'FINANCIAL'],
+    expectedDataTypes: ['numeric_positive', 'numeric_integer'],
+  },
 } as const;
 
 export type SemanticCategory = keyof typeof SEMANTIC_CATEGORIES;
@@ -455,6 +469,53 @@ export const BLOCKING_RULES: BlockingRule[] = [
     blockedFields: ['shipToPhone', 'shipToStreet1', 'shipToCity', 'quantityUnits', 'totalQuantity'],
     reason: 'Lead time is VENDOR info - should map to leadTimeDays',
   },
+
+  // =============================================================================
+  // USAGE METRICS & RESERVED INVENTORY BLOCKING RULES
+  // Fixes for Everstory CSV import - prevent semantic mismatches
+  // =============================================================================
+
+  // MONTHLY USAGE should NOT map to MOQ, notification point, or bin location
+  {
+    headerPatterns: ['monthly usage', 'monthly useage', 'usage units', 'burn rate', 'consumption rate', 'usage rate'],
+    blockedFields: ['minimumOrderQuantity', 'notificationPoint', 'binLocation', 'warehouse', 'packSize', 'leadTimeDays'],
+    reason: 'Monthly usage is USAGE_METRICS - should map to monthlyUsageUnits, not MOQ or location fields',
+  },
+
+  // RESERVED QUANTITY should NOT map to reorder point or notification point
+  {
+    headerPatterns: ['reserved quantity', 'reserved qty', 'reserved', 'allocated', 'committed', 'on hold'],
+    blockedFields: ['notificationPoint', 'reorderPointPacks', 'binLocation', 'currentStockPacks', 'quantityUnits'],
+    reason: 'Reserved quantity is RESERVED_INVENTORY - should map to reservedQuantity, not reorder points',
+  },
+
+  // BASED ON / CALCULATION BASIS should NOT map to location fields
+  {
+    headerPatterns: ['based on', 'calculation basis', 'calculated from', 'data period', 'usage period'],
+    blockedFields: ['binLocation', 'warehouse', 'shipToCity', 'shipToState', 'shipToLocation', 'productCategory'],
+    reason: 'Calculation basis is USAGE_METRICS metadata - should map to calculationBasis, not location fields',
+  },
+
+  // AVAILABLE QUANTITY should NOT map to reserved or on-order fields
+  {
+    headerPatterns: ['available quantity', 'available qty', 'qty available', 'free stock', 'unreserved'],
+    blockedFields: ['reservedQuantity', 'onOrderPacks', 'onOrderUnits', 'notificationPoint'],
+    reason: 'Available quantity is net inventory - should map to availableQuantity, not reserved/on-order',
+  },
+
+  // NOTIFICATION POINT should NOT map to usage or reserved fields
+  {
+    headerPatterns: ['notification point', 'current notification point', 'new notification point', 'alert threshold'],
+    blockedFields: ['monthlyUsageUnits', 'reservedQuantity', 'availableQuantity', 'calculationBasis'],
+    reason: 'Notification point is reorder threshold - should map to notificationPoint, not usage metrics',
+  },
+
+  // CAN EXCEED AVAILABLE should NOT map to quantity fields
+  {
+    headerPatterns: ['can exceed available', 'exceed available', 'allow backorder', 'backorder allowed'],
+    blockedFields: ['availableQuantity', 'currentStockPacks', 'quantityUnits', 'reservedQuantity'],
+    reason: 'Can exceed available is boolean flag - should map to allowBackorder or similar, not quantities',
+  },
 ];
 
 /**
@@ -676,6 +737,23 @@ export function suggestAlternatives(
     return ['customizedProductId', 'sku'];
   }
 
+  // Usage metrics and reserved inventory suggestions
+  if (normalizedHeader.includes('monthly usage') || normalizedHeader.includes('monthly useage') || normalizedHeader.includes('burn rate')) {
+    return ['monthlyUsageUnits'];
+  }
+  if (normalizedHeader.includes('reserved quantity') || normalizedHeader.includes('reserved qty') || normalizedHeader.includes('allocated')) {
+    return ['reservedQuantity', 'reservedUnits'];
+  }
+  if (normalizedHeader.includes('based on') || normalizedHeader.includes('calculation basis')) {
+    return ['calculationBasis'];
+  }
+  if (normalizedHeader.includes('available quantity') || normalizedHeader.includes('available qty') || normalizedHeader.includes('free stock')) {
+    return ['availableQuantity'];
+  }
+  if (normalizedHeader.includes('notification point') || normalizedHeader.includes('alert threshold')) {
+    return ['notificationPoint'];
+  }
+
   return [];
 }
 
@@ -757,6 +835,17 @@ export const FIELD_DISPLAY_NAMES: Record<string, string> = {
   // Order details
   lineNumber: 'Line Number',
   lineItemId: 'Line Item ID',
+
+  // Usage metrics (Everstory imports)
+  monthlyUsageUnits: 'Monthly Usage (Units)',
+  calculationBasis: 'Calculation Basis',
+  usageConfidence: 'Usage Confidence',
+  usageLastCalculated: 'Usage Last Calculated',
+
+  // Reserved inventory
+  reservedQuantity: 'Reserved Quantity (Packs)',
+  reservedUnits: 'Reserved Units',
+  availableQuantity: 'Available Quantity',
 };
 
 /**

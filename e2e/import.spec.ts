@@ -367,6 +367,252 @@ test.describe("Data Import", () => {
       }
     }
   });
+
+  // ===========================================================================
+  // FULL WORKFLOW TEST - Upload → Process → Verify Database → Check Analytics
+  // ===========================================================================
+
+  test("should complete full import workflow and verify backend state", async ({ authenticatedPage: page, request }) => {
+    // Step 1: Navigate to clients and select one for import
+    await page.goto("/clients");
+    await page.waitForLoadState("networkidle");
+
+    const clientLink = page.getByRole("link", { name: /view|details/i }).first();
+    const hasClients = await clientLink.count() > 0;
+    test.skip(!hasClients, "No clients available for testing");
+
+    await clientLink.click();
+    await page.waitForLoadState("networkidle");
+
+    // Extract client ID from URL
+    const url = page.url();
+    const clientIdMatch = url.match(/clients\/([a-f0-9-]+)/i);
+    test.skip(!clientIdMatch, "Could not extract client ID from URL");
+    const clientId = clientIdMatch![1];
+
+    // Step 2: Open import modal and upload file
+    const importButton = page.getByRole("button", { name: /import|upload/i }).first();
+    const hasImportButton = await importButton.count() > 0;
+    test.skip(!hasImportButton, "No import button visible");
+
+    await importButton.click();
+
+    // Create unique test CSV with timestamp to verify import
+    const timestamp = Date.now();
+    const uniqueTestCsv = `Product ID,Product Name,Item Type,Quantity Multiplier,Available Quantity,New Notification Point
+E2E-WORKFLOW-${timestamp}-001,Workflow Test Product A,Evergreen,1,100,10
+E2E-WORKFLOW-${timestamp}-002,Workflow Test Product B,Event,5,50,5
+E2E-WORKFLOW-${timestamp}-003,Workflow Test Product C,Evergreen,10,200,20
+`;
+
+    const tempDir = path.join(process.cwd(), "e2e", "temp");
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    const tempFile = path.join(tempDir, `workflow-test-${timestamp}.csv`);
+    fs.writeFileSync(tempFile, uniqueTestCsv);
+
+    try {
+      const fileInput = page.locator('input[type="file"]').first();
+      const hasFileInput = await fileInput.count() > 0;
+      test.skip(!hasFileInput, "No file input found");
+
+      await fileInput.setInputFiles(tempFile);
+
+      // Step 3: Wait for mapping interface and submit
+      await page.waitForTimeout(2000);
+
+      // Look for and click the import/submit button
+      const submitButton = page.getByRole("button", { name: /import|submit|start|process/i }).first();
+      const hasSubmit = await submitButton.count() > 0;
+      test.skip(!hasSubmit, "No submit button found");
+
+      await submitButton.click();
+
+      // Step 4: Wait for import to complete
+      // Look for success message or completion indicator
+      await expect(
+        page.getByText(/complete|success|imported|finished/i).first(),
+      ).toBeVisible({ timeout: 60000 });
+
+      // Step 5: Verify database state via API
+      // Get auth token from page context
+      const cookies = await page.context().cookies();
+      const authCookie = cookies.find(c => c.name === 'auth-token' || c.name === 'token');
+
+      // Get localStorage token if cookie not found
+      const token = authCookie?.value || await page.evaluate(() => {
+        return localStorage.getItem('token') || localStorage.getItem('auth-token');
+      });
+
+      if (token) {
+        // Verify products were created
+        const productsResponse = await request.get(`/api/products`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          params: {
+            clientId,
+            search: `E2E-WORKFLOW-${timestamp}`
+          }
+        });
+
+        if (productsResponse.ok()) {
+          const productsData = await productsResponse.json();
+          const products = productsData.data || productsData.products || [];
+
+          // Should have our 3 test products
+          expect(products.length).toBeGreaterThanOrEqual(3);
+
+          // Verify at least one of our test SKUs exists
+          const hasTestProduct = products.some((p: { sku?: string }) =>
+            p.sku?.includes(`E2E-WORKFLOW-${timestamp}`)
+          );
+          expect(hasTestProduct).toBe(true);
+        }
+
+        // Verify import batch was created
+        const importsResponse = await request.get(`/api/imports`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          params: { clientId, limit: 5 }
+        });
+
+        if (importsResponse.ok()) {
+          const importsData = await importsResponse.json();
+          const imports = importsData.data || importsData.imports || [];
+
+          // Should have at least one recent import
+          expect(imports.length).toBeGreaterThan(0);
+
+          // Most recent import should be completed
+          const recentImport = imports[0];
+          expect(recentImport.status).toMatch(/completed|success/i);
+        }
+
+        // Verify analytics/snapshots were created (if endpoint exists)
+        const analyticsResponse = await request.get(`/api/analytics/snapshots`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          params: { clientId, limit: 1 }
+        });
+
+        if (analyticsResponse.ok()) {
+          const analyticsData = await analyticsResponse.json();
+          // Analytics endpoint should return data (may be empty if feature not enabled)
+          expect(analyticsData).toBeDefined();
+        }
+      }
+
+      // Step 6: Verify UI shows the imported products
+      await page.goto(`/clients/${clientId}`);
+      await page.waitForLoadState("networkidle");
+
+      // Search for our test products
+      const searchInput = page.getByPlaceholder(/search/i).first();
+      if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await searchInput.fill(`E2E-WORKFLOW-${timestamp}`);
+        await page.waitForTimeout(1000);
+
+        // Should see at least one of our test products in the UI
+        await expect(
+          page.getByText(new RegExp(`E2E-WORKFLOW-${timestamp}`, 'i')).first(),
+        ).toBeVisible({ timeout: 5000 });
+      }
+
+    } finally {
+      // Cleanup temp file
+      if (fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+      }
+    }
+  });
+
+  // ===========================================================================
+  // IMPORT BATCH STATUS TRACKING TEST
+  // ===========================================================================
+
+  test("should track import batch progress and final status", async ({ authenticatedPage: page }) => {
+    await page.goto("/imports");
+    await page.waitForLoadState("networkidle");
+
+    // Find a recent import with completed status
+    const completedBadge = page.getByText(/completed|success/i).first();
+    const hasCompletedImport = await completedBadge.count() > 0;
+    test.skip(!hasCompletedImport, "No completed imports to verify");
+
+    // Click to view details
+    const importRow = page.locator('tbody tr').first();
+    await importRow.click();
+
+    // Should see detailed import stats
+    await expect(
+      page.getByText(/records|products|rows|items/i).first(),
+    ).toBeVisible({ timeout: 5000 });
+
+    // Should show import metadata
+    await expect(
+      page.getByText(/date|time|uploaded|processed/i).first(),
+    ).toBeVisible({ timeout: 5000 });
+  });
+
+  // ===========================================================================
+  // ANALYTICS VERIFICATION AFTER IMPORT TEST
+  // ===========================================================================
+
+  test("should generate analytics data after successful import", async ({ authenticatedPage: page }) => {
+    // Navigate to a client's analytics page
+    await page.goto("/clients");
+    await page.waitForLoadState("networkidle");
+
+    const clientLink = page.getByRole("link", { name: /view|details/i }).first();
+    const hasClients = await clientLink.count() > 0;
+    test.skip(!hasClients, "No clients available for testing");
+
+    await clientLink.click();
+    await page.waitForLoadState("networkidle");
+
+    // Look for analytics tab or section
+    const analyticsTab = page.getByRole("tab", { name: /analytics|insights|dashboard/i }).first();
+    const analyticsLink = page.getByRole("link", { name: /analytics|insights/i }).first();
+
+    if (await analyticsTab.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await analyticsTab.click();
+    } else if (await analyticsLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await analyticsLink.click();
+    } else {
+      // Navigate to client analytics page directly
+      const url = page.url();
+      const clientIdMatch = url.match(/clients\/([a-f0-9-]+)/i);
+      if (clientIdMatch) {
+        await page.goto(`/client-analytics/${clientIdMatch[1]}`);
+      }
+    }
+
+    await page.waitForLoadState("networkidle");
+
+    // Should see analytics widgets or charts
+    // Look for chart elements, metrics, or data visualizations
+    const hasAnalytics = await page.locator('[class*="chart"], [class*="widget"], [data-testid*="analytics"]').count() > 0;
+
+    if (hasAnalytics) {
+      // Verify some data is displayed (not empty state)
+      const emptyState = page.getByText(/no data|no analytics|empty/i);
+      const hasEmptyState = await emptyState.count() > 0;
+
+      if (!hasEmptyState) {
+        // Should have actual data points
+        await expect(
+          page.locator('[class*="chart"], [class*="metric"], [class*="value"]').first(),
+        ).toBeVisible({ timeout: 5000 });
+      }
+    }
+  });
 });
 
 // Cleanup temp directory after all tests

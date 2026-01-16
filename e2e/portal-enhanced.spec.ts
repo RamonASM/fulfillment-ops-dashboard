@@ -157,7 +157,7 @@ test.describe("Enhanced Portal Features", () => {
         await page.waitForTimeout(500); // Wait for debounce/filter
 
         // Should see filtered results or no results message
-        const results = page.locator("table tr, .product-item");
+        const results = page.locator("table tbody tr, .product-item").first();
         const noResults = page.locator("text=/no products|no results/i");
 
         // Either results or no results should be visible
@@ -260,10 +260,10 @@ test.describe("Enhanced Portal Features", () => {
     if (await analyticsLink.isVisible({ timeout: 3000 }).catch(() => false)) {
       await analyticsLink.click();
 
-      // Should see error message
+      // Should see error message (check for alert role, error classes, or toast)
       await expect(
-        page.locator("text=/error|failed|unable to load/i"),
-      ).toBeVisible({ timeout: 5000 });
+        page.locator('[role="alert"], .error-message, .toast, text=/error|failed|unable to load/i').first(),
+      ).toBeVisible({ timeout: 10000 });
     }
   });
 

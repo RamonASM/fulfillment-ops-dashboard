@@ -1,0 +1,174 @@
+# =============================================================================
+# Alerting Rules for Inventory Intelligence Platform
+# =============================================================================
+#
+# This file defines alerting thresholds for monitoring the application.
+# Compatible with:
+# - PM2 Plus (pm2.io)
+# - Prometheus/Alertmanager
+# - UptimeRobot
+# - Custom monitoring scripts
+#
+# =============================================================================
+
+# =============================================================================
+# PM2 Plus Configuration
+# =============================================================================
+# Add to PM2 ecosystem.config.js:
+#   pmx: {
+#     http: true,
+#     errors: true,
+#     custom_probes: true,
+#     network: true,
+#     ports: true,
+#     alert: {
+#       mode: 'smart',
+#       cpu: { value: 90, mode: 'threshold' },
+#       memory: { value: 1073741824, mode: 'threshold' },  // 1GB
+#       error: { value: 10, mode: 'threshold' },
+#     }
+#   }
+
+# =============================================================================
+# Alert Thresholds
+# =============================================================================
+
+thresholds:
+  # Application Health
+  api_availability:
+    description: "API should respond to health checks"
+    endpoint: "https://admin.yourtechassist.us/api/"
+    expected_status: 200
+    timeout_seconds: 10
+    check_interval_seconds: 60
+    severity: critical
+
+  # Response Time
+  response_time:
+    description: "API response time should be under threshold"
+    warning_ms: 500
+    critical_ms: 2000
+    percentile: 95
+    window_minutes: 5
+
+  # Error Rate
+  error_rate:
+    description: "5xx error rate should be below threshold"
+    warning_percent: 1
+    critical_percent: 5
+    window_minutes: 5
+
+  # Memory Usage
+  memory_usage:
+    description: "Memory usage per process"
+    warning_mb: 768
+    critical_mb: 1024
+    check_interval_seconds: 30
+
+  # CPU Usage
+  cpu_usage:
+    description: "CPU usage per process"
+    warning_percent: 70
+    critical_percent: 90
+    sustained_seconds: 60
+
+  # Rate Limiting
+  rate_limit_hits:
+    description: "High rate limit hits may indicate attack or misconfiguration"
+    warning_per_minute: 100
+    critical_per_minute: 500
+    window_minutes: 5
+
+  # Import Operations
+  import_duration:
+    description: "Import operations should complete within threshold"
+    warning_seconds: 120
+    critical_seconds: 300
+
+  import_failures:
+    description: "Import failures should be rare"
+    warning_count: 3
+    critical_count: 10
+    window_hours: 1
+
+  # Database
+  db_connection:
+    description: "Database should be reachable"
+    timeout_seconds: 5
+    check_interval_seconds: 30
+    severity: critical
+
+  db_slow_queries:
+    description: "Slow query threshold"
+    warning_ms: 1000
+    critical_ms: 5000
+    count_per_hour_warning: 10
+
+  # Disk Space
+  disk_usage:
+    description: "Disk usage on server"
+    warning_percent: 80
+    critical_percent: 90
+    check_interval_minutes: 15
+
+# =============================================================================
+# Notification Channels (to be configured per environment)
+# =============================================================================
+
+notification_channels:
+  slack:
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    enabled: false
+    severity_filter: ["critical", "warning"]
+
+  email:
+    recipients:
+      - "${ALERT_EMAIL}"
+    enabled: false
+    severity_filter: ["critical"]
+
+  pagerduty:
+    integration_key: "${PAGERDUTY_KEY}"
+    enabled: false
+    severity_filter: ["critical"]
+
+# =============================================================================
+# Health Check Script
+# =============================================================================
+# Use with cron: */5 * * * * /var/www/inventory/deploy/scripts/health-check.sh
+#
+# #!/bin/bash
+# API_URL="https://admin.yourtechassist.us/api/"
+# TIMEOUT=10
+#
+# response=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT "$API_URL")
+#
+# if [ "$response" != "200" ]; then
+#   echo "CRITICAL: API health check failed with status $response"
+#   # Send alert via webhook or email
+#   exit 2
+# fi
+#
+# echo "OK: API is healthy"
+# exit 0
+
+# =============================================================================
+# Monitoring Commands
+# =============================================================================
+#
+# Check PM2 process status:
+#   pm2 list
+#   pm2 monit
+#
+# View real-time logs:
+#   pm2 logs inventory-api --lines 100
+#
+# Check metrics endpoint:
+#   curl https://admin.yourtechassist.us/metrics
+#   curl https://admin.yourtechassist.us/metrics?format=prometheus
+#
+# Memory usage:
+#   pm2 show inventory-api | grep memory
+#
+# Restart counts:
+#   pm2 show inventory-api | grep restart
