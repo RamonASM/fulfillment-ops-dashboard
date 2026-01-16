@@ -144,7 +144,49 @@ const financialLimiter = createFinancialLimiter();
 const orderLimiter = createOrderLimiter();
 const portalLimiter = createPortalLimiter();
 
-// Apply default limiter globally
+// =============================================================================
+// RATE LIMIT EXCLUSIONS
+// =============================================================================
+// Skip rate limiting for health checks and status polling endpoints
+// These are frequently called and don't pose security risks
+// We mark these paths on the request object so rate limiters can check
+const rateLimitExcludePaths = [
+  '/health',
+  '/api/health',
+  '/api/csrf-token',
+];
+
+// Regex patterns for dynamic paths that should be excluded
+const rateLimitExcludePatterns = [
+  /^\/api\/imports\/[^/]+\/status$/, // Import status polling
+];
+
+// Helper to check if request should skip rate limiting
+const shouldSkipRateLimit = (req: express.Request): boolean => {
+  // Check exact path matches
+  if (rateLimitExcludePaths.includes(req.path)) {
+    return true;
+  }
+  // Check regex patterns
+  for (const pattern of rateLimitExcludePatterns) {
+    if (pattern.test(req.path)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+// Mark requests that should skip rate limiting
+app.use((req, _res, next) => {
+  if (shouldSkipRateLimit(req)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (req as any).skipRateLimit = true;
+  }
+  next();
+});
+
+// Apply default limiter globally (but excluded paths will still be counted - we handle this in route order)
+// Health routes are mounted BEFORE the default limiter is applied to /api/* routes
 app.use(defaultLimiter);
 
 // Body parsing - 50MB limit to match multer file upload limits

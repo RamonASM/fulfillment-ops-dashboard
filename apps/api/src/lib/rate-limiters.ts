@@ -19,9 +19,9 @@ import { logger } from "./logger.js";
 const RATE_LIMITS = {
   anonymous: { windowMs: 60000, max: 20 }, // 20 req/min for unauthenticated
   user: { windowMs: 60000, max: 100 }, // 100 req/min for authenticated users
-  account_manager: { windowMs: 60000, max: 200 }, // 200 req/min for account managers
-  operations_manager: { windowMs: 60000, max: 300 }, // 300 req/min for ops managers
-  admin: { windowMs: 60000, max: 500 }, // 500 req/min for admins
+  account_manager: { windowMs: 60000, max: 300 }, // 300 req/min for account managers (increased from 200)
+  operations_manager: { windowMs: 60000, max: 500 }, // 500 req/min for ops managers (increased from 300)
+  admin: { windowMs: 60000, max: 1000 }, // 1000 req/min for admins (increased from 500)
 } as const;
 
 /**
@@ -38,6 +38,15 @@ const getUserRole = (
     return 'user';
   }
   return 'anonymous';
+};
+
+/**
+ * Check if request should skip rate limiting
+ * This flag is set by middleware in index.ts for excluded paths
+ */
+const shouldSkipRateLimit = (req: Request): boolean => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (req as any).skipRateLimit === true;
 };
 
 /**
@@ -86,6 +95,8 @@ export const createDefaultLimiter = () =>
       const role = getUserRole(req);
       return RATE_LIMITS[role].max;
     },
+    // Skip rate limiting for excluded paths (health checks, status polling)
+    skip: shouldSkipRateLimit,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     store: createStore() as any, // Type assertion for version compatibility
     message: { error: "Too many requests, please try again later." },
@@ -99,14 +110,27 @@ export const createDefaultLimiter = () =>
 
 /**
  * Auth limiter - prevents brute force attacks
- * Strict limit: 10 attempts/15 minutes (all users)
+ * Role-based limits: stricter for anonymous/user, more permissive for admins
+ * This allows admins to test authentication workflows without lockout
  */
 export const createAuthLimiter = () =>
   rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Strict limit for all users
+    max: (req) => {
+      const role = getUserRole(req);
+      // Role-based auth limits to prevent lockout during testing/development
+      // Anonymous/user remain strict for security, admin roles get more headroom
+      const authLimits = {
+        anonymous: 10,
+        user: 10,
+        account_manager: 30,
+        operations_manager: 40,
+        admin: 50,
+      };
+      return authLimits[role] || 10;
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    store: createStore() as any, // Type assertion for version compatibility
+    store: createStore('rl:auth:') as any, // Type assertion for version compatibility
     message: {
       error:
         "Too many authentication attempts. Please try again in 15 minutes.",
@@ -122,25 +146,29 @@ export const createAuthLimiter = () =>
 
 /**
  * Upload limiter - expensive operations
- * Role-based: 20-100 uploads/hour depending on role
+ * Role-based: 20-200 uploads/hour depending on role
+ * Admin roles have increased limits to support batch imports and testing workflows
  */
 export const createUploadLimiter = () =>
   rateLimit({
     windowMs: 60 * 60 * 1000, // 1 hour
     max: (req) => {
       const role = getUserRole(req);
-      // Scale upload limits: 20 for anonymous, up to 100 for admins
+      // Scale upload limits: 20 for anonymous, up to 200 for admins
+      // Increased limits for admin roles to support sequential imports (inventory + orders)
       const baseLimits = {
         anonymous: 20,
         user: 40,
-        account_manager: 60,
-        operations_manager: 80,
-        admin: 100,
+        account_manager: 120, // Increased from 60
+        operations_manager: 160, // Increased from 80
+        admin: 200, // Increased from 100
       };
       return baseLimits[role] || 20;
     },
+    // Skip rate limiting for status polling (import status checks)
+    skip: shouldSkipRateLimit,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    store: createStore() as any, // Type assertion for version compatibility
+    store: createStore('rl:upload:') as any, // Type assertion for version compatibility
     message: { error: "Upload limit exceeded. Please try again later." },
     standardHeaders: true,
     legacyHeaders: false,
