@@ -1,8 +1,112 @@
-# Claude Code Instructions
+# Claude Code Instructions - TruLux Fulfillment Ops Dashboard
 
-## 🚨 READ THIS FIRST - Production Architecture
+This file provides guidance to Claude Code when working with this codebase.
 
-### Domain Structure (VERIFIED Dec 21, 2025)
+---
+
+## VERIFICATION RULES (READ FIRST)
+
+These rules override all other instructions. They exist because AI-generated code often looks correct but doesn't actually work.
+
+### Core Principles
+
+1. **Never implement a feature without a corresponding test**
+2. **Never modify existing code without running existing tests first**
+3. **Ask clarifying questions before assuming requirements**
+4. **Build vertically (one complete feature end-to-end) not horizontally**
+5. **Verify each layer works before building the next layer**
+6. **One feature at a time - never parallel work on multiple features**
+
+### Before Writing Any Code
+
+- Confirm you understand what's being asked
+- State what files you will create or modify
+- Identify what could go wrong
+- Wait for approval before proceeding
+
+### After Writing Any Code
+
+- Run the linter: `npm run lint`
+- Run tests: `npm run test`
+- If anything fails, explain why before trying to fix it
+- Report the actual output, not what you expect
+
+### Verification Requirements by Layer
+
+**Database changes:**
+- Run the migration: `npm run db:migrate`
+- Verify the table/column exists
+- Test a simple query against it
+- COMMIT before moving to next layer
+
+**API/Backend changes:**
+- Write a test that calls the endpoint
+- Run the test - it must PASS
+- Test manually with curl if possible
+- COMMIT before moving to UI
+
+**UI changes:**
+- Connect to real data (never mocks for production code)
+- Verify it works in the browser
+- Check browser console for errors
+- Check Network tab for failed requests
+- COMMIT only when verified
+
+### What NOT To Do
+
+- Do not create mock implementations - build real functionality
+- Do not skip error handling
+- Do not hardcode API keys or secrets
+- Do not assume environment variables exist without checking
+- Do not say "this should work" - verify it actually works
+- Do not move to the next feature until current feature is verified working
+- Do not generate code for multiple features at once
+- Do not keep trying the same failed approach repeatedly
+
+### When Stuck
+
+- Stop and explain what's blocking you
+- Propose 2-3 alternative approaches
+- Wait for direction before proceeding
+
+### Context Refresh
+
+If the conversation is getting long (30+ messages), re-read this file and summarize:
+- What we've built so far
+- What's currently working
+- What's currently broken
+- What's left to do
+
+---
+
+## QUALITY GATES CHECKLIST
+
+Use this checklist before marking ANY work as complete:
+
+### Pre-Build Gates
+- [ ] Requirements are clear and documented
+- [ ] Dependencies are identified
+- [ ] Test cases are defined
+
+### Build Gates (Each Layer)
+- [ ] Code is written
+- [ ] Linter passes: `npm run lint`
+- [ ] Tests pass: `npm run test`
+- [ ] Manual verification done
+- [ ] Committed to git
+
+### Post-Build Gates
+- [ ] Happy path works end-to-end
+- [ ] Error states are handled gracefully
+- [ ] No console errors in browser
+- [ ] No network errors in browser dev tools
+- [ ] Works after page refresh
+
+---
+
+## PRODUCTION ARCHITECTURE (VERIFIED Dec 24, 2025)
+
+### Domain Structure
 - **admin.yourtechassist.us** - Admin dashboard (React SPA)
   - For admin/account managers
   - Frontend files: `apps/web/dist/` → `/var/www/html/inventory/admin/`
@@ -14,7 +118,7 @@
   - Backend code: `apps/api/`
   - Both frontends call this API
 
-### Infrastructure (VERIFIED Dec 24, 2025)
+### Infrastructure
 - **Server**: DigitalOcean droplet at 138.197.70.205
 - **SSH Access**: `ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205`
 - **Code Location**: `/var/www/inventory`
@@ -24,10 +128,9 @@
   - Connection string in `.env`
 - **Redis**: RUNNING - Used for rate limiting and caching
   - `USE_REDIS_RATE_LIMIT=true` in production `.env`
-  - Rate limiters use Redis for distributed rate limiting across PM2 instances
-- **nginx**: `client_max_body_size 50M` for file uploads (added Dec 24, 2025)
+- **nginx**: `client_max_body_size 50M` for file uploads
 
-### Process Management (VERIFIED - Using PM2)
+### Process Management (Using PM2)
 - **PM2** is the active process manager in production
 - Main process: `inventory-api` (Node.js Express API)
 - Configuration: `deploy/ecosystem.config.js`
@@ -40,27 +143,27 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 ```
 
 ### Common Mistakes to AVOID
-1. ❌ **Assuming Docker is deployed** - Production uses PM2, not Docker (Docker configs exist but for local dev)
-2. ❌ **Assuming production code is up-to-date** - Local may be ahead. Always verify git status.
-3. ❌ **Testing against localhost** - Always test against production: api.yourtechassist.us
-4. ❌ **Making changes without checking production state first** - SSH and verify before proceeding
-5. ❌ **Forgetting to increase Node memory on production builds** - Use `NODE_OPTIONS='--max-old-space-size=2048'`
+1. **Assuming Docker is deployed** - Production uses PM2, not Docker
+2. **Assuming production code is up-to-date** - Local may be ahead. Always verify.
+3. **Testing against localhost** - Always test against production: api.yourtechassist.us
+4. **Making changes without checking production state first** - SSH and verify before proceeding
+5. **Forgetting to increase Node memory on production builds** - Use `NODE_OPTIONS='--max-old-space-size=2048'`
 
 ---
 
-## 📋 AUTOMATIC DOCUMENTATION UPDATES (PROACTIVE BEHAVIOR)
+## AUTOMATIC DOCUMENTATION UPDATES (PROACTIVE BEHAVIOR)
 
 **Claude: You MUST proactively update documentation. This is not optional.**
 
 ### Trigger Conditions - Update Docs When:
-1. ✅ **After deploying to production** → Add Deployment History entry
-2. ✅ **After fixing a bug that took >30 minutes** → Add to Debugging section
-3. ✅ **After infrastructure changes** → Update Production Architecture section
-4. ✅ **After schema changes** → Add to Changelog under Database Quirks
-5. ✅ **After security changes** → Update Security Status section
-6. ✅ **After completing a major feature** → Update Current Project Context
-7. ✅ **When conversation is getting long** → Update everything relevant NOW (before context compaction)
-8. ✅ **When you learn something not documented** → Add it immediately
+1. **After deploying to production** → Add Deployment History entry
+2. **After fixing a bug that took >30 minutes** → Add to Debugging section
+3. **After infrastructure changes** → Update Production Architecture section
+4. **After schema changes** → Add to Changelog under Database Quirks
+5. **After security changes** → Update Security Status section
+6. **After completing a major feature** → Update Current Project Context
+7. **When conversation is getting long** → Update everything relevant NOW
+8. **When you learn something not documented** → Add it immediately
 
 ### How to Update (Do This Automatically)
 
@@ -70,7 +173,7 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 - **What**: One-line summary
 - **Commits**: `abc1234`
 - **Changes**: List of changes
-- **Status**: ✅ DEPLOYED
+- **Status**: DEPLOYED
 ```
 
 **After Bug Fix:**
@@ -79,9 +182,6 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 list && cd /var/www/inv
 **Cause**: What caused it
 **Fix**: How to fix
 ```
-
-**After Discovering Quirk:**
-Add to the Changelog section under appropriate category.
 
 ### Self-Check Questions (Ask Yourself After Every Major Task)
 1. Did I learn something about production not in this file? → **Update now**
@@ -93,11 +193,89 @@ Add to the Changelog section under appropriate category.
 
 ---
 
-## Development Philosophy: Test-Driven Development (TDD)
+## TECH STACK
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 18, TypeScript, TailwindCSS, Vite |
+| Backend | Node.js, Express, TypeScript, Prisma ORM |
+| Database | PostgreSQL 15 |
+| State Management | Zustand + TanStack Query |
+| Testing | Vitest + Playwright |
+| Hosting | DigitalOcean (PM2 + nginx) |
+
+### Tech Stack Quick Reference
+```
+Admin:        apps/web/ → admin.yourtechassist.us (React SPA)
+Portal:       apps/portal/ → portal.yourtechassist.us (React SPA)
+API:          apps/api/ → api.yourtechassist.us (Express)
+Python:       apps/python-importer/, apps/ds-analytics/, apps/ml-analytics/
+Database:     PostgreSQL via Prisma ORM
+Deployment:   PM2 + nginx on DigitalOcean
+```
+
+---
+
+## KEY COMMANDS
+
+```bash
+# Development
+npm run dev:api          # Start API server
+npm run dev:web          # Start admin dashboard
+npm run dev:portal       # Start client portal
+npm run dev              # Run all in parallel
+
+# Build
+npm run build            # Build all packages
+npm run build:api        # Build API only
+
+# Lint
+npm run lint             # ESLint all files
+
+# Test
+npm run test             # Run all tests
+npm run test:api         # API tests only
+npm run test:e2e         # E2E Playwright tests
+
+# Database
+npm run db:generate      # Generate Prisma client
+npm run db:migrate       # Run migrations
+npm run db:seed          # Seed database
+
+# Type checking
+npm run typecheck        # TypeScript check
+```
+
+---
+
+## DIRECTORY STRUCTURE
+
+```
+fulfillment-ops-dashboard/
+├── .agents/              # Standalone agent prompts
+├── .claude/commands/     # Slash command agents
+├── apps/
+│   ├── api/              # Node.js Express API (deployed via PM2)
+│   ├── web/              # Admin dashboard (React)
+│   ├── portal/           # Client portal (React)
+│   ├── python-importer/  # CSV import script (subprocess)
+│   ├── ds-analytics/     # Data science service (FastAPI)
+│   └── ml-analytics/     # ML forecasting service (FastAPI)
+├── packages/
+│   ├── shared/           # Shared types, utilities
+│   └── ui/               # Shared UI components
+├── deploy/               # PM2 configs, nginx configs, deployment scripts
+├── e2e/                  # Playwright E2E tests
+└── CLAUDE.md             # THIS FILE - Keep it updated!
+```
+
+---
+
+## DEVELOPMENT PHILOSOPHY: TEST-DRIVEN DEVELOPMENT (TDD)
 
 **Effective Date**: December 21, 2025
 
-From this point forward, all new code MUST follow Test-Driven Development principles:
+All new code MUST follow Test-Driven Development principles:
 
 ### TDD Workflow
 1. **Write tests FIRST** - Before implementing any feature or fix
@@ -116,121 +294,146 @@ From this point forward, all new code MUST follow Test-Driven Development princi
 | Python Scripts | Unit tests | pytest |
 | E2E Workflows | End-to-end tests | Playwright |
 
-### Before Merging Any PR
-- [ ] All new code has corresponding tests
-- [ ] Tests run and pass locally
-- [ ] Test coverage does not decrease
-- [ ] No skipped tests without documented reason
-
 ### Test Location Conventions
 ```
-apps/api/src/__tests__/           # API unit/integration tests
+apps/api/src/__tests__/              # API unit/integration tests
 apps/api/src/__tests__/integration/  # API integration tests
-apps/web/src/__tests__/           # Admin frontend tests
-apps/portal/src/__tests__/        # Portal frontend tests
-apps/python-importer/tests/       # Python importer tests
-apps/ds-analytics/tests/          # DS Analytics tests
-apps/ml-analytics/tests/          # ML Analytics tests
-e2e/                              # End-to-end Playwright tests
-```
-
-### Why TDD?
-- **Fewer bugs** - Tests catch issues before deployment
-- **Better design** - Writing tests first forces better architecture
-- **Confidence** - Refactor without fear of breaking things
-- **Documentation** - Tests serve as living documentation
-
----
-
-## Current Project Context
-
-### Active Goal: Everstory Onboarding
-- **Objective**: Import Everstory's inventory CSV and display analytics on dashboard
-- **Status**: ✅ COMPLETE - Full end-to-end testing passed (Dec 24, 2025)
-- **Last Major Work**: Fixed critical import bugs, full system validation (Dec 24, 2025)
-- **Test Results**:
-  - Inventory import: 111 rows, 0 errors ✅
-  - Orders import: 10,563 rows, 0 errors, ~9.4s ✅
-  - System status: 329 products, 24,062 transactions, 17 imports
-
-### Recently Completed (Dec 24, 2025)
-- **Codex Risk Audit Remediation** - Scrutinized codebase against deployment risk audit, fixed 4 remaining gaps
-- **Import Pipeline Fixes** - Fixed Transaction join, savepoint management, nginx file size
-- **Full System Validation** - Both inventory and orders imports tested and verified
-- Enterprise Code Quality Remediation (Dec 22) - 10 critical/high priority fixes
-- Zero Defects Remediation (Dec 23) - Comprehensive error handling fixes
-- Import Lock Resilience (Dec 23) - Auto-recovery and admin controls
-
-### Security Status (Dec 21, 2025)
-- ✅ SQL injection fixed in Python importer (using SQLAlchemy `pg_insert`)
-- ✅ Redis-backed rate limiting enabled with role-based tiers
-- ✅ Sensitive endpoints protected (admin, financial, orders, portal)
-- ✅ Portal auth uses Zod validation
-- ✅ Production errors sanitized (no column name leakage)
-- ✅ File paths stored as relative (no absolute path disclosure)
-- ✅ Python importer validates file paths (blocks traversal attacks)
-
-### Tech Stack
-- **Frontend**: React 18, TypeScript, TailwindCSS, Vite
-  - Admin: `apps/web/` → admin.yourtechassist.us
-  - Portal: `apps/portal/` → portal.yourtechassist.us
-- **Backend**: Node.js, Express, TypeScript, Prisma ORM
-  - API: `apps/api/` → serves both frontends at `/api/`
-- **Database**: PostgreSQL 15
-- **Python Services**:
-  - CSV Importer: `apps/python-importer/` (runs as subprocess from Node.js)
-  - DS Analytics: `apps/ds-analytics/` (FastAPI, not yet deployed)
-  - ML Analytics: `apps/ml-analytics/` (FastAPI, not yet deployed)
-
----
-
-## Specialized Agents
-
-This project has 9 specialized agents available as slash commands:
-
-| Agent | Use For |
-|-------|---------|
-| `/db-expert` | Schema changes, Prisma migrations, query optimization |
-| `/api-expert` | New endpoints, auth, middleware, rate limiting |
-| `/python-expert` | CSV imports, DS analytics, data processing |
-| `/ml-expert` | Prophet forecasting, stockout prediction |
-| `/admin-ui-expert` | Dashboard widgets, Recharts, admin features |
-| `/portal-ui-expert` | Client portal, mobile-first, simplified UX |
-| `/testing-expert` | Vitest, Playwright, coverage, CI testing |
-| `/devops-expert` | Docker, PM2, nginx, deployment, CI/CD |
-| `/docs-keeper` | **USE BEFORE CONTEXT COMPACTION** - Updates CLAUDE.md, changelogs, READMEs |
-
-Standalone prompts also available in `.agents/` directory for use with other AI tools.
-
-See `.agents/README.md` for detailed usage and agent interaction patterns.
-
----
-
-## Project Structure
-
-```
-fulfillment-ops-dashboard/
-├── .agents/              # Standalone agent prompts (NEW)
-├── .claude/commands/     # Slash command agents (NEW)
-├── apps/
-│   ├── api/              # Node.js Express API (deployed via PM2)
-│   ├── web/              # Admin dashboard (React, deployed to admin.yourtechassist.us)
-│   ├── portal/           # Client portal (React, deployed to portal.yourtechassist.us)
-│   ├── python-importer/  # CSV import script (subprocess)
-│   ├── ds-analytics/     # Data science service (FastAPI, not deployed)
-│   └── ml-analytics/     # ML forecasting service (FastAPI, not deployed)
-├── packages/
-│   ├── shared/           # Shared types, utilities
-│   └── ui/               # Shared UI components
-├── deploy/               # PM2 configs, nginx configs, deployment scripts
-└── CLAUDE.md            # THIS FILE - Keep it updated!
+apps/web/src/__tests__/              # Admin frontend tests
+apps/portal/src/__tests__/           # Portal frontend tests
+apps/python-importer/tests/          # Python importer tests
+apps/ds-analytics/tests/             # DS Analytics tests
+apps/ml-analytics/tests/             # ML Analytics tests
+e2e/                                 # End-to-end Playwright tests
 ```
 
 ---
 
-## Deployment Process
+## COMMIT MESSAGE STANDARDS
 
-### Quick Deploy (Production is Using PM2)
+Use **Conventional Commits** format for all commits:
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+```
+
+### Commit Types
+
+| Type | When to Use | Example |
+|------|-------------|---------|
+| `feat` | New feature | `feat(import): add CSV column auto-detection` |
+| `fix` | Bug fix | `fix(api): handle null quantity in orders import` |
+| `docs` | Documentation only | `docs: update CLAUDE.md with deployment history` |
+| `style` | Formatting, no code change | `style: fix eslint warnings in dashboard` |
+| `refactor` | Code change, no new feature/fix | `refactor(api): extract validation to middleware` |
+| `test` | Adding/updating tests | `test(import): add edge case coverage` |
+| `chore` | Build, deps, config | `chore: update dependencies` |
+| `perf` | Performance improvement | `perf(queries): add index for product lookups` |
+
+### Scope Prefixes
+
+| Scope | Directory/Area |
+|-------|----------------|
+| `api` | `apps/api/` |
+| `web` | `apps/web/` |
+| `portal` | `apps/portal/` |
+| `import` | Import pipeline |
+| `db` | Database/migrations |
+| `ml` | ML analytics |
+| `python` | Python services |
+
+### Commit Message Rules
+
+1. **Subject line**: Max 72 characters, imperative mood ("add" not "added")
+2. **Body**: Wrap at 80 characters, explain "what" and "why" (not "how")
+3. **Footer**: Always include `Co-Authored-By` for Claude-assisted commits
+4. **Breaking changes**: Add `BREAKING CHANGE:` in footer
+
+### Examples
+
+```bash
+# Feature commit
+git commit -m "$(cat <<'EOF'
+feat(import): add automatic column mapping detection
+
+- Parse CSV headers and match to known column patterns
+- Support fuzzy matching for common variations
+- Add user confirmation step for ambiguous mappings
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+EOF
+)"
+
+# Bug fix commit
+git commit -m "$(cat <<'EOF'
+fix(api): handle missing quantity_packs in orders CSV
+
+When CSV lacks a Quantity column, default to 0 instead of
+throwing null constraint violation.
+
+Closes #45
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## PULL REQUEST GUIDELINES
+
+### PR Title Format
+
+Use the same format as commit messages:
+```
+<type>(<scope>): <description>
+```
+
+### PR Description Template
+
+```markdown
+## Summary
+<!-- 1-3 bullet points describing what this PR does -->
+
+## Changes
+<!-- List of files/areas changed -->
+
+## Test Plan
+<!-- How to verify this works -->
+- [ ] Unit tests pass (`npm run test`)
+- [ ] Build passes (`npm run build`)
+- [ ] Manual testing completed
+- [ ] Edge cases considered
+
+## Screenshots
+<!-- If UI changes, include before/after -->
+
+## Related Issues
+<!-- Link to issues this addresses -->
+Closes #123
+```
+
+### PR Checklist
+
+Before requesting review:
+- [ ] Branch is up to date with `main`
+- [ ] All commits follow conventional commit format
+- [ ] `npm run build` passes
+- [ ] `npm run lint` passes
+- [ ] `npm run test` passes
+- [ ] No console.log statements left in code
+- [ ] No hardcoded secrets or API keys
+- [ ] CLAUDE.md updated if needed
+
+---
+
+## DEPLOYMENT PROCESS
+
+### Quick Deploy (Production uses PM2)
 ```bash
 # 1. Commit changes locally
 git add .
@@ -250,363 +453,306 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
 
 # 3. Verify deployment
 ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 logs inventory-api --lines 50"
-curl -s https://admin.yourtechassist.us/api/ | jq
+curl -s https://api.yourtechassist.us/api/health | jq
 ```
 
 ### After Deployment Checklist
 - [ ] Verify PM2 process is online: `pm2 list`
 - [ ] Check logs for errors: `pm2 logs inventory-api`
-- [ ] Test API health: `curl https://admin.yourtechassist.us/api/`
+- [ ] Test API health: `curl https://api.yourtechassist.us/api/health`
 - [ ] Test admin dashboard loads: Visit admin.yourtechassist.us
 - [ ] Test portal loads: Visit portal.yourtechassist.us
 - [ ] **Update this file** with what was deployed and when
 
 ---
 
-## Deployment History
+## EMERGENCY PROCEDURES
 
-### 2025-12-24 @ 14:00 PST: Codex Risk Audit Remediation (DEPLOYED)
-- **What**: Addressed remaining gaps from import_deployment_risk_audit_codex.md scrutiny
-- **Commits**:
-  - `68d230d` - docs: Update CLAUDE.md with Dec 24 import pipeline fixes
-  - `450f077` - fix: Address remaining deployment risk audit gaps
-- **Changes**:
-  - **UPLOAD_DIR env var** - `import.routes.ts` now uses `process.env.UPLOAD_DIR` with fallback
-  - **PYTHON_PATH env var** - Added to Python path detection for custom installations
-  - **ML URL startup warning** - Warns at startup if DS_ANALYTICS_URL/ML_SERVICE_URL not configured
-  - **item_type CHECK constraint** - Already existed in `migrations/20251223_add_itemtype_constraint`
-- **Audit Results** (already fixed, no changes needed):
-  - Import concurrency: PostgreSQL advisory locks ✅
-  - importType="both": Properly rejected, user selection required ✅
-  - Orders quantity: Multiple fallbacks ensure non-null ✅
-  - Error visibility: Full UI display in ImportModal ✅
-  - ML offline: Graceful degradation ✅
-  - item_type normalization: Python validates + coerces ✅
-- **Production Health**:
-  - Database: up (329 products, 6 clients)
-  - Redis: up
-  - DS Analytics: up
-  - ML Analytics: up ✅ (deployed Dec 24, 2025)
-- **Status**: ✅ DEPLOYED to production at 22:00 UTC (14:00 PST Dec 24)
+### Hotfix Workflow
+
+When a critical bug is found in production:
+
+```bash
+# 1. Create hotfix branch from main
+git checkout main
+git pull origin main
+git checkout -b hotfix/critical-bug-description
+
+# 2. Make minimal fix (smallest possible change)
+# ... edit files ...
+
+# 3. Test locally
+npm run build
+npm run test
+
+# 4. Commit with hotfix type
+git commit -m "fix(critical): description of fix
+
+Hotfix for production issue.
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+
+# 5. Push and deploy immediately
+git push origin hotfix/critical-bug-description
+git checkout main
+git merge hotfix/critical-bug-description
+git push origin main
+
+# 6. Deploy to production (see Deployment Process above)
+```
+
+### Production Rollback
+
+If a deployment breaks production:
+
+```bash
+# Option 1: Revert via Git
+git checkout main
+git revert HEAD  # Reverts last commit
+git push origin main
+# Then redeploy
+
+# Option 2: Rollback to previous commit on server
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
+  cd /var/www/inventory &&
+  git log --oneline -5 &&          # Find good commit
+  git checkout <good-commit-hash> &&
+  npm run build &&
+  pm2 restart inventory-api
+"
+```
+
+### Database Emergency
+
+If a migration breaks the database:
+
+```bash
+# 1. DO NOT run more migrations
+# 2. Document the error message
+
+# Option 1: Manual fix via psql
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
+  psql -U user -d inventory_db -c 'SELECT * FROM \"_prisma_migrations\" ORDER BY finished_at DESC LIMIT 5;'
+"
+
+# Option 2: Restore from backup (if available)
+# Contact DigitalOcean support or check automated backups
+```
+
+### Incident Response Checklist
+
+When production is broken:
+
+1. **Acknowledge** (within 5 minutes)
+   - [ ] Identify the issue
+   - [ ] Notify stakeholders if user-facing
+
+2. **Assess** (within 15 minutes)
+   - [ ] Determine severity (P0/P1/P2)
+   - [ ] Identify root cause or workaround
+   - [ ] Decide: rollback vs hotfix
+
+3. **Resolve** (ASAP)
+   - [ ] Apply fix or rollback
+   - [ ] Verify production is working
+   - [ ] Monitor for 30 minutes
+
+4. **Document** (within 24 hours)
+   - [ ] Write incident summary in Deployment History
+   - [ ] Add to Debugging section if applicable
+   - [ ] Update CLAUDE.md if process gap found
+
+### Severity Levels
+
+| Level | Definition | Response |
+|-------|------------|----------|
+| **P0** | Site down, all users affected | Immediate (drop everything) |
+| **P1** | Major feature broken, many users affected | Within 1 hour |
+| **P2** | Minor feature broken, workaround exists | Within 24 hours |
+| **P3** | Cosmetic issue, no functional impact | Next sprint |
 
 ---
 
-### 2025-12-24 @ 14:20 PST: ML Analytics Service Deployed (DEPLOYED)
-- **What**: Set up and started ML Analytics service on production
-- **Commits**: `150c0fa` - fix: Deploy ML Analytics service to production
-- **Changes**:
-  - Created venv at `/var/www/inventory/apps/ml-analytics/venv/`
-  - Fixed `statsforecast==1.8.0` → `statsforecast>=1.7.0` (version didn't exist)
-  - Created systemd service at `/etc/systemd/system/ml-analytics.service`
-  - ML Analytics running on port 8001
-  - Fixed `ML_ANALYTICS_URL` in .env from Docker URL to `http://localhost:8001`
-- **Verification (Dec 26, 2025)**:
-  - Demand forecast endpoint: ✅ Working (AutoETS algorithm, seasonality detection)
-  - Stockout prediction endpoint: ✅ Working
-  - Health endpoint: ✅ Healthy, DB connected
-- **Production Health**:
-  - All Python services: UP ✅
-  - DS Analytics: up (port 8000)
-  - ML Analytics: up (port 8001)
-- **Status**: ✅ DEPLOYED and VERIFIED
+## SPECIALIZED AGENTS
+
+This project has 9 specialized agents available as slash commands:
+
+| Agent | Use For |
+|-------|---------|
+| `/db-expert` | Schema changes, Prisma migrations, query optimization |
+| `/api-expert` | New endpoints, auth, middleware, rate limiting |
+| `/python-expert` | CSV imports, DS analytics, data processing |
+| `/ml-expert` | Prophet forecasting, stockout prediction |
+| `/admin-ui-expert` | Dashboard widgets, Recharts, admin features |
+| `/portal-ui-expert` | Client portal, mobile-first, simplified UX |
+| `/testing-expert` | Vitest, Playwright, coverage, CI testing |
+| `/devops-expert` | Docker, PM2, nginx, deployment, CI/CD |
+| `/docs-keeper` | **USE BEFORE CONTEXT COMPACTION** - Updates CLAUDE.md |
+
+### Agent Workflow
+```
+1. Plan      → Identify which agent is relevant
+2. Implement → Use agent for domain expertise
+3. Validate  → Run build/test verification
+4. Document  → Update CLAUDE.md with learnings
+```
+
+### Auto-Trigger Checkpoints
+
+**Claude should proactively suggest agents at these checkpoints:**
+
+| Checkpoint | Agent | Prompt |
+|------------|-------|--------|
+| After editing 3+ files | `testing-expert` | "Should I run tests?" |
+| Before implementing feature | (consider agents) | "Which domain is this?" |
+| After completing feature | `docs-keeper` | "Should I update docs?" |
+| New API route created | `testing-expert` | "Should I write tests for this endpoint?" |
+| Database schema change | `db-expert` | "Need migration assistance?" |
 
 ---
 
-### 2025-12-24 @ 14:00 PST: Import Pipeline Critical Fixes (DEPLOYED)
-- **What**: Fixed critical bugs blocking orders import - Transaction join, savepoint management, nginx config
-- **Commits**:
-  - `3f74cf3` - Fix savepoint handling in bulk_operations.py
-  - `2b26c19` - Fix Transaction row count using Product join
-- **Root Causes & Fixes**:
-  1. **Transaction row count verification failed** - Transaction model has no `clientId`, must join with Product table
-     - `apps/python-importer/main.py` lines ~1220, ~1480
-     - Changed: `db.query(models.Transaction).filter(models.Transaction.client_id == ...)`
-     - To: `db.query(models.Transaction).join(models.Product).filter(models.Product.client_id == ...)`
-  2. **Savepoint errors ("savepoint does not exist")** - Raw psycopg2 `commit()`/`rollback()` in COPY functions was releasing SQLAlchemy savepoints
-     - `apps/python-importer/bulk_operations.py` - removed explicit commit/rollback from `bulk_insert_products_copy()` and `bulk_insert_transactions_copy()`
-     - Let SQLAlchemy's `begin_nested()` savepoint handle transaction management
-  3. **nginx 413 Request Entity Too Large** - api.yourtechassist.us missing file size limit
-     - `/etc/nginx/sites-available/yourtechassist` - added `client_max_body_size 50M;`
+## DEBUGGING GUIDE
+
+### Common TypeScript Errors
+
+#### `Type 'X' is not assignable to type 'Y'`
+```typescript
+// Problem: Type mismatch
+const data: User = await fetchData()  // fetchData returns unknown
+
+// Solution 1: Type assertion (if you're sure)
+const data = await fetchData() as User
+
+// Solution 2: Type guard (safer)
+if (isUser(data)) {
+  // data is now typed as User
+}
+```
+
+#### `Property 'X' does not exist on type 'Y'`
+```typescript
+// Problem: Accessing property that might not exist
+const name = user.profile.name  // profile might be undefined
+
+// Solution: Optional chaining
+const name = user?.profile?.name
+```
+
+### Common Test Failures
+
+#### `ReferenceError: fetch is not defined`
+```typescript
+// Problem: Node.js test environment doesn't have fetch
+// Solution: Mock in test setup
+import { vi } from 'vitest'
+global.fetch = vi.fn()
+```
+
+### Database Debugging
+
+#### Connection Errors
+```bash
+# Check database is running
+ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
+  systemctl status postgresql
+  psql -U user -d inventory_db -c 'SELECT 1;'
+"
+```
+
+#### Query Returns Empty
+```typescript
+// Debug steps
+const result = await prisma.product.findMany({
+  where: { clientId },
+  take: 10
+})
+console.log('Query result:', { count: result.length, clientId })
+
+// If empty: Check clientId exists, check RLS if applicable
+```
+
+### Network Debugging
+
+```typescript
+// In browser DevTools → Network tab:
+// 1. Filter by "Fetch/XHR"
+// 2. Click request → check "Response" tab
+// 3. Look for error messages in response body
+
+// In API route, log request details:
+console.log('Request:', {
+  method: req.method,
+  path: req.path,
+  body: req.body,
+  headers: req.headers
+})
+```
+
+---
+
+## CURRENT PROJECT CONTEXT
+
+### Active Goal: Everstory Onboarding
+- **Objective**: Import Everstory's inventory CSV and display analytics on dashboard
+- **Status**: COMPLETE - Full end-to-end testing passed (Dec 24, 2025)
 - **Test Results**:
-  - Inventory import: 111 rows, 0 errors ✅
-  - Orders import: 10,563 rows, 0 errors, ~9.4 seconds ✅
-- **Production Status**:
-  - API: online (PM2)
-  - Database: 329 products, 24,062 transactions, 17 imports
-  - Everstory client: 308 products, 23,126 transactions
-- **Status**: ✅ DEPLOYED to production
+  - Inventory import: 111 rows, 0 errors
+  - Orders import: 10,563 rows, 0 errors, ~9.4s
+  - System status: 329 products, 24,062 transactions, 17 imports
+
+### Recently Completed (Dec 24, 2025)
+- **Codex Risk Audit Remediation** - Scrutinized codebase against deployment risk audit
+- **Import Pipeline Fixes** - Fixed Transaction join, savepoint management, nginx file size
+- **Full System Validation** - Both inventory and orders imports tested and verified
+- Enterprise Code Quality Remediation (Dec 22)
+- Zero Defects Remediation (Dec 23)
+- Import Lock Resilience (Dec 23)
+
+### Security Status (Dec 21, 2025)
+- SQL injection fixed in Python importer (using SQLAlchemy `pg_insert`)
+- Redis-backed rate limiting enabled with role-based tiers
+- Sensitive endpoints protected (admin, financial, orders, portal)
+- Portal auth uses Zod validation
+- Production errors sanitized (no column name leakage)
+- File paths stored as relative (no absolute path disclosure)
+- Python importer validates file paths (blocks traversal attacks)
 
 ---
 
-### 2025-12-23 @ 20:20 PST: Import Lock Resilience - Auto-Recovery & Admin Controls (DEPLOYED)
-- **What**: Prevents "Another import is currently processing" errors from blocking users indefinitely
-- **Commit**: `6fe293b` - feat: Add import lock resilience - auto-recovery and admin controls
-- **Changes**:
-  - **Scheduled Cleanup Job** (every 5 min) - Automatically finds and marks stuck imports as failed
-    - `apps/api/src/jobs/scheduler.ts` - added `cleanup-stale-imports` job
-  - **Reduced Stale Timeout** - 30 minutes → 10 minutes for better UX
-    - `apps/api/src/routes/import.routes.ts` - `STALE_LOCK_TIMEOUT_MS` reduced
-  - **Graceful Shutdown Handler** - Releases locks when PM2 restarts
-    - `apps/api/src/index.ts` - added SIGTERM/SIGINT handlers
-  - **Admin Force-Unlock Endpoint** - Manual override for stuck locks
-    - `POST /api/imports/admin/force-unlock/:clientId` - clears all locks for a client
-    - `GET /api/imports/admin/lock-status/:clientId` - diagnostic endpoint
-  - **Frontend Recovery UI** - Better UX when import blocked
-    - `apps/web/src/components/ImportModal.tsx` - shows recovery options, force-unlock button for admins
-- **How It Works Now**:
-  1. Normal: Import runs, completes, lock released
-  2. Crash/Timeout: Within 10 min → user waits or admin force-unlocks; After 10 min → auto-recovery
-  3. PM2 Restart: Graceful shutdown marks imports as failed, releases locks
-- **Status**: ✅ DEPLOYED to production at 04:20 UTC (20:20 PST Dec 23)
-- **Verification**: API healthy, PM2 online, scheduler job registered
+## DEBUGGING COMMON ISSUES
+
+### Issue: "Import completed but dashboard shows 'No data available'"
+**Cause**: Post-import analytics didn't run
+**Fix**: Upgrade to latest code with analytics fixes, reimport data
+
+### Issue: "API server not responding"
+**Cause**: PM2 process crashed or not started
+**Fix**: `ssh root@138.197.70.205 "pm2 restart inventory-api"`
+
+### Issue: "502 Bad Gateway" on api.yourtechassist.us
+**Cause**: nginx config pointing to wrong port
+**Fix**: Verify nginx is proxying to port 3001
+
+### Issue: "Another import is currently processing for this client"
+**Cause**: Previous import stuck in `processing` status
+**Auto-Recovery**: System cleans up stuck imports every 5 minutes (after 10 min timeout)
+**Manual Fix**: `POST /api/imports/admin/force-unlock/:clientId`
+
+### Issue: "ImportError: attempted relative import with no known parent package"
+**Cause**: Python file uses relative imports but is run as script
+**Fix**: Change `from . import models` to `import models`
+
+### Issue: "savepoint does not exist" or "no transaction is active"
+**Cause**: Raw psycopg2 commit/rollback inside SQLAlchemy savepoints
+**Fix**: Remove explicit commit/rollback, let SQLAlchemy manage savepoints
+
+### Issue: "413 Request Entity Too Large" on file upload
+**Cause**: nginx missing `client_max_body_size`
+**Fix**: Add `client_max_body_size 50M;` to nginx config
 
 ---
 
-### 2025-12-23 @ 10:45 PST: Post-Deployment Defect Sweep (DEPLOYED)
-- **What**: Focused fixes after Zero Defects deployment - 3 issues identified, all resolved
-- **Commit**: `7eb3090` - fix: Post-deployment defect sweep - focused fixes
-- **Fixes Applied**:
-  - Added PostgreSQL CHECK constraint for itemType (evergreen, event, completed only)
-  - Fixed health.service.ts port defaults (8001/8002 → 8000 to match Python services)
-  - Added DS_ANALYTICS_URL and ML_ANALYTICS_URL to dev .env.example
-- **Investigation Results** (no fixes needed):
-  - ML service offline: UI handles gracefully with setup wizard
-  - Import type detection: Reliable auto-detection + user override
-  - Orphan visibility: Hidden by default (intentional design)
-  - Import lock robustness: 3-level fallback, 30-min cleanup works perfectly
-- **Database**: Verified 637 products with valid itemType values (578 evergreen, 59 event)
-- **Status**: ✅ DEPLOYED to production at 18:45 UTC (10:45 PST Dec 23)
-
----
-
-### 2025-12-23 @ 10:21 PST: Zero Defects Remediation (DEPLOYED)
-- **What**: Comprehensive error handling and silent failure fixes for iOS-level reliability
-- **Commit**: `e6175ab` - fix: Zero Defects remediation - comprehensive error handling fixes
-- **Files Changed**:
-  - `apps/api/scripts/cleanup/delete-failed-imports.ts` - NEW: Script to delete failed import batches
-  - `apps/api/scripts/cleanup/cleanup-orphans.ts` - NEW: Script to cleanup orphan products
-  - `apps/python-importer/main.py` - Fixed bare except clause at line 687 (date parsing)
-  - `apps/api/src/routes/import.routes.ts` - Fixed lock release with retry + emergency disconnect
-  - `apps/api/src/routes/import.routes.ts` - Fixed file cleanup error handling with DiagnosticLog tracking
-  - `apps/api/src/routes/import.routes.ts` - Fixed mapping corrections now stored in ImportBatch.metadata
-  - `apps/api/src/lib/error-tracker.ts` - NEW: Centralized error tracking module
-  - `apps/api/src/routes/diagnostic.routes.ts` - Added /errors endpoint for error monitoring
-- **Silent Failure Fixes**:
-  - Python importer: Bare `except:` now properly catches and logs with `log_diagnostic()`
-  - Lock release: Added retry mechanism + emergency Prisma disconnect to prevent 30-min deadlocks
-  - File cleanup: Failures now logged to DiagnosticLog table for monitoring
-  - Mapping corrections: User corrections now persisted to ImportBatch.metadata for audit trail
-- **New Infrastructure**:
-  - `error-tracker.ts` - trackError(), getRecentErrors(), getErrorCount(), getErrorDetails(), cleanupOldErrors()
-  - `GET /api/diagnostics/errors` - Error summary endpoint (admin only)
-  - `GET /api/diagnostics/errors/:category` - Detailed error logs by category
-  - `POST /api/diagnostics/errors/cleanup` - Cleanup old error logs
-- **Production Cleanup Executed**:
-  - Deleted 90 failed import batches (Dec 12-23, 2025 range)
-  - Root causes: missing quantity_packs column, file format issues, Python import errors
-  - Remaining: 6 completed + 8 completed_with_errors (clean data)
-- **Database Status**: 637 products, 6 clients, 0 failed imports
-- **Status**: ✅ DEPLOYED to production at 18:21 UTC (10:21 PST Dec 23)
-
----
-
-### 2025-12-22: Enterprise Code Quality Remediation (DEPLOYING)
-- **What**: Comprehensive code quality audit and remediation - 10 critical/high priority fixes
-- **Commits**: `cf02848` - Enterprise code quality remediation
-- **Tier 1 Critical Fixes**:
-  - `MLInsightsSummaryWidget.tsx` - Replaced mock data with real API call + graceful fallback
-  - `scheduler.ts` - Added mutex lock pattern to prevent concurrent job execution (race condition fix)
-  - `shipment.routes.ts` - Added comprehensive Zod validation for all endpoints
-  - `usage.service.ts` - Combined two separate transactions into single atomic transaction
-  - Multiple files - Removed all `any` type casts with proper TypeScript interfaces
-- **Tier 2 High Priority Fixes**:
-  - `auth.routes.ts`, `portal/auth.routes.ts` - Added auth rate limiting (10 attempts/15 min)
-  - `validation-schemas.ts` - Reverted pagination limit from 1000 → 100 (security)
-  - `audit.routes.ts` - Added `requireClientAccess` middleware for authorization
-  - `portal/auth.routes.ts` - Fixed password minimum from 1 → 10 characters
-- **New TypeScript Interfaces Added**:
-  - `ProductWithEnhancedMetrics` (ClientDetail.tsx)
-  - `EnhancedLocationPerformance`, `RegionalPerformanceSummary`, `StateSummary` (ClientAnalytics.tsx)
-  - `PendingOrder`, `UsageCalculationTier`, `UsageConfidence` types
-- **Status**: 🟡 PENDING DEPLOYMENT
-
----
-
-### 2025-12-22 @ 22:05 PST: QA Audit Fixes - Import Concurrency, ML UX, Dead Code Cleanup (DEPLOYED)
-- **What**: Fixed multiple issues from deep QA audit - advisory locks, ML readiness UX, dead code removal
-- **Commits**:
-  - `33d6398` - QA audit fixes (import concurrency, ML UX, cleanup)
-  - `b5c10cf` - fix: Rename error property to message in ML readiness catch block
-  - `416d084` - fix: Correct logger.error signature in ML readiness endpoint
-- **Changes**:
-  - **Import Concurrency**: Added PostgreSQL advisory locks for per-client import locking (race-condition safe)
-    - `apps/api/src/routes/import.routes.ts` - added `acquireClientImportLock()` and `releaseClientImportLock()`
-  - **ML Readiness UX**: New endpoint and frontend states for better ML offline experience
-    - `apps/api/src/routes/ml.routes.ts` - added `/api/ml/readiness` endpoint with data progress
-    - `apps/web/src/pages/MLAnalytics.tsx` - 3 new UX states: Setup Wizard, Gathering Data, Ready
-    - Witty progress messages like "Teaching our AI the ways of your inventory..."
-  - **Zero Quantity Warning**: Python importer now warns when no quantity columns found
-    - `apps/python-importer/main.py` - added warning to `errors_encountered`
-  - **Dead Code Removed**:
-    - Deleted `apps/api/src/lib/import-queue.ts` (unused BullMQ queue)
-    - Deleted `apps/api/src/workers/import-worker.ts` (unused worker)
-    - Deleted redundant backfill scripts for item_type normalization
-  - **Deployment Script**: Added item_type normalization step to deploy.sh
-  - **.gitignore**: Added venv patterns
-- **Status**: ✅ DEPLOYED to production at 06:05 UTC (22:05 PST Dec 21)
-- **Verification**: API healthy, PM2 online, build successful
-
----
-
-### 2025-12-21 @ 20:46 PST: Pagination Limit Fix + Python Import Fixes (DEPLOYED)
-- **What**: Fixed pagination limit errors (max 100 → max 1000) across all route files
-- **Commits**:
-  - `6c1f5b7` - fix: Use shared paginationSchema in product.routes.ts
-  - `861b50b` - fix: Update pagination limits and remove deprecated pandas warning
-  - `4ddf0fc` - fix: Increase pagination limit from 100 to 1000
-  - `e40310e` - fix: Ensure quantity_packs is always set in orders import
-  - `4a38f30` - fix: Correct monorepo_root calculation in file path validation
-- **Root Cause Analysis**:
-  - Products endpoint was using inline schema with `max(100)` instead of shared `paginationSchema`
-  - Order and alert routes also had inline `max(100)` overrides
-  - Python importer had path validation calculating wrong monorepo root (2 levels instead of 3)
-  - Orders import failed when `quantity_packs` column was missing from CSV
-- **Files Changed**:
-  - `apps/api/src/routes/product.routes.ts` - Refactored to use shared `paginationSchema`
-  - `apps/api/src/routes/order.routes.ts` - Changed `max(100)` to `max(1000)`
-  - `apps/api/src/routes/alert.routes.ts` - Changed `max(100)` to `max(1000)`
-  - `apps/api/src/lib/validation-schemas.ts` - Already had `max(1000)` (baseline)
-  - `apps/python-importer/main.py` - Fixed path validation, added quantity_packs fallback, removed deprecated `infer_datetime_format`
-- **Status**: ✅ DEPLOYED to production at 04:46 UTC (20:46 PST Dec 21)
-- **Verification**: Products endpoint returns 308 products with `limit=500`
-
----
-
-### 2025-12-21 @ 18:55 PST: P0/P1 Security + Health Endpoints + Python Hardening (DEPLOYED)
-- **What**: Comprehensive security and reliability improvements from codebase audit
-- **Commits**:
-  - `22b3243` - P0/P1 security fixes + health endpoints + TDD philosophy
-  - `5704c97` - docs: Fix domain structure in CLAUDE.md
-  - `c660515` - security: Fix CORS and add circuit breaker to Python services
-- **P0 Critical Security Fixes**:
-  - Password reset email now uses `sendPasswordResetEmail()` with SendGrid
-  - Column mapping validation with Zod schema
-  - adminLimiter applied to `/api/clients` and `/api/audit`
-- **P1 Reliability Fixes**:
-  - 8 comprehensive health check endpoints:
-    - `/api/health` - Full system status
-    - `/api/health/live` - Liveness probe
-    - `/api/health/ready` - Readiness probe
-    - `/api/health/db` - Database health (2ms latency, 440 products)
-    - `/api/health/redis` - Redis health (0ms latency)
-    - `/api/health/disk` - Storage health (112 files)
-    - `/api/health/email` - Email service status
-    - `/api/health/services` - Python services status
-  - CORS in Python services now uses environment-based origins (not `["*"]`)
-  - Circuit breaker pattern added to ML Analytics (matches DS Analytics)
-- **Files Created**:
-  - `apps/api/src/services/health.service.ts`
-  - `apps/api/src/routes/health.routes.ts`
-- **Status**: ✅ DEPLOYED to production at 23:55 UTC (18:55 PST Dec 21)
-- **Verification**: All health endpoints returning correct status
-- **Known Issues**:
-  - Email shows "degraded" - needs SENDGRID_API_KEY in production .env
-  - Python services show "down" - DS/ML Analytics not yet deployed
-
----
-
-### 2025-12-21 @ 17:15 PST: Python Importer Fix + CSRF Fix (DEPLOYED)
-- **What**: Fixed critical Python import error that was blocking all CSV imports
-- **Root Cause**: `bulk_operations.py` line 22 had `from . import models` (relative import) but `main.py` imports it as a module, not a package
-- **Fix**: Changed to `import models` (absolute import)
-- **Files Changed**:
-  - `apps/python-importer/bulk_operations.py` (line 22 import fix)
-  - `apps/api/src/routes/auth.routes.ts` (CSRF token issuance on login)
-  - `apps/api/src/routes/portal/auth.routes.ts` (CSRF token issuance on login)
-  - `.claude/settings.local.json` (cleaned up malformed permissions)
-- **Also Fixed**:
-  - CSRF token errors on delete operations - backend now issues CSRF token on login
-  - Item_type case sensitivity - ran SQL to normalize 111 products (Evergreen → evergreen)
-  - Settings file had malformed git commit message causing parse errors
-- **Status**: ✅ DEPLOYED to production
-- **Verification**: `python -c 'import bulk_operations'` returns SUCCESS on production
-
----
-
-### 2025-12-21 @ 08:08 PST: Security Hardening (DEPLOYED)
-- **What**: Critical security fixes from security review
-- **Commit**: `6232025` - Security hardening: Fix critical vulnerabilities from security review
-- **Changes**:
-  - Fixed SQL injection in `apps/python-importer/bulk_operations.py`
-    - Replaced f-string SQL with SQLAlchemy `pg_insert` + `on_conflict_do_update`
-    - Added `_sanitize_string()` helper for input sanitization
-  - Fixed Redis rate limiting in `apps/api/src/lib/rate-limiters.ts`
-    - Corrected `sendCommand` signature for ioredis v5 + rate-limit-redis v4
-    - Added 5 new role-based rate limiters: admin, user management, financial, orders, portal
-  - Applied rate limiters to sensitive endpoints in `apps/api/src/index.ts`
-  - Added Zod validation to portal auth in `apps/api/src/routes/portal/auth.routes.ts`
-  - Sanitized production errors in `apps/api/src/middleware/error-handler.ts`
-  - Changed to relative file paths in `apps/api/src/routes/import.routes.ts`
-  - Added path validation to Python importer in `apps/python-importer/main.py`
-- **Environment**: Added `USE_REDIS_RATE_LIMIT=true` to production `.env`
-- **Status**: ✅ DEPLOYED to production at 16:08 UTC (08:08 PST Dec 21)
-- **Verification**: API healthy, Redis rate limiting active in logs
-
----
-
-### 2025-12-21 @ 07:25 PST: Analytics in Active Import Path + Full Feature Deploy (DEPLOYED)
-- **What**: CRITICAL FIX - Analytics now properly called after imports
-  - Previous deployment added analytics to `import.service.ts` which was NEVER CALLED
-  - This deployment adds analytics to `import.routes.ts` (the ACTUAL import path)
-- **Commits**:
-  - `42e9541` - fix: Add post-import analytics to active import path + orphan reconciliation
-  - `07b02eb` - fix: Add missing middleware exports (getCsrfTokenHandler)
-  - `e979d57` - fix: Add missing lib modules (redis, api-response, etc.)
-  - `167b130` - fix: Disable Redis rate limiting until proper configuration
-- **Files Changed**:
-  - `apps/api/src/routes/import.routes.ts` (added analytics calls to ACTIVE import path)
-  - `apps/api/src/routes/orphan-reconciliation.routes.ts` (NEW)
-  - `apps/api/src/services/orphan-reconciliation.service.ts` (NEW)
-  - `apps/api/src/lib/rate-limiters.ts` (fixed Redis compatibility)
-  - `apps/api/src/lib/redis.ts`, `api-response.ts`, `validation-schemas.ts` (NEW)
-  - `apps/web/src/pages/OrphanReconciliation.tsx` (NEW)
-  - `apps/web/src/pages/admin/AnalyticsSettings.tsx` (NEW)
-  - `packages/shared/package.json` (added lucide-react ^0.460.0)
-- **Issue Fixed**:
-  - Analytics functions were in `import.service.ts` but that file was NEVER CALLED
-  - `import.routes.ts` spawns Python and does post-processing but was MISSING analytics
-- **Status**: ✅ DEPLOYED to production at 15:25 UTC (07:25 PST Dec 21)
-- **Verification**: API running healthy on PM2, using in-memory rate limiting
-
----
-
-### 2025-12-20 @ 23:04 PST: Post-Import Analytics + Schema Update (DEPLOYED)
-- **What**: Added 3 analytics functions to run after CSV import + database schema update
-  - `createDailySnapshot()` - Generates daily snapshot for trend charts
-  - `refreshRiskScoreCache()` - Pre-calculates risk scores for portfolio risk
-  - `aggregateDailyAlertMetrics()` - Aggregates alert metrics for alert trends
-  - Added `diagnosticLogs` and `metadata` fields to `ImportBatch` model
-- **Commits**:
-  - `e80d4cb` - fix: Add post-import analytics and update CLAUDE.md
-  - `3eb1d8a` - fix: Add diagnosticLogs and metadata fields to ImportBatch schema
-- **Files Changed**:
-  - `apps/api/src/services/import.service.ts` (added analytics calls)
-  - `apps/api/prisma/schema.prisma` (added diagnosticLogs, metadata fields)
-  - `apps/web/src/components/widgets/WidgetDataStatus.tsx` (new component for empty states)
-  - `apps/api/prisma/check-recent-imports.ts` (new diagnostic script)
-  - `CLAUDE.md` (complete rewrite with verified production architecture)
-- **Deployment Process**:
-  1. Schema changes pushed to database with `npm run db:push`
-  2. Prisma client regenerated with `npm run db:generate`
-  3. TypeScript build completed successfully
-  4. PM2 restarted `inventory-api` process
-- **Impact**: Dashboard widgets now populate with data immediately after import
-- **Status**: ✅ DEPLOYED to production at 04:04 UTC (23:04 PST Dec 20)
-- **Verification**: API running healthy, logs showing successful restart
-
----
-
-## Data Flow
+## DATA FLOW
 
 ```
 CSV Upload (via admin.yourtechassist.us)
@@ -617,7 +763,7 @@ Python Importer (subprocess: apps/python-importer/main.py)
     ↓
 PostgreSQL Database (bulk insert via Prisma)
     ↓
-Post-Import Analytics (NEW - added Dec 20, 2025)
+Post-Import Analytics
     ├─ createDailySnapshot() → DailySnapshot table
     ├─ refreshRiskScoreCache() → RiskScoreCache table
     └─ aggregateDailyAlertMetrics() → DailyAlertMetrics table
@@ -627,223 +773,30 @@ Dashboard Widgets Populate (admin.yourtechassist.us)
 
 ---
 
-## Debugging Common Issues
+## ENVIRONMENT VARIABLES
 
-### Issue: "Import completed but dashboard shows 'No data available'"
-**Cause**: Post-import analytics didn't run (pre-Dec 20 code)
-**Fix**: Upgrade to latest code with analytics fixes, reimport data
-**Verify**: Check database for DailySnapshot records:
+Required in `.env`:
+
 ```bash
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
-  cd /var/www/inventory/apps/api &&
-  node -e \"const {PrismaClient} = require('@prisma/client'); const p = new PrismaClient(); p.dailySnapshot.count().then(c => console.log('Snapshots:', c))\"
-"
+# Core - Required
+JWT_SECRET=<32+ chars>
+DATABASE_URL=postgresql://user:pass@localhost:5432/inventory_db
+USE_REDIS_RATE_LIMIT=true
+
+# Optional but recommended
+REDIS_URL=redis://localhost:6379
+FRONTEND_URL=https://admin.yourtechassist.us
+DS_ANALYTICS_URL=http://localhost:8000
+ML_SERVICE_URL=http://localhost:8001
+
+# Custom paths (optional)
+UPLOAD_DIR=/var/www/inventory/uploads
+PYTHON_PATH=/usr/bin/python3
 ```
-
-### Issue: "API server not responding"
-**Cause**: PM2 process crashed or not started
-**Fix**:
-```bash
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 restart inventory-api"
-```
-**Verify**: `pm2 list` should show `inventory-api` as `online`
-
-### Issue: "502 Bad Gateway" on api.yourtechassist.us
-**Cause**: nginx config at `/etc/nginx/sites-available/yourtechassist` may be pointing to wrong port
-**Fix**: Verify nginx is proxying to port 3001 (not 3002):
-```bash
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "grep proxy_pass /etc/nginx/sites-available/yourtechassist"
-# Should show: proxy_pass http://localhost:3001
-```
-If wrong, fix with: `sed -i 's/localhost:3002/localhost:3001/' /etc/nginx/sites-available/yourtechassist && nginx -t && systemctl reload nginx`
-
-### Issue: "Git pull shows success but code not updated"
-**Cause**: HEAD is detached from main branch (common after checkout to specific commit)
-**Fix**: Checkout main then pull:
-```bash
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "cd /var/www/inventory && git checkout main && git pull origin main"
-```
-**Verify**: `git log -1 --oneline` should show expected commit
-
-### Issue: "Another import is currently processing for this client"
-**Cause**: A previous import is stuck in `processing` or `pending` status, blocking new imports
-**Auto-Recovery**: System cleans up stuck imports every 5 minutes (after 10 min timeout)
-**Manual Fix for Admins**:
-```bash
-# Option 1: Use the admin force-unlock endpoint
-curl -X POST https://api.yourtechassist.us/api/imports/admin/force-unlock/{clientId}
-
-# Option 2: SSH and run cleanup directly
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
-  cd /var/www/inventory/apps/api &&
-  node -e \"
-    const {PrismaClient} = require('@prisma/client');
-    const p = new PrismaClient();
-    p.importBatch.updateMany({
-      where: { status: { in: ['processing', 'pending'] } },
-      data: { status: 'failed', completedAt: new Date() }
-    }).then(r => console.log('Cleaned up:', r.count));
-    p.\\\$executeRaw\\\`SELECT pg_advisory_unlock_all()\\\`.then(() => console.log('Locks released'));
-  \"
-"
-```
-**Verify**: User can now start a new import
-
-### Issue: "Redis connection error"
-**Cause**: Redis isn't running (and doesn't need to be)
-**Fix**: Code already uses in-memory fallback, but check `.env` has REDIS_URL commented out
-**Note**: This is expected behavior, not an error
-
-### Issue: "Import fails immediately"
-**Cause**: Python environment not set up or database connection issue
-**Fix**:
-```bash
-# Check Python is accessible
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "which python3"
-
-# Check database connection
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
-  cd /var/www/inventory/apps/api &&
-  grep DATABASE_URL .env
-"
-```
-
-### Issue: "ImportError: attempted relative import with no known parent package"
-**Cause**: Python file uses relative imports (e.g., `from . import models`) but is run as a script, not a package
-**Fix**: Change relative imports to absolute imports in the Python file:
-```python
-# WRONG (relative import)
-from . import models
-
-# RIGHT (absolute import)
-import models
-```
-
-### Issue: "ZodError: Number must be less than or equal to 100" on pagination
-**Cause**: Route file has inline schema with `max(100)` instead of using shared `paginationSchema`
-**Fix**: Ensure all route files use `paginationSchema` from `validation-schemas.ts`:
-```typescript
-// WRONG (inline schema with limit)
-const querySchema = z.object({
-  limit: z.coerce.number().int().positive().max(100).optional(),
-});
-
-// RIGHT (use shared paginationSchema)
-import { paginationSchema } from '../lib/validation-schemas.js';
-const querySchema = paginationSchema.extend({ ... });
-```
-**Files to check**: `product.routes.ts`, `order.routes.ts`, `alert.routes.ts`
-
-### Issue: "null value in column 'quantity_packs' violates not-null constraint"
-**Cause**: Orders CSV doesn't have a "Quantity" column, so `quantity_packs` is never set
-**Fix**: Python importer must ALWAYS set `quantity_packs` before insert:
-```python
-if 'quantity_packs' not in df.columns:
-    if 'quantity_units' in df.columns:
-        df['quantity_packs'] = df['quantity_units'].fillna(0).astype(int)
-    else:
-        df['quantity_packs'] = 0
-```
-
-### Issue: "File path outside allowed directories" during import
-**Cause**: `monorepo_root` in `main.py` calculated incorrectly (wrong number of `os.path.dirname()` calls)
-**Fix**: Count directory levels from script to monorepo root:
-```python
-# main.py is at apps/python-importer/main.py
-# Need 3 levels up: main.py → python-importer → apps → monorepo root
-monorepo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-```
-**Why**: `main.py` adds the package directory to `sys.path` and imports modules directly. Relative imports only work when running as a package with `-m` flag.
-
-### Issue: "CSRF token missing" on delete/POST operations
-**Cause**: Backend wasn't issuing CSRF token on login, or frontend not sending it
-**Fix**: Ensure `auth.routes.ts` issues CSRF token cookie on login:
-```typescript
-const csrfToken = generateCsrfToken();
-res.cookie('csrf_token', csrfToken, { httpOnly: false, ... });
-```
-**Verify**: Check browser cookies after login - should see `csrf_token` cookie
-
-### Issue: "Transaction has no attribute 'client_id'" or "Transaction has no attribute 'clientId'"
-**Cause**: Transaction model doesn't have clientId at all - it relates to clients through Product
-**Fix**: Join Transaction with Product to filter by client:
-```python
-# WRONG - Transaction has no client_id
-db.query(models.Transaction).filter(models.Transaction.client_id == client_id)
-
-# RIGHT - Join with Product to get client
-db.query(models.Transaction).join(
-    models.Product,
-    models.Transaction.product_id == models.Product.id
-).filter(models.Product.client_id == client_id)
-```
-**Where**: `apps/python-importer/main.py` - row count verification functions
-
-### Issue: "savepoint does not exist" or "no transaction is active"
-**Cause**: Raw psycopg2 `connection.commit()` or `connection.rollback()` inside SQLAlchemy savepoints releases the savepoint unexpectedly
-**Fix**: Remove explicit commit/rollback from bulk operations, let SQLAlchemy manage savepoints:
-```python
-# WRONG - breaks savepoint management
-try:
-    cursor.copy_expert(...)
-    connection.commit()  # This releases the SQLAlchemy savepoint!
-except:
-    connection.rollback()  # This also breaks savepoint state!
-
-# RIGHT - let SQLAlchemy handle it
-try:
-    cursor.copy_expert(...)
-    # Don't commit - let outer savepoint handle it
-except:
-    # Don't rollback - let SQLAlchemy savepoint handle it
-    raise
-```
-**Where**: `apps/python-importer/bulk_operations.py` - COPY functions
-
-### Issue: "413 Request Entity Too Large" on file upload
-**Cause**: nginx missing `client_max_body_size` directive for API server block
-**Fix**: Add to nginx config:
-```bash
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
-  sed -i '/server_name api.yourtechassist.us/a\    client_max_body_size 50M;' /etc/nginx/sites-available/yourtechassist &&
-  nginx -t && systemctl reload nginx
-"
-```
-**Verify**: `curl -I https://api.yourtechassist.us` should show nginx accepting larger bodies
 
 ---
 
-## Testing & Verification Commands
-
-### Check Production Status
-```bash
-# All-in-one status check
-ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
-  echo '=== PM2 Status ===' &&
-  pm2 list &&
-  echo '' &&
-  echo '=== Git Status ===' &&
-  cd /var/www/inventory &&
-  git log -1 --oneline &&
-  echo '' &&
-  echo '=== Database Status ===' &&
-  cd apps/api &&
-  node -e \"const {PrismaClient} = require('@prisma/client'); const p = new PrismaClient(); Promise.all([p.product.count(), p.importBatch.count(), p.dailySnapshot.count()]).then(([products, imports, snapshots]) => console.log(\\\`Products: \\\${products}, Imports: \\\${imports}, Snapshots: \\\${snapshots}\\\`))\"
-"
-```
-
-### Test Import Workflow
-1. Upload CSV via admin.yourtechassist.us/imports
-2. Monitor logs: `ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "pm2 logs inventory-api --lines 100"`
-3. Look for analytics messages:
-   - `✓ Created daily snapshot for newly imported products`
-   - `✓ Pre-calculated risk scores for imported products`
-   - `✓ Aggregated alert metrics after import`
-4. Check dashboard widgets show data (not "No data available")
-
----
-
-## Collaboration Model
+## COLLABORATION MODEL
 
 - **Gemini**: Planner, risk analysis, acceptance tests
 - **Claude (You)**: Primary builder, implementation, testing
@@ -853,138 +806,86 @@ ssh -i ~/.ssh/id_ed25519_deploy root@138.197.70.205 "
 1. Gemini provides plan/requirements
 2. Claude implements with tests
 3. Codex reviews before merge
-4. **Claude updates CLAUDE.md after major changes** ← NEW RULE
+4. **Claude updates CLAUDE.md after major changes**
 
 ---
 
-## Development Commands
+## PROACTIVE REMINDERS
 
-### Local Development
-```bash
-# Start API server
-npm run dev:api
+**Claude should remind the user at these points (without being asked):**
 
-# Start admin dashboard
-npm run dev:web
+### During Development
+- After 5+ file edits: "Consider committing this checkpoint before continuing"
+- After adding new API route: "Don't forget to add tests for this endpoint"
+- After editing auth logic: "Security-sensitive change - double-check the implementation"
 
-# Start client portal
-npm run dev:portal
+### Before Completing Tasks
+- "Have you run `npm run build` to verify TypeScript?"
+- "Have you tested this manually?"
+- "Are there any edge cases we should handle?"
 
-# Run all in parallel (if using concurrently)
-npm run dev
-```
-
-### Testing
-```bash
-# Run API tests
-npm run test:api
-
-# Run E2E tests
-npm run test:e2e
-
-# Type checking
-npm run typecheck
-```
-
-### Database
-```bash
-# Generate Prisma client
-npm run db:generate
-
-# Run migrations
-npm run db:migrate
-
-# Seed database
-npm run db:seed
-```
+### End of Session
+- "Here's what was completed today: [summary]"
+- "Remaining items for next session: [list]"
+- "Consider creating a commit with: `git add -A && git commit -m 'description'`"
 
 ---
 
-## Important Notes
+## FEEDBACK LOOP
 
-- **Do not edit GEMINI.md or AGENTS.md** - Those are for other AI collaborators
-- **Python-first policy** for data processing - Use Python for CSV parsing, calculations
-- **Keep diffs small** - Small, focused commits are easier to review and deploy
-- **Run tests before committing** - `npm run test && npm run typecheck`
-- **Update CLAUDE.md after significant work** - Don't let knowledge get lost!
+**The most important thing: Give Claude a way to verify its work.**
+
+### Verification Methods
+
+| Type | Method | When |
+|------|--------|------|
+| **Build** | `npm run build` | After every change |
+| **Tests** | `npm run test` | After every change |
+| **Lint** | `npm run lint` | Before commits |
+| **Browser** | Check console + network | UI changes |
+| **API** | curl or test endpoint | API changes |
+
+### Feedback Signals to Provide
+
+When something doesn't work, tell Claude:
+- **Error messages** - Copy exact output
+- **Console errors** - From browser DevTools
+- **Network failures** - Status codes, response bodies
+- **Screenshots** - For UI issues
+- **Expected vs Actual** - What should happen vs what happened
 
 ---
 
-## 📝 Changelog (Small but Important Details)
-
-This section tracks smaller details, quirks, and knowledge that shouldn't be forgotten.
+## CHANGELOG (Small but Important Details)
 
 ### Import Lock Resilience (Dec 23, 2025)
-- **Stale import timeout**: Reduced from 30 → 10 minutes in `STALE_LOCK_TIMEOUT_MS`
+- **Stale import timeout**: Reduced from 30 → 10 minutes
 - **Scheduled cleanup job**: `cleanup-stale-imports` runs every 5 minutes
-- **Graceful shutdown**: SIGTERM/SIGINT handlers release all advisory locks before exit
-- **New admin endpoints**:
-  - `POST /api/imports/admin/force-unlock/:clientId` - clears stuck import locks
-  - `GET /api/imports/admin/lock-status/:clientId` - diagnostic info about lock state
-- **Frontend recovery UI**: When "Another import processing" error occurs, shows options to wait, view import history, or force-unlock (admin only)
+- **Graceful shutdown**: SIGTERM/SIGINT handlers release all advisory locks
 
-### Enterprise Remediation (Dec 22, 2025)
-- **Pagination limit reverted**: 1000 → 100 in `validation-schemas.ts` (security fix)
-- **Portal password minimum**: Changed from 1 → 10 characters in `portal/auth.routes.ts`
-- **Auth rate limiting**: Now applied to `/login` and `/refresh` endpoints (10 attempts/15 min)
-- **Shipment routes**: Now have comprehensive Zod validation (was manual type casting)
-- **Scheduler mutex**: Jobs now use lock pattern to prevent concurrent execution
-- **Usage service**: Two separate transactions combined into single atomic transaction
-- **Audit routes**: Client activity endpoint now requires `requireClientAccess`
-- **Type safety**: All `any` casts removed from audit.routes.ts, ClientAnalytics.tsx, ClientDetail.tsx
-
-### Rate Limiting Tiers (Added Dec 21, 2025)
-| Role | Default | Auth | Upload | AI | Report | Admin | Financial | Orders |
-|------|---------|------|--------|----|----|-------|-----------|--------|
-| anonymous | 20/min | 10/15min | 20/hr | 10/min | 5/5min | 0 | 0 | 0 |
-| user | 100/min | 10/15min | 40/hr | 20/min | 10/5min | 0 | 10/min | 20/min |
-| account_manager | 200/min | 10/15min | 60/hr | 30/min | 15/5min | 10/min | 20/min | 40/min |
-| operations_manager | 300/min | 10/15min | 80/hr | 45/min | 20/5min | 20/min | 30/min | 60/min |
-| admin | 500/min | 10/15min | 100/hr | 60/min | 25/5min | 30/min | 40/min | 80/min |
+### Rate Limiting Tiers (Dec 21, 2025)
+| Role | Default | Auth | Admin | Financial |
+|------|---------|------|-------|-----------|
+| anonymous | 20/min | 10/15min | 0 | 0 |
+| user | 100/min | 10/15min | 0 | 10/min |
+| admin | 500/min | 10/15min | 30/min | 40/min |
 
 ### Database Schema Quirks
-- `ImportBatch.filePath` stores **relative paths** (as of Dec 21) - relative to monorepo root
+- `ImportBatch.filePath` stores **relative paths** - relative to monorepo root
 - `Product.item_type` is case-sensitive - always use lowercase values
 - `DailySnapshot` is created by `createDailySnapshot()` after imports
-- `RiskScoreCache` is pre-calculated by `refreshRiskScoreCache()` after imports
 
 ### Python Importer Details
 - Located at `apps/python-importer/`
 - Uses virtualenv at `apps/python-importer/venv/`
 - Called as subprocess from Node.js API
-- `bulk_upsert_products()` uses SQLAlchemy `pg_insert` for SQL injection safety
-- `validate_file_path()` blocks path traversal and restricts to `/uploads` directory
 - **IMPORTANT**: All imports must be absolute (e.g., `import models` not `from . import models`)
-  - `main.py` adds package dir to `sys.path` and imports modules directly
-  - Relative imports will fail with `ImportError: attempted relative import with no known parent package`
-- **CRITICAL**: Transaction model has NO `client_id` or `clientId` attribute
-  - Must join with Product table to filter by client: `db.query(Transaction).join(Product).filter(Product.client_id == ...)`
-- **CRITICAL**: Don't use raw `connection.commit()` or `connection.rollback()` inside SQLAlchemy savepoints
-  - Let SQLAlchemy's `begin_nested()` manage the savepoint lifecycle
-  - Raw commits/rollbacks will release the savepoint and cause "savepoint does not exist" errors
+- **CRITICAL**: Transaction model has NO `client_id` attribute - must join with Product table
+- **CRITICAL**: Don't use raw `connection.commit()` inside SQLAlchemy savepoints
 
 ### Build Quirks
 - Production builds need `NODE_OPTIONS='--max-old-space-size=2048'` or OOM kills tsc
 - `npm run build:api` builds shared package first, then API
-- Pre-commit hooks use lint-staged with different tsconfig - may need `--no-verify` for quick fixes
-
-### Environment Variables (Production)
-```bash
-# Critical - must be set
-JWT_SECRET=<32+ chars>
-DATABASE_URL=postgresql://user:pass@localhost:5432/inventory_db
-USE_REDIS_RATE_LIMIT=true
-
-# Optional but recommended
-REDIS_URL=redis://localhost:6379
-FRONTEND_URL=https://admin.yourtechassist.us
-DS_ANALYTICS_URL=http://localhost:8000  # For ML/DS analytics features
-ML_SERVICE_URL=http://localhost:8000    # Alternative to DS_ANALYTICS_URL
-
-# New in Dec 24, 2025 (optional)
-UPLOAD_DIR=/var/www/inventory/uploads   # Custom upload directory
-PYTHON_PATH=/usr/bin/python3            # Custom Python path
-```
 
 ### Known Working User Accounts (for testing)
 - Admin Dashboard: `sarah.chen@inventoryiq.com` / `demo1234` (account_manager role)
@@ -994,17 +895,49 @@ PYTHON_PATH=/usr/bin/python3            # Custom Python path
 | What | Local Path | Production Path |
 |------|-----------|-----------------|
 | API code | `apps/api/` | `/var/www/inventory/apps/api/` |
-| API dist | `apps/api/dist/` | `/var/www/inventory/apps/api/dist/` |
 | Admin frontend | `apps/web/dist/` | `/var/www/html/inventory/admin/` |
 | Portal frontend | `apps/portal/dist/` | `/var/www/html/inventory/portal/` |
 | Python importer | `apps/python-importer/` | `/var/www/inventory/apps/python-importer/` |
 | Upload files | `uploads/` | `/var/www/inventory/uploads/` |
-| PM2 ecosystem | `deploy/ecosystem.config.js` | `/var/www/inventory/ecosystem.config.js` |
-| Production .env | N/A | `/var/www/inventory/.env` |
 
 ---
 
-**Last Updated**: December 24, 2025
-**Last Major Change**: Codex Risk Audit Remediation - UPLOAD_DIR, PYTHON_PATH env vars, ML URL startup warning
-**Everstory Status**: ✅ FULLY ONBOARDED - 308 products, 23,126 transactions imported and verified
-**Audit Status**: ✅ All deployment risks from import_deployment_risk_audit_codex.md addressed
+## DEPLOYMENT HISTORY
+
+### 2025-12-24 @ 14:00 PST: Codex Risk Audit Remediation (DEPLOYED)
+- **What**: Addressed remaining gaps from import_deployment_risk_audit_codex.md
+- **Changes**:
+  - UPLOAD_DIR env var - `import.routes.ts` now uses `process.env.UPLOAD_DIR`
+  - PYTHON_PATH env var - Added for custom Python installations
+  - ML URL startup warning - Warns if DS_ANALYTICS_URL/ML_SERVICE_URL not configured
+- **Status**: DEPLOYED
+
+### 2025-12-24 @ 14:20 PST: ML Analytics Service Deployed
+- **What**: Set up ML Analytics service on production
+- **Changes**:
+  - Created venv at `/var/www/inventory/apps/ml-analytics/venv/`
+  - ML Analytics running on port 8001
+- **Status**: DEPLOYED and VERIFIED
+
+### 2025-12-24 @ 14:00 PST: Import Pipeline Critical Fixes
+- **What**: Fixed Transaction join, savepoint management, nginx config
+- **Test Results**:
+  - Inventory import: 111 rows, 0 errors
+  - Orders import: 10,563 rows, 0 errors
+- **Status**: DEPLOYED
+
+---
+
+## IMPORTANT NOTES
+
+- **Do not edit GEMINI.md or AGENTS.md** - Those are for other AI collaborators
+- **Python-first policy** for data processing - Use Python for CSV parsing, calculations
+- **Keep diffs small** - Small, focused commits are easier to review and deploy
+- **Run tests before committing** - `npm run test && npm run typecheck`
+- **Update CLAUDE.md after significant work** - Don't let knowledge get lost!
+
+---
+
+**Last Updated**: January 16, 2026
+**Last Major Change**: Framework revision - Added verification rules, quality gates, commit standards, emergency procedures
+**Everstory Status**: FULLY ONBOARDED - 308 products, 23,126 transactions
