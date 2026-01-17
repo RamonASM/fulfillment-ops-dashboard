@@ -172,7 +172,7 @@ export default function Login() {
           type="button"
           onClick={() => {
             setEmail('sarah.chen@inventoryiq.com');
-            setPassword('Admin2025!');
+            setPassword('demo1234');
           }}
           className="w-full py-2.5 px-4 text-sm text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
         >
