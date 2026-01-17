@@ -750,6 +750,28 @@ console.log('Request:', {
 **Cause**: nginx missing `client_max_body_size`
 **Fix**: Add `client_max_body_size 50M;` to nginx config
 
+### Issue: "ML Offline" on ML Analytics page
+**Cause**: DS Analytics or ML Analytics services not running (missing .env or venv)
+**Diagnosis**:
+```bash
+ssh root@138.197.70.205 "systemctl status ds-analytics ml-analytics"
+# Check logs for "Failed to load environment files" or "No such file or directory"
+```
+**Fix**:
+```bash
+# For ds-analytics (port 8000):
+cd /var/www/inventory/apps/ds-analytics
+cp .env.example .env  # Then edit DATABASE_URL
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+systemctl restart ds-analytics
+
+# For ml-analytics (port 8001):
+cd /var/www/inventory/apps/ml-analytics
+cp .env.example .env  # Then edit DATABASE_URL
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+systemctl restart ml-analytics
+```
+
 ---
 
 ## DATA FLOW
@@ -863,12 +885,21 @@ When something doesn't work, tell Claude:
 - **Scheduled cleanup job**: `cleanup-stale-imports` runs every 5 minutes
 - **Graceful shutdown**: SIGTERM/SIGINT handlers release all advisory locks
 
-### Rate Limiting Tiers (Dec 21, 2025)
-| Role | Default | Auth | Admin | Financial |
-|------|---------|------|-------|-----------|
-| anonymous | 20/min | 10/15min | 0 | 0 |
-| user | 100/min | 10/15min | 0 | 10/min |
-| admin | 500/min | 10/15min | 30/min | 40/min |
+### Rate Limiting Tiers (Jan 16, 2026)
+Updated to prevent workflow interruptions during E2E testing and admin operations.
+
+| Role | Default | Auth | Upload | Admin | Financial |
+|------|---------|------|--------|-------|-----------|
+| anonymous | 20/min | 10/15min | 20/hr | 0 | 0 |
+| user | 100/min | 10/15min | 40/hr | 0 | 10/min |
+| account_manager | 300/min | 30/15min | 120/hr | 10/min | 20/min |
+| operations_manager | 500/min | 40/15min | 160/hr | 20/min | 30/min |
+| admin | 1000/min | 50/15min | 200/hr | 30/min | 40/min |
+
+**Excluded from rate limiting** (bypass all limiters):
+- `/health`, `/api/health` - Health check endpoints
+- `/api/csrf-token` - CSRF token endpoint
+- `/api/imports/:id/status` - Import status polling
 
 ### Database Schema Quirks
 - `ImportBatch.filePath` stores **relative paths** - relative to monorepo root
@@ -903,6 +934,26 @@ When something doesn't work, tell Claude:
 ---
 
 ## DEPLOYMENT HISTORY
+
+### 2026-01-16 @ 15:52 PST: Python ML Services Fixed (DEPLOYED)
+- **What**: Fixed DS Analytics and ML Analytics services that were failing to start
+- **Root Cause**: Services missing `.env` files and virtual environments
+- **Changes**:
+  - Created `.env` files for both services with correct DATABASE_URL
+  - Created venv and installed dependencies for ds-analytics (port 8000)
+  - Created venv and installed dependencies for ml-analytics (port 8001)
+  - Both services now running via systemd
+- **Status**: DEPLOYED and VERIFIED (health check shows "All Python services healthy")
+
+### 2026-01-16 @ 15:39 PST: Rate Limiting Improvements (DEPLOYED)
+- **What**: Increased rate limits for admin roles, added exclusions for health/status endpoints
+- **Commits**: `979ad2a`
+- **Changes**:
+  - Default limiter: 300/500/1000 req/min for account_manager/ops_manager/admin
+  - Auth limiter: Role-based tiers (30/40/50 attempts/15min for admin roles)
+  - Upload limiter: 120/160/200 uploads/hr for admin roles
+  - Added skip logic for `/api/health`, `/api/csrf-token`, `/api/imports/:id/status`
+- **Status**: DEPLOYED
 
 ### 2025-12-24 @ 14:00 PST: Codex Risk Audit Remediation (DEPLOYED)
 - **What**: Addressed remaining gaps from import_deployment_risk_audit_codex.md
@@ -939,5 +990,5 @@ When something doesn't work, tell Claude:
 ---
 
 **Last Updated**: January 16, 2026
-**Last Major Change**: Framework revision - Added verification rules, quality gates, commit standards, emergency procedures
-**Everstory Status**: FULLY ONBOARDED - 308 products, 23,126 transactions
+**Last Major Change**: Rate limiting improvements - Increased admin limits, added health/status endpoint exclusions
+**Everstory Status**: FULLY ONBOARDED - 329 products, 24,062 transactions
