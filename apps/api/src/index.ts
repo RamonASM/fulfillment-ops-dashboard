@@ -65,6 +65,7 @@ import dsAnalyticsAdminRoutes from "./routes/ds-analytics-admin.routes.js";
 import orphanReconciliationRoutes from "./routes/orphan-reconciliation.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import diagnosticRoutes from "./routes/diagnostic.routes.js";
+import four51WebhookRoutes from "./routes/webhooks/four51.routes.js";
 import { prisma } from "./lib/prisma.js";
 
 // =============================================================================
@@ -154,6 +155,7 @@ const rateLimitExcludePaths = [
   '/health',
   '/api/health',
   '/api/csrf-token',
+  '/api/webhooks/four51', // Four51 cXML listener (authenticated by shared secret; Four51 retries on non-2xx)
 ];
 
 // Regex patterns for dynamic paths that should be excluded
@@ -274,6 +276,7 @@ app.use("/api/client-health", clientHealthRoutes);
 app.use("/api/notification-preferences", notificationPreferencesRoutes);
 app.use("/api/admin/ds-analytics", adminLimiter, dsAnalyticsAdminRoutes);
 app.use("/api/diagnostics", adminLimiter, diagnosticRoutes);
+app.use("/api/webhooks/four51", four51WebhookRoutes); // Four51 cXML Order Request listener
 
 // Serve uploaded artwork files
 app.use("/uploads/artworks", express.static("./uploads/artworks"));

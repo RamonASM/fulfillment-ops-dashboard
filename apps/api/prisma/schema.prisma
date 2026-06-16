@@ -101,6 +101,8 @@ model Client {
   healthSnapshots              ClientHealthSnapshot[]
   // Orphan reconciliation
   orphanReconciliationAttempts OrphanReconciliationAttempt[]
+  // Four51 print orders (cXML listener)
+  printOrders                  PrintOrder[]
 
   // AI Mapping Settings (White-Label Support)
   anthropicApiKey String? @map("anthropic_api_key") // Encrypted client API key
@@ -313,6 +315,63 @@ model Transaction {
   @@index([productId, dateSubmitted])
   @@index([productId, dateSubmitted, orderStatus])
   @@map("transactions")
+}
+
+// -----------------------------------------------------------------------------
+// FOUR51 PRINT ORDERS (cXML listener -> CorelDRAW Print Merge)
+// -----------------------------------------------------------------------------
+
+model PrintOrder {
+  id            String    @id @default(uuid()) @db.Uuid
+  clientId      String    @map("client_id") @db.Uuid
+  four51OrderId String    @map("four51_order_id") @db.VarChar(100)
+  source        String    @default("four51_cxml") @map("source") @db.VarChar(50)
+  orderType     String?   @map("order_type") @db.VarChar(50)
+  status        String    @default("received") @map("status") @db.VarChar(50)
+  orderDate     DateTime? @map("order_date") @db.Timestamptz
+  totalAmount   String?   @map("total_amount") @db.VarChar(50)
+  currency      String?   @map("currency") @db.VarChar(10)
+  shipToCompany String?   @map("ship_to_company") @db.VarChar(255)
+  shipToName    String?   @map("ship_to_name") @db.VarChar(255)
+  shipToCity    String?   @map("ship_to_city") @db.VarChar(255)
+  shipToState   String?   @map("ship_to_state") @db.VarChar(100)
+  payloadId     String?   @map("payload_id") @db.VarChar(255)
+  rawCxml       String?   @map("raw_cxml") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  client Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lines  PrintOrderLine[]
+
+  @@unique([clientId, four51OrderId])
+  @@index([clientId])
+  @@index([status])
+  @@map("print_orders")
+}
+
+model PrintOrderLine {
+  id                 String   @id @default(uuid()) @db.Uuid
+  printOrderId       String   @map("print_order_id") @db.Uuid
+  lineNumber         Int      @map("line_number")
+  productId          String   @map("product_id") @db.VarChar(100)
+  variantId          String?  @map("variant_id") @db.VarChar(100)
+  description        String?  @map("description") @db.VarChar(255)
+  productType        String?  @map("product_type") @db.VarChar(50)
+  quantity           Int      @default(0) @map("quantity")
+  quantityMultiplier Int      @default(1) @map("quantity_multiplier")
+  unitPrice          String?  @map("unit_price") @db.VarChar(50)
+  titleLine1         String?  @map("title_line_1") @db.VarChar(500)
+  titleLine2         String?  @map("title_line_2") @db.VarChar(500)
+  specs              Json     @default("{}") @map("specs")
+  productionPdfUrl   String?  @map("production_pdf_url") @db.VarChar(1000)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relations
+  printOrder PrintOrder @relation(fields: [printOrderId], references: [id], onDelete: Cascade)
+
+  @@index([printOrderId])
+  @@map("print_order_lines")
 }
 
 // -----------------------------------------------------------------------------

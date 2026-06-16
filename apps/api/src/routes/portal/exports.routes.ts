@@ -3,16 +3,47 @@
 // PDF/Excel/CSV export endpoints for portal users
 // =============================================================================
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { portalAuth } from '../../middleware/portal-auth.js';
 import { logger } from '../../lib/logger.js';
 import { generateInventoryStatusPDF, generateAlertReportPDF } from '../../services/reports/pdf.service.js';
 import { generateInventoryExcel, generateAlertsExcel } from '../../services/reports/excel.service.js';
+import { convertFour51OrdersToPrintMerge } from '../../services/reports/print-merge.service.js';
+import { getStoredPrintMergeCsv } from '../../services/four51-print-order.service.js';
 
 const router = Router();
 
 // All routes require portal authentication
 router.use(portalAuth);
+
+// In-memory upload for the stateless Four51 -> CorelDRAW Print Merge conversion.
+const printMergeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+// Run multer for the single "file" field and convert its errors into clean JSON
+// (otherwise an oversized upload rejects in middleware and bypasses the route's try/catch).
+function uploadFour51Csv(req: Request, res: Response, next: NextFunction): void {
+  printMergeUpload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      const message =
+        err.code === 'LIMIT_FILE_SIZE' ? 'File size exceeds the 50MB limit.' : err.message;
+      res.status(status).json({ error: 'Upload error', message });
+      return;
+    }
+    if (err) {
+      res.status(400).json({
+        error: 'Upload error',
+        message: err instanceof Error ? err.message : 'File upload failed',
+      });
+      return;
+    }
+    next();
+  });
+}
 
 /**
  * GET /api/portal/exports/pdf/inventory-snapshot
@@ -231,6 +262,68 @@ router.get('/csv/order-history', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error generating CSV', error as Error);
     res.status(500).json({ error: 'Failed to generate CSV report' });
+  }
+});
+
+/**
+ * GET /api/portal/exports/print-merge/stored
+ * Build a Print Merge CSV from Four51 orders received via the cXML listener
+ * (no upload needed). Returns JSON { csv, rowCount } for client-side download.
+ */
+router.get('/print-merge/stored', async (req: Request, res: Response) => {
+  try {
+    const portalUser = (req as { portalUser?: { clientId?: string } }).portalUser;
+    const clientId = portalUser?.clientId;
+    if (!clientId) {
+      res.status(400).json({ error: 'No client', message: 'No client is associated with this user.' });
+      return;
+    }
+    const { csv, rowCount } = await getStoredPrintMergeCsv(clientId);
+    res.json({ success: true, filename: 'print-merge-received.csv', rowCount, csv });
+  } catch (error) {
+    logger.error('Portal stored Print Merge export error', error as Error);
+    res.status(500).json({
+      error: 'Export failed',
+      message: (error as Error).message || 'Failed to build Print Merge file',
+    });
+  }
+});
+
+// =============================================================================
+// PRINT MERGE EXPORT (Four51 order CSV -> CorelDRAW Print Merge CSV)
+// =============================================================================
+
+/**
+ * POST /api/portal/exports/print-merge
+ * Upload a Four51 orders CSV (multipart field "file") and download a
+ * CorelDRAW-ready Print Merge CSV. Optional query: lineSep, expandQuantity.
+ */
+router.post('/print-merge', uploadFour51Csv, async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({
+        error: 'No file uploaded',
+        message: 'No file uploaded. Send a CSV under the field "file".',
+      });
+      return;
+    }
+
+    const csvText = req.file.buffer.toString('utf-8');
+    const lineSep = typeof req.query.lineSep === 'string' ? req.query.lineSep : undefined;
+    const expandQuantity = req.query.expandQuantity === 'true';
+
+    const { csv, stats } = convertFour51OrdersToPrintMerge(csvText, { lineSep, expandQuantity });
+
+    const portalUser = (req as { portalUser?: { clientId?: string } }).portalUser;
+    logger.info('Portal Print Merge export generated', { ...stats, clientId: portalUser?.clientId });
+
+    res.json({ success: true, filename: 'print-merge.csv', stats, csv });
+  } catch (error) {
+    logger.error('Portal Print Merge export error', error as Error);
+    res.status(400).json({
+      error: 'Conversion failed',
+      message: (error as Error).message || 'Failed to generate Print Merge file',
+    });
   }
 });
 

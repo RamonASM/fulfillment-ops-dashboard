@@ -13,6 +13,7 @@ import {
   BarChart3,
   MessageSquare,
   HelpCircle,
+  Printer,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,6 +27,7 @@ const navigation = [
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Alerts", href: "/alerts", icon: Bell },
   { name: "Reports", href: "/reports", icon: FileText },
+  { name: "Print Merge", href: "/print-merge", icon: Printer },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Feedback", href: "/feedback", icon: MessageSquare },
   { name: "Help", href: "/help", icon: HelpCircle },

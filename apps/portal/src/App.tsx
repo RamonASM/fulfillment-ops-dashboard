@@ -13,6 +13,7 @@ import OrderRequest from "@/pages/OrderRequest";
 import Alerts from "@/pages/Alerts";
 import Settings from "@/pages/Settings";
 import Reports from "@/pages/Reports";
+import PrintMerge from "@/pages/PrintMerge";
 import Analytics from "@/pages/Analytics";
 import Feedback from "@/pages/Feedback";
 import Help from "@/pages/Help";
@@ -83,6 +84,7 @@ export default function App() {
         <Route path="order/new" element={<OrderRequest />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="print-merge" element={<PrintMerge />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="feedback" element={<Feedback />} />
         <Route path="help" element={<Help />} />
